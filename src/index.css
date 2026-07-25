@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@import "@fontsource/oswald/400.css";
+@import "@fontsource/oswald/500.css";
+@import "@fontsource/oswald/600.css";
+@import "@fontsource/oswald/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+@theme {
+  --font-display: "Oswald", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+
+  --color-bg: #1a1a2e;
+  --color-bg-soft: #22233a;
+  --color-bg-card: #24243f;
+  --color-border: #33344f;
+
+  --color-terracotta: #c4653a;
+  --color-terracotta-hover: #d97444;
+  --color-ocre: #d4a24e;
+
+  --color-ink: #ede9e3;
+  --color-ink-muted: #a3a3bd;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  input, select, textarea, button {
+    font-family: var(--font-mono);
+  }
+
+  #root {
+    min-height: 100svh;
+  }
+}

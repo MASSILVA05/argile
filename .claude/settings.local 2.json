@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Bash(npm create *)",
+      "Bash(npx create-vite@latest *)",
+      "Bash(mv argile-tmp/.gitignore argile-tmp/.oxlintrc.json .)",
+      "Bash(rmdir argile-tmp *)"
+    ]
+  }
+}
