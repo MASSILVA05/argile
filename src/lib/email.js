@@ -1,8 +1,8 @@
 import emailjs from '@emailjs/browser'
 
-const SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID
-const TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID
-const PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY
+const SERVICE_ID = 'service_ndslg4h'
+const TEMPLATE_ID = 'template_jjwwov9'
+const PUBLIC_KEY = 'J-MtomjHeZX6EwSeF'
 
 export async function sendEmailNotification(entry) {
   if (!SERVICE_ID || !TEMPLATE_ID || !PUBLIC_KEY) {
