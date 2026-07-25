@@ -23,12 +23,12 @@ export async function notifyNewEntry(entry) {
       method: 'POST',
       body: lines.join('\n'),
       headers: {
-        'Title': encodeURIComponent('Nouveau chargement'),
+        'Title': 'Nouveau chargement',
         'Tags': 'truck',
         'Priority': '3',
       },
     })
-    if (!resp.ok) console.error('ntfy erreur:', resp.status)
+    if (!resp.ok) console.error('ntfy erreur:', resp.status, await resp.text())
   } catch (err) {
     console.error('ntfy erreur:', err)
   }
