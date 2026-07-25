@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { notifyNewEntry } from '../lib/ntfy'
+import { sendEmailNotification } from '../lib/email'
 import { enqueueEntry } from '../lib/offlineQueue'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -106,6 +107,7 @@ export default function EntryForm() {
       }
 
       notifyNewEntry(data)
+      sendEmailNotification(data)
       finishSuccess(payload, `Bon n° ${payload.bon_number} enregistré.`)
     } catch {
       enqueueEntry(payload)
