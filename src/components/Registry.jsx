@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { downloadCsv } from '../lib/csv'
+import { downloadExcel } from '../lib/excel'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
 
 const EDIT_LOCK_HOURS = 72
@@ -19,6 +19,7 @@ export default function Registry() {
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
+  const [exportProgress, setExportProgress] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -111,6 +112,19 @@ export default function Registry() {
     cancelEdit()
   }
 
+  async function handleExport() {
+    setExportProgress({ current: 0, total: 0 })
+    try {
+      await downloadExcel(filtered, {
+        onProgress: (current, total) => setExportProgress({ current, total }),
+      })
+    } catch (err) {
+      setError(`Erreur lors de la génération du fichier Excel : ${err.message}`)
+    } finally {
+      setExportProgress(null)
+    }
+  }
+
   async function handleDelete(entry) {
     const ok = window.confirm(`Supprimer le bon n° ${entry.bon_number} (${entry.truck_plate}) ?`)
     if (!ok) return
@@ -148,10 +162,15 @@ export default function Registry() {
         </div>
         <button
           type="button"
-          onClick={() => downloadCsv(filtered)}
-          className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          onClick={handleExport}
+          disabled={exportProgress != null}
+          className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Exporter CSV
+          {exportProgress != null
+            ? exportProgress.total > 0
+              ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
+              : 'Génération en cours…'
+            : 'Exporter Excel'}
         </button>
       </div>
 
