@@ -1,3 +1,5 @@
+import { computeAmount, formatDA, rateFor } from './unloadingTypes'
+
 const NTFY_TOPIC = import.meta.env.VITE_NTFY_TOPIC
 
 export async function notifyNewEntry(entry) {
@@ -10,10 +12,18 @@ export async function notifyNewEntry(entry) {
     `Date : ${entry.entry_date}`,
     `Matricule : ${entry.truck_plate}`,
     `Chauffeur : ${entry.driver_name}`,
-    `Lieu : ${entry.unloading_location || 'Akbou'}`,
+    `Type : ${entry.unloading_type}`,
   ]
+  if (entry.ticket_number) {
+    lines.push(`Ticket pesée : ${entry.ticket_number}`)
+  }
+  const amount = computeAmount(entry)
   if (entry.weight_tons != null && entry.weight_tons !== '') {
-    lines.push(`Poids : ${entry.weight_tons} T`)
+    lines.push(
+      amount != null
+        ? `Poids : ${entry.weight_tons}T × ${rateFor(entry.unloading_type)} DA = ${formatDA(amount)}`
+        : `Poids : ${entry.weight_tons} T`
+    )
   }
   if (entry.observations) {
     lines.push(`Obs : ${entry.observations}`)

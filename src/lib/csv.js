@@ -1,11 +1,15 @@
+import { FIXED_WEIGHT_TYPE, rateFor } from './unloadingTypes'
+
 const HEADERS = [
-  ['bon_number', 'N° Bon'],
-  ['entry_date', "Date d'entrée"],
-  ['truck_plate', 'Matricule'],
-  ['driver_name', 'Chauffeur'],
-  ['unloading_location', 'Lieu de déchargement'],
-  ['weight_tons', 'Poids (T)'],
-  ['observations', 'Observations'],
+  'N° Bon',
+  'Date',
+  'Matricule',
+  'Nom du chauffeur',
+  'DPR AXXAM Location (T)',
+  'Akbou (T)',
+  'DPR AXXAM 22T (T)',
+  'N° Ticket de pesée',
+  'Observations',
 ]
 
 function escapeCsvField(value) {
@@ -16,12 +20,67 @@ function escapeCsvField(value) {
   return str
 }
 
+function weightByType(entry, type) {
+  return entry.unloading_type === type && entry.weight_tons != null ? Number(entry.weight_tons) : ''
+}
+
+function entryToRow(entry) {
+  return [
+    entry.bon_number,
+    entry.entry_date,
+    entry.truck_plate,
+    entry.driver_name,
+    weightByType(entry, 'DPR AXXAM Location'),
+    weightByType(entry, 'Akbou'),
+    weightByType(entry, FIXED_WEIGHT_TYPE),
+    entry.ticket_number,
+    entry.observations,
+  ]
+}
+
+function sumByType(entries, type) {
+  return entries
+    .filter((e) => e.unloading_type === type)
+    .reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
+}
+
 export function entriesToCsv(entries) {
-  const headerRow = HEADERS.map(([, label]) => escapeCsvField(label)).join(';')
-  const rows = entries.map((entry) =>
-    HEADERS.map(([key]) => escapeCsvField(entry[key])).join(';')
-  )
-  return [headerRow, ...rows].join('\r\n')
+  const headerRow = HEADERS.map(escapeCsvField).join(';')
+  const rows = entries.map((entry) => entryToRow(entry).map(escapeCsvField).join(';'))
+
+  const locationTotal = sumByType(entries, 'DPR AXXAM Location')
+  const akbouTotal = sumByType(entries, 'Akbou')
+  const fixedTotal = sumByType(entries, FIXED_WEIGHT_TYPE)
+
+  const totalsRow = [
+    'TOTAL',
+    '',
+    '',
+    '',
+    locationTotal.toFixed(2),
+    akbouTotal.toFixed(2),
+    fixedTotal.toFixed(2),
+    '',
+    '',
+  ]
+    .map(escapeCsvField)
+    .join(';')
+
+  const amountsRow = [
+    'MONTANT (DA)',
+    '',
+    '',
+    '',
+    Math.round(locationTotal * rateFor('DPR AXXAM Location')),
+    Math.round(akbouTotal * rateFor('Akbou')),
+    '',
+    '',
+    '',
+  ]
+    .map(escapeCsvField)
+    .join(';')
+
+  return [headerRow, ...rows, totalsRow, amountsRow].join('\r\n')
 }
 
 export function downloadCsv(entries, filename = 'registre-chargement.csv') {

@@ -1,14 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { downloadCsv } from '../lib/csv'
+import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
+
+const EDIT_LOCK_HOURS = 72
+
+function isLocked(entry) {
+  const ageMs = Date.now() - new Date(entry.created_at).getTime()
+  return ageMs > EDIT_LOCK_HOURS * 3600 * 1000
+}
 
 export default function Registry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
+  const [lightboxUrl, setLightboxUrl] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -46,12 +56,14 @@ export default function Registry() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return entries
-    return entries.filter((e) =>
-      [e.bon_number, e.truck_plate, e.driver_name, e.unloading_location]
-        .some((field) => String(field ?? '').toLowerCase().includes(q))
-    )
-  }, [entries, query])
+    return entries.filter((e) => {
+      if (typeFilter && e.unloading_type !== typeFilter) return false
+      if (!q) return true
+      return [e.bon_number, e.truck_plate, e.driver_name, e.unloading_type, e.ticket_number].some((field) =>
+        String(field ?? '').toLowerCase().includes(q)
+      )
+    })
+  }, [entries, query, typeFilter])
 
   const totals = useMemo(() => {
     const weight = filtered.reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
@@ -69,13 +81,19 @@ export default function Registry() {
   }
 
   async function saveEdit() {
+    const isFixed = editDraft.unloading_type === FIXED_WEIGHT_TYPE
     const payload = {
       bon_number: Number(editDraft.bon_number),
       entry_date: editDraft.entry_date,
       truck_plate: editDraft.truck_plate.trim(),
       driver_name: editDraft.driver_name.trim(),
-      unloading_location: editDraft.unloading_location.trim() || 'Akbou',
-      weight_tons: editDraft.weight_tons === '' || editDraft.weight_tons == null ? null : Number(editDraft.weight_tons),
+      unloading_type: editDraft.unloading_type,
+      ticket_number: isFixed ? null : editDraft.ticket_number?.trim() || null,
+      weight_tons: isFixed
+        ? FIXED_WEIGHT_TONS
+        : editDraft.weight_tons === '' || editDraft.weight_tons == null
+          ? null
+          : Number(editDraft.weight_tons),
       observations: editDraft.observations?.trim() || null,
     }
     const { data, error: updateError } = await supabase
@@ -107,13 +125,27 @@ export default function Registry() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Rechercher : bon, matricule, chauffeur, lieu…"
-          className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
-        />
+        <div className="flex flex-1 flex-col gap-3 sm:flex-row">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher : bon, matricule, chauffeur, ticket…"
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
+          />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+          >
+            <option value="">Tous les types</option>
+            {UNLOADING_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
         <button
           type="button"
           onClick={() => downloadCsv(filtered)}
@@ -146,15 +178,17 @@ export default function Registry() {
         <p className="text-ink-muted">Aucune entrée.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
+          <table className="w-full min-w-[960px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Bon</Th>
                 <Th>Date</Th>
                 <Th>Matricule</Th>
                 <Th>Chauffeur</Th>
-                <Th>Lieu</Th>
+                <Th>Type</Th>
+                <Th>Ticket</Th>
                 <Th>Poids (T)</Th>
+                <Th>Photo</Th>
                 <Th>Observations</Th>
                 <Th>Actions</Th>
               </tr>
@@ -175,28 +209,27 @@ export default function Registry() {
                     <Td>{entry.entry_date}</Td>
                     <Td>{entry.truck_plate}</Td>
                     <Td>{entry.driver_name}</Td>
-                    <Td>{entry.unloading_location}</Td>
+                    <Td>{entry.unloading_type}</Td>
+                    <Td>{entry.ticket_number ?? '—'}</Td>
                     <Td>{entry.weight_tons ?? '—'}</Td>
+                    <Td>
+                      {entry.photo_url ? (
+                        <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
+                          <img
+                            src={entry.photo_url}
+                            alt={`Bon n° ${entry.bon_number}`}
+                            className="h-10 w-10 rounded object-cover"
+                          />
+                        </button>
+                      ) : (
+                        '—'
+                      )}
+                    </Td>
                     <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                       {entry.observations ?? '—'}
                     </Td>
                     <Td>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => startEdit(entry)}
-                          className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre"
-                        >
-                          Modifier
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(entry)}
-                          className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
+                      <RowActions entry={entry} onEdit={() => startEdit(entry)} onDelete={() => handleDelete(entry)} />
                     </Td>
                   </tr>
                 )
@@ -205,14 +238,67 @@ export default function Registry() {
           </table>
         </div>
       )}
+
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <img src={lightboxUrl} alt="Bon" className="max-h-full max-w-full rounded-lg" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RowActions({ entry, onEdit, onDelete }) {
+  const locked = isLocked(entry)
+  const title = locked ? 'Modification impossible après 72h' : undefined
+
+  return (
+    <div className="flex gap-2">
+      <span title={title}>
+        <button
+          type="button"
+          onClick={onEdit}
+          disabled={locked}
+          className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-ink-muted"
+        >
+          Modifier
+        </button>
+      </span>
+      <span title={title}>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={locked}
+          className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+        >
+          Supprimer
+        </button>
+      </span>
     </div>
   )
 }
 
 function EditRow({ draft, onChange, onSave, onCancel }) {
+  const isFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
+
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
+
+  function setType(nextType) {
+    const wasFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
+    const becomesFixed = nextType === FIXED_WEIGHT_TYPE
+    onChange({
+      ...draft,
+      unloading_type: nextType,
+      weight_tons: becomesFixed ? FIXED_WEIGHT_TONS : wasFixed ? '' : draft.weight_tons,
+      ticket_number: becomesFixed ? '' : draft.ticket_number,
+    })
+  }
+
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
       <Td>
@@ -228,10 +314,37 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
         <input type="text" value={draft.driver_name} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="text" value={draft.unloading_location} onChange={(e) => set('unloading_location', e.target.value)} className={editInputClass} />
+        <select value={draft.unloading_type} onChange={(e) => setType(e.target.value)} className={editInputClass}>
+          {UNLOADING_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
       </Td>
       <Td>
-        <input type="number" step="0.01" value={draft.weight_tons ?? ''} onChange={(e) => set('weight_tons', e.target.value)} className={editInputClass} />
+        {isFixed ? (
+          '—'
+        ) : (
+          <input type="text" value={draft.ticket_number ?? ''} onChange={(e) => set('ticket_number', e.target.value)} className={editInputClass} />
+        )}
+      </Td>
+      <Td>
+        <input
+          type="number"
+          step="0.01"
+          value={draft.weight_tons ?? ''}
+          onChange={(e) => set('weight_tons', e.target.value)}
+          className={editInputClass}
+          disabled={isFixed}
+        />
+      </Td>
+      <Td>
+        {draft.photo_url ? (
+          <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
+        ) : (
+          '—'
+        )}
       </Td>
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
@@ -263,7 +376,7 @@ function Td({ children, className = '', title }) {
 }
 
 const editInputClass =
-  'min-w-24 rounded border border-border bg-bg px-2 py-1 text-ink outline-none focus:border-terracotta'
+  'min-w-24 rounded border border-border bg-bg px-2 py-1 text-ink outline-none focus:border-terracotta disabled:opacity-60'
 
 function applyRealtimeChange(current, payload) {
   if (payload.eventType === 'INSERT') {
