@@ -10,6 +10,12 @@ function isLocked(entry) {
   return ageMs > EDIT_LOCK_HOURS * 3600 * 1000
 }
 
+function formatTime(value) {
+  return value ? value.slice(0, 5) : '—'
+}
+
+const LOCK_MESSAGE = 'Modification impossible après 72h'
+
 export default function Registry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -82,6 +88,11 @@ export default function Registry() {
   }
 
   async function saveEdit() {
+    if (isLocked(editDraft)) {
+      setError(LOCK_MESSAGE)
+      cancelEdit()
+      return
+    }
     const isFixed = editDraft.unloading_type === FIXED_WEIGHT_TYPE
     const payload = {
       bon_number: Number(editDraft.bon_number),
@@ -126,6 +137,10 @@ export default function Registry() {
   }
 
   async function handleDelete(entry) {
+    if (isLocked(entry)) {
+      setError(LOCK_MESSAGE)
+      return
+    }
     const ok = window.confirm(`Supprimer le bon n° ${entry.bon_number} (${entry.truck_plate}) ?`)
     if (!ok) return
     const { error: deleteError } = await supabase.from('entries').delete().eq('id', entry.id)
@@ -197,11 +212,12 @@ export default function Registry() {
         <p className="text-ink-muted">Aucune entrée.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[960px] border-collapse text-sm">
+          <table className="w-full min-w-[1050px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Bon</Th>
                 <Th>Date</Th>
+                <Th>Heure</Th>
                 <Th>Matricule</Th>
                 <Th>Chauffeur</Th>
                 <Th>Type</Th>
@@ -226,6 +242,7 @@ export default function Registry() {
                   <tr key={entry.id} className="border-b border-border last:border-0">
                     <Td>{entry.bon_number}</Td>
                     <Td>{entry.entry_date}</Td>
+                    <Td>{formatTime(entry.entry_time)}</Td>
                     <Td>{entry.truck_plate}</Td>
                     <Td>{entry.driver_name}</Td>
                     <Td>{entry.unloading_type}</Td>
@@ -248,7 +265,12 @@ export default function Registry() {
                       {entry.observations ?? '—'}
                     </Td>
                     <Td>
-                      <RowActions entry={entry} onEdit={() => startEdit(entry)} onDelete={() => handleDelete(entry)} />
+                      <RowActions
+                        entry={entry}
+                        onEdit={() => startEdit(entry)}
+                        onDelete={() => handleDelete(entry)}
+                        onLockedAttempt={() => setError(LOCK_MESSAGE)}
+                      />
                     </Td>
                   </tr>
                 )
@@ -270,32 +292,29 @@ export default function Registry() {
   )
 }
 
-function RowActions({ entry, onEdit, onDelete }) {
+function RowActions({ entry, onEdit, onDelete, onLockedAttempt }) {
   const locked = isLocked(entry)
-  const title = locked ? 'Modification impossible après 72h' : undefined
+  const title = locked ? LOCK_MESSAGE : undefined
+  const lockedClass = locked ? 'cursor-not-allowed opacity-40' : ''
 
   return (
     <div className="flex gap-2">
-      <span title={title}>
-        <button
-          type="button"
-          onClick={onEdit}
-          disabled={locked}
-          className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:text-ink-muted"
-        >
-          Modifier
-        </button>
-      </span>
-      <span title={title}>
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={locked}
-          className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-        >
-          Supprimer
-        </button>
-      </span>
+      <button
+        type="button"
+        onClick={locked ? onLockedAttempt : onEdit}
+        title={title}
+        className={`rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre ${lockedClass}`}
+      >
+        Modifier
+      </button>
+      <button
+        type="button"
+        onClick={locked ? onLockedAttempt : onDelete}
+        title={title}
+        className={`rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 ${lockedClass}`}
+      >
+        Supprimer
+      </button>
     </div>
   )
 }
@@ -326,6 +345,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
         <input type="text" value={draft.truck_plate} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
       </Td>

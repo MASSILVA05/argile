@@ -5,6 +5,7 @@ create table if not exists entries (
   id uuid primary key default gen_random_uuid(),
   bon_number integer not null unique,
   entry_date date not null default current_date,
+  entry_time time,
   truck_plate text not null,
   driver_name text not null,
   unloading_type text not null default 'Akbou'
@@ -19,6 +20,7 @@ create table if not exists entries (
 comment on table entries is 'Registre des sorties de camions - site de chargement argile';
 comment on column entries.bon_number is 'Numéro du bon de chargement, unique';
 comment on column entries.weight_tons is 'Poids en tonnes, à la 2e décimale près';
+comment on column entries.entry_time is 'Heure de saisie, capturée automatiquement au clic sur "Enregistrer"';
 
 -- Index pour accélérer le tri par défaut (registre trié par création décroissante)
 create index if not exists entries_created_at_idx on entries (created_at desc);
@@ -45,14 +47,16 @@ create policy "Ajout d'entrées"
   on entries for insert
   with check (true);
 
+-- Modification/suppression bloquées côté base au-delà de 72h après création,
+-- en plus du verrouillage déjà appliqué côté interface (Registry.jsx).
 create policy "Modification des entrées"
   on entries for update
-  using (true)
-  with check (true);
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
 
 create policy "Suppression des entrées"
   on entries for delete
-  using (true);
+  using (created_at > now() - interval '72 hours');
 
 -- Realtime : permet au registre de se mettre à jour en direct
 alter publication supabase_realtime add table entries;
@@ -101,3 +105,15 @@ alter table entries add constraint entries_unloading_type_check
 
 -- 4. Suppression de l'ancienne colonne
 alter table entries drop column if exists unloading_location;
+
+-- 5. Heure de saisie automatique
+alter table entries add column if not exists entry_time time;
+
+-- 6. Verrouillage à 72h appliqué directement par les policies RLS
+-- (en plus du verrouillage déjà présent côté interface)
+alter policy "Modification des entrées" on entries
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+alter policy "Suppression des entrées" on entries
+  using (created_at > now() - interval '72 hours');

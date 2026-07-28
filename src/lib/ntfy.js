@@ -9,7 +9,7 @@ export async function notifyNewEntry(entry) {
   }
   const lines = [
     `Bon n° ${entry.bon_number}`,
-    `Date : ${entry.entry_date}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
     `Matricule : ${entry.truck_plate}`,
     `Chauffeur : ${entry.driver_name}`,
     `Type : ${entry.unloading_type}`,

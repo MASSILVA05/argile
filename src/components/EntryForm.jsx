@@ -7,6 +7,7 @@ import { uploadBonPhoto } from '../lib/storage'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
+const formatHHMM = (date) => date.toTimeString().slice(0, 5)
 
 const emptyDraft = {
   bon_number: '',
@@ -27,6 +28,12 @@ export default function EntryForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [clock, setClock] = useState(() => formatHHMM(new Date()))
+
+  useEffect(() => {
+    const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   async function loadSuggestions() {
     const [{ data: bonRow }, { data: plateRows }, { data: driverRows }] = await Promise.all([
@@ -90,6 +97,7 @@ export default function EntryForm() {
     setLoading(true)
 
     const bonNumber = Number(draft.bon_number)
+    const entryTime = formatHHMM(new Date())
 
     if (navigator.onLine) {
       const { data: existing, error: checkError } = await supabase
@@ -113,6 +121,7 @@ export default function EntryForm() {
     const basePayload = {
       bon_number: bonNumber,
       entry_date: draft.entry_date,
+      entry_time: entryTime,
       truck_plate: draft.truck_plate.trim(),
       driver_name: draft.driver_name.trim(),
       unloading_type: draft.unloading_type,
@@ -198,6 +207,16 @@ export default function EntryForm() {
           />
         </Field>
       </div>
+
+      <Field label="Heure d'entrée">
+        <input
+          type="text"
+          value={clock}
+          readOnly
+          disabled
+          className={`${inputClass} cursor-not-allowed opacity-60`}
+        />
+      </Field>
 
       <Field label="Matricule du camion" required>
         <input

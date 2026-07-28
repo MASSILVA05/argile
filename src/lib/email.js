@@ -9,6 +9,7 @@ export async function sendEmailNotification(entry) {
     const result = await emailjs.send('service_ndslg4h', 'template_jjwwov9', {
       bon_number: entry.bon_number,
       entry_date: entry.entry_date,
+      entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : 'N/A',
       truck_plate: entry.truck_plate,
       driver_name: entry.driver_name,
       unloading_type: entry.unloading_type,

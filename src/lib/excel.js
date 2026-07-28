@@ -11,6 +11,7 @@ const ALL_BORDERS = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, 
 const COLUMNS = [
   { header: 'N° Bon', key: 'bon_number', width: 10 },
   { header: 'Date', key: 'entry_date', width: 12 },
+  { header: 'Heure', key: 'entry_time', width: 10 },
   { header: 'Matricule', key: 'truck_plate', width: 16 },
   { header: 'Nom du chauffeur', key: 'driver_name', width: 20 },
   { header: 'DPR AXXAM Location (T)', key: 'location_weight', width: 20 },
@@ -102,6 +103,7 @@ export async function downloadExcel(entries, { onProgress } = {}) {
     const row = sheet.addRow({
       bon_number: entry.bon_number,
       entry_date: entry.entry_date,
+      entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : '',
       truck_plate: entry.truck_plate,
       driver_name: entry.driver_name,
       location_weight: weightByType(entry, 'DPR AXXAM Location'),
