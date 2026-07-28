@@ -9,18 +9,23 @@ const THIN_BORDER = { style: 'thin', color: { argb: 'FF33344F' } }
 const ALL_BORDERS = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, right: THIN_BORDER }
 
 const COLUMNS = [
-  { header: 'N° Bon', key: 'bon_number', width: 10 },
-  { header: 'Date', key: 'entry_date', width: 12 },
+  { header: 'N° Bon', key: 'bon_number', width: 12 },
+  { header: 'Date', key: 'entry_date', width: 14 },
   { header: 'Heure', key: 'entry_time', width: 10 },
-  { header: 'Matricule', key: 'truck_plate', width: 16 },
-  { header: 'Nom du chauffeur', key: 'driver_name', width: 20 },
-  { header: 'DPR AXXAM Location (T)', key: 'location_weight', width: 20 },
-  { header: 'Akbou (T)', key: 'akbou_weight', width: 12 },
-  { header: 'DPR AXXAM 22T (T)', key: 'fixed_weight', width: 16 },
-  { header: 'N° Ticket de pesée', key: 'ticket_number', width: 18 },
-  { header: 'Photo du bon', key: 'photo', width: 13 },
+  { header: 'Matricule', key: 'truck_plate', width: 18 },
+  { header: 'Nom du chauffeur', key: 'driver_name', width: 25 },
+  { header: 'DPR AXXAM Location (T)', key: 'location_weight', width: 22 },
+  { header: 'Akbou (T)', key: 'akbou_weight', width: 15 },
+  { header: 'DPR AXXAM 22T (T)', key: 'fixed_weight', width: 20 },
+  { header: 'N° Ticket de pesée', key: 'ticket_number', width: 20 },
+  { header: 'Photo du bon', key: 'photo', width: 20 },
   { header: 'Observations', key: 'observations', width: 30 },
 ]
+
+const DATA_ROW_HEIGHT = 25
+const PHOTO_ROW_HEIGHT = 85
+const PHOTO_WIDTH = 140
+const PHOTO_HEIGHT = 105
 
 const PHOTO_COL_INDEX = COLUMNS.findIndex((c) => c.key === 'photo') + 1
 
@@ -61,26 +66,30 @@ async function fetchPhotoAsBase64(url) {
   return { base64, extension: guessExtension(blob.type) }
 }
 
+const CENTERED_WRAP = { vertical: 'middle', horizontal: 'center', wrapText: true }
+
 function styleHeaderRow(row) {
   row.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+    cell.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } }
     cell.border = ALL_BORDERS
-    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
+    cell.alignment = CENTERED_WRAP
   })
 }
 
 function styleDataRow(row) {
   row.eachCell({ includeEmpty: true }, (cell) => {
+    cell.font = { size: 11 }
     cell.border = ALL_BORDERS
-    cell.alignment = { vertical: 'middle' }
+    cell.alignment = CENTERED_WRAP
   })
 }
 
 function styleTotalsRow(row, fillArgb) {
   row.eachCell({ includeEmpty: true }, (cell) => {
-    cell.font = { bold: true }
+    cell.font = { bold: true, size: 11 }
     cell.border = ALL_BORDERS
+    cell.alignment = CENTERED_WRAP
     if (fillArgb) {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } }
     }
@@ -93,6 +102,7 @@ export async function downloadExcel(entries, { onProgress } = {}) {
   sheet.columns = COLUMNS
 
   styleHeaderRow(sheet.getRow(1))
+  sheet.getRow(1).height = DATA_ROW_HEIGHT
   sheet.views = [{ state: 'frozen', ySplit: 1 }]
 
   const withPhoto = entries.filter((e) => e.photo_url)
@@ -114,6 +124,7 @@ export async function downloadExcel(entries, { onProgress } = {}) {
       observations: entry.observations ?? '',
     })
     styleDataRow(row)
+    row.height = DATA_ROW_HEIGHT
 
     if (entry.photo_url) {
       try {
@@ -121,9 +132,9 @@ export async function downloadExcel(entries, { onProgress } = {}) {
         const imageId = workbook.addImage({ base64, extension })
         sheet.addImage(imageId, {
           tl: { col: PHOTO_COL_INDEX - 1, row: row.number - 1 },
-          ext: { width: 80, height: 60 },
+          ext: { width: PHOTO_WIDTH, height: PHOTO_HEIGHT },
         })
-        row.height = 46
+        row.height = PHOTO_ROW_HEIGHT
       } catch {
         row.getCell(PHOTO_COL_INDEX).value = 'Photo non disponible'
       }
@@ -143,6 +154,7 @@ export async function downloadExcel(entries, { onProgress } = {}) {
     fixed_weight: fixedTotal,
   })
   styleTotalsRow(totalsRow, null)
+  totalsRow.height = DATA_ROW_HEIGHT
 
   const amountsRow = sheet.addRow({
     bon_number: 'MONTANT (DA)',
@@ -151,6 +163,7 @@ export async function downloadExcel(entries, { onProgress } = {}) {
     fixed_weight: '',
   })
   styleTotalsRow(amountsRow, AMOUNT_ROW_FILL)
+  amountsRow.height = DATA_ROW_HEIGHT
 
   const buffer = await workbook.xlsx.writeBuffer()
   const blob = new Blob([buffer], {
