@@ -117,3 +117,11 @@ alter policy "Modification des entrées" on entries
 
 alter policy "Suppression des entrées" on entries
   using (created_at > now() - interval '72 hours');
+
+-- 7. Correction des anciennes entrées mal classées : un poids de 22T saisi
+--    sous le type 'Akbou' correspond en réalité au type 'DPR AXXAM (22T)'.
+--    Ne touche à rien d'autre (aucune autre valeur de unloading_type n'est modifiée).
+update entries
+set unloading_type = 'DPR AXXAM (22T)'
+where unloading_type = 'Akbou'
+  and weight_tons = 22;

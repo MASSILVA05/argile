@@ -8,6 +8,7 @@ import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/un
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
+const MAX_WEIGHT_TONS = 35
 
 const emptyDraft = {
   bon_number: '',
@@ -79,8 +80,13 @@ export default function EntryForm() {
     if (!draft.entry_date) return "La date d'entrée est obligatoire."
     if (!draft.truck_plate.trim()) return 'Le matricule du camion est obligatoire.'
     if (!draft.driver_name.trim()) return 'Le nom du chauffeur est obligatoire.'
-    if (draft.unloading_type !== FIXED_WEIGHT_TYPE && draft.weight_tons === '') {
-      return 'Le poids est obligatoire pour ce type de déchargement.'
+    if (draft.unloading_type !== FIXED_WEIGHT_TYPE) {
+      if (draft.weight_tons === '') {
+        return 'Le poids est obligatoire pour ce type de déchargement.'
+      }
+      if (Number(draft.weight_tons) > MAX_WEIGHT_TONS) {
+        return `Le poids ne peut pas dépasser ${MAX_WEIGHT_TONS} tonnes.`
+      }
     }
     return ''
   }
@@ -274,10 +280,11 @@ export default function EntryForm() {
           inputMode="decimal"
           step="0.01"
           min="0"
+          max={isFixedWeight ? undefined : MAX_WEIGHT_TONS}
           value={draft.weight_tons}
           onChange={(e) => update('weight_tons', e.target.value)}
           className={`${inputClass} ${isFixedWeight ? 'cursor-not-allowed opacity-60' : ''}`}
-          placeholder={isFixedWeight ? '' : 'obligatoire'}
+          placeholder={isFixedWeight ? '' : 'obligatoire, max 35T'}
           disabled={isFixedWeight}
           required={!isFixedWeight}
         />
