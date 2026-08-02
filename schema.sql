@@ -125,3 +125,103 @@ update entries
 set unloading_type = 'DPR AXXAM (22T)'
 where unloading_type = 'Akbou'
   and weight_tons = 22;
+
+-- ============================================================
+-- CODE ADMIN : déblocage sécurisé des modifications après 72h
+-- ============================================================
+-- La RLS 72h (policies "Modification des entrées" / "Suppression des
+-- entrées" plus haut) reste active pour tout le monde : elle protège
+-- la base même si la clé "anon" est lue dans le code du site (elle
+-- l'est forcément, c'est une clé publique côté client). Le code admin
+-- ne passe donc PAS par un assouplissement de ces policies, mais par
+-- les deux fonctions ci-dessous : elles vérifient le code côté serveur
+-- puis agissent avec les privilèges du propriétaire de la table
+-- (SECURITY DEFINER), ce qui contourne la RLS uniquement pour cet appel
+-- précis, et seulement si le code fourni est correct.
+
+create table if not exists app_settings (
+  key text primary key,
+  value text not null
+);
+
+alter table app_settings enable row level security;
+-- Aucune policy créée ici volontairement : app_settings n'est accessible
+-- ni en lecture ni en écriture via l'API (anon/authenticated), uniquement
+-- depuis l'intérieur des fonctions SECURITY DEFINER ci-dessous.
+
+insert into app_settings (key, value)
+values ('admin_code', '2024DPR')
+on conflict (key) do nothing;
+
+-- Pour changer le code admin plus tard (à faire en même temps que
+-- VITE_ADMIN_CODE dans .env et dans les variables d'environnement Vercel) :
+--   update app_settings set value = 'NOUVEAU_CODE' where key = 'admin_code';
+
+create or replace function admin_update_entry(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_truck_plate text,
+  p_driver_name text,
+  p_unloading_type text,
+  p_ticket_number text,
+  p_weight_tons numeric,
+  p_observations text
+)
+returns entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update entries set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    truck_plate = p_truck_plate,
+    driver_name = p_driver_name,
+    unloading_type = p_unloading_type,
+    ticket_number = p_ticket_number,
+    weight_tons = p_weight_tons,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Entrée introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_entry(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_entry(uuid, text, integer, date, text, text, text, text, numeric, text) from public;
+revoke all on function admin_delete_entry(uuid, text) from public;
+grant execute on function admin_update_entry(uuid, text, integer, date, text, text, text, text, numeric, text) to anon, authenticated;
+grant execute on function admin_delete_entry(uuid, text) to anon, authenticated;

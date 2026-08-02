@@ -96,7 +96,7 @@ function styleTotalsRow(row, fillArgb) {
   })
 }
 
-export async function downloadExcel(entries, { onProgress } = {}) {
+export async function downloadExcel(entries, { onProgress, includePhotos = true } = {}) {
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('Registre')
   sheet.columns = COLUMNS
@@ -105,7 +105,7 @@ export async function downloadExcel(entries, { onProgress } = {}) {
   sheet.getRow(1).height = DATA_ROW_HEIGHT
   sheet.views = [{ state: 'frozen', ySplit: 1 }]
 
-  const withPhoto = entries.filter((e) => e.photo_url)
+  const withPhoto = includePhotos ? entries.filter((e) => e.photo_url) : []
   const totalPhotos = withPhoto.length
   let processedPhotos = 0
 
@@ -120,13 +120,13 @@ export async function downloadExcel(entries, { onProgress } = {}) {
       akbou_weight: weightByType(entry, 'Akbou'),
       fixed_weight: weightByType(entry, FIXED_WEIGHT_TYPE),
       ticket_number: entry.ticket_number ?? '',
-      photo: '',
+      photo: includePhotos ? '' : entry.photo_url ? 'Oui' : 'Non',
       observations: entry.observations ?? '',
     })
     styleDataRow(row)
     row.height = DATA_ROW_HEIGHT
 
-    if (entry.photo_url) {
+    if (includePhotos && entry.photo_url) {
       try {
         const { base64, extension } = await fetchPhotoAsBase64(entry.photo_url)
         const imageId = workbook.addImage({ base64, extension })

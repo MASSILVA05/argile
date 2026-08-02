@@ -15,6 +15,7 @@ function formatTime(value) {
 }
 
 const LOCK_MESSAGE = 'Modification impossible après 72h'
+const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
 
 export default function Registry() {
   const [entries, setEntries] = useState([])
@@ -26,6 +27,12 @@ export default function Registry() {
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
   const [exportProgress, setExportProgress] = useState(null)
+  const [exportChoiceOpen, setExportChoiceOpen] = useState(false)
+  const [editAdminCode, setEditAdminCode] = useState(null)
+  const [adminPrompt, setAdminPrompt] = useState(null)
+  const [adminCodeValue, setAdminCodeValue] = useState('')
+  const [adminError, setAdminError] = useState('')
+  const [adminBusy, setAdminBusy] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -85,10 +92,12 @@ export default function Registry() {
   function cancelEdit() {
     setEditingId(null)
     setEditDraft(null)
+    setEditAdminCode(null)
   }
 
   async function saveEdit() {
-    if (isLocked(editDraft)) {
+    const usingAdminCode = editAdminCode != null
+    if (!usingAdminCode && isLocked(editDraft)) {
       setError(LOCK_MESSAGE)
       cancelEdit()
       return
@@ -108,12 +117,21 @@ export default function Registry() {
           : Number(editDraft.weight_tons),
       observations: editDraft.observations?.trim() || null,
     }
-    const { data, error: updateError } = await supabase
-      .from('entries')
-      .update(payload)
-      .eq('id', editingId)
-      .select()
-      .single()
+
+    const { data, error: updateError } = usingAdminCode
+      ? await supabase.rpc('admin_update_entry', {
+          p_id: editingId,
+          p_admin_code: editAdminCode,
+          p_bon_number: payload.bon_number,
+          p_entry_date: payload.entry_date,
+          p_truck_plate: payload.truck_plate,
+          p_driver_name: payload.driver_name,
+          p_unloading_type: payload.unloading_type,
+          p_ticket_number: payload.ticket_number,
+          p_weight_tons: payload.weight_tons,
+          p_observations: payload.observations,
+        })
+      : await supabase.from('entries').update(payload).eq('id', editingId).select().single()
 
     if (updateError) {
       setError(`Erreur de mise à jour : ${updateError.message}`)
@@ -123,10 +141,56 @@ export default function Registry() {
     cancelEdit()
   }
 
-  async function handleExport() {
+  function openAdminPrompt(action, entry) {
+    setAdminPrompt({ action, entry })
+    setAdminCodeValue('')
+    setAdminError('')
+  }
+
+  function closeAdminPrompt() {
+    setAdminPrompt(null)
+    setAdminCodeValue('')
+    setAdminError('')
+  }
+
+  async function confirmAdminCode() {
+    if (!ADMIN_CODE) {
+      setAdminError("VITE_ADMIN_CODE n'est pas configuré.")
+      return
+    }
+    if (adminCodeValue !== ADMIN_CODE) {
+      setAdminError('Code incorrect.')
+      return
+    }
+
+    if (adminPrompt.action === 'edit') {
+      const entry = adminPrompt.entry
+      closeAdminPrompt()
+      startEdit(entry)
+      setEditAdminCode(adminCodeValue)
+      return
+    }
+
+    setAdminBusy(true)
+    const { error: rpcError } = await supabase.rpc('admin_delete_entry', {
+      p_id: adminPrompt.entry.id,
+      p_admin_code: adminCodeValue,
+    })
+    setAdminBusy(false)
+    if (rpcError) {
+      setAdminError(`Erreur : ${rpcError.message}`)
+      return
+    }
+    setEntries((current) => current.filter((e) => e.id !== adminPrompt.entry.id))
+    closeAdminPrompt()
+  }
+
+  async function handleExport(includePhotos) {
+    setExportChoiceOpen(false)
     setExportProgress({ current: 0, total: 0 })
     try {
       await downloadExcel(filtered, {
+        includePhotos,
         onProgress: (current, total) => setExportProgress({ current, total }),
       })
     } catch (err) {
@@ -177,7 +241,7 @@ export default function Registry() {
         </div>
         <button
           type="button"
-          onClick={handleExport}
+          onClick={() => setExportChoiceOpen(true)}
           disabled={exportProgress != null}
           className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -269,7 +333,7 @@ export default function Registry() {
                         entry={entry}
                         onEdit={() => startEdit(entry)}
                         onDelete={() => handleDelete(entry)}
-                        onLockedAttempt={() => setError(LOCK_MESSAGE)}
+                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
                       />
                     </Td>
                   </tr>
@@ -288,6 +352,92 @@ export default function Registry() {
           <img src={lightboxUrl} alt="Bon" className="max-h-full max-w-full rounded-lg" />
         </div>
       )}
+
+      {exportChoiceOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setExportChoiceOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-border bg-bg-card p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 font-display text-lg text-ink">Exporter le registre</h2>
+            <p className="mb-4 text-sm text-ink-muted">
+              Avec les photos, le fichier est plus complet mais plus lent à générer et plus volumineux.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => handleExport(true)}
+                className="min-h-11 flex-1 rounded-lg bg-terracotta px-4 py-2 font-display text-ink hover:bg-terracotta-hover"
+              >
+                Avec photos
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport(false)}
+                className="min-h-11 flex-1 rounded-lg border border-ocre px-4 py-2 font-display text-ocre hover:bg-ocre/10"
+              >
+                Sans photos
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setExportChoiceOpen(false)}
+              className="mt-3 w-full text-center text-sm text-ink-muted"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
+      {adminPrompt && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={closeAdminPrompt}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-border bg-bg-card p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 font-display text-lg text-ink">Code administrateur requis</h2>
+            <p className="mb-3 text-sm text-ink-muted">
+              Cette entrée a plus de 72h. Saisis le code administrateur pour{' '}
+              {adminPrompt.action === 'edit' ? 'la modifier' : 'la supprimer'}.
+            </p>
+            <input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              value={adminCodeValue}
+              onChange={(e) => setAdminCodeValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && confirmAdminCode()}
+              className="mb-2 min-h-11 w-full rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+              placeholder="Code administrateur"
+            />
+            {adminError && <p className="mb-2 text-sm text-terracotta">{adminError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeAdminPrompt}
+                className="rounded-lg border border-border px-3 py-2 text-sm text-ink-muted"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmAdminCode}
+                disabled={adminBusy}
+                className="rounded-lg bg-terracotta px-3 py-2 text-sm font-display text-ink hover:bg-terracotta-hover disabled:opacity-50"
+              >
+                {adminBusy ? 'Vérification…' : 'Confirmer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -301,7 +451,7 @@ function RowActions({ entry, onEdit, onDelete, onLockedAttempt }) {
     <div className="flex gap-2">
       <button
         type="button"
-        onClick={locked ? onLockedAttempt : onEdit}
+        onClick={locked ? () => onLockedAttempt('edit') : onEdit}
         title={title}
         className={`rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre ${lockedClass}`}
       >
@@ -309,7 +459,7 @@ function RowActions({ entry, onEdit, onDelete, onLockedAttempt }) {
       </button>
       <button
         type="button"
-        onClick={locked ? onLockedAttempt : onDelete}
+        onClick={locked ? () => onLockedAttempt('delete') : onDelete}
         title={title}
         className={`rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 ${lockedClass}`}
       >

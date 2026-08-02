@@ -4,6 +4,7 @@ import { notifyNewEntry } from '../lib/ntfy'
 import { sendEmailNotification } from '../lib/email'
 import { enqueueEntry } from '../lib/offlineQueue'
 import { uploadBonPhoto } from '../lib/storage'
+import { compressImage } from '../lib/imageCompress'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -146,7 +147,8 @@ export default function EntryForm() {
     try {
       let photo_url = null
       if (draft.photo_file) {
-        photo_url = await uploadBonPhoto(draft.photo_file, basePayload.bon_number)
+        const compressed = await compressImage(draft.photo_file)
+        photo_url = await uploadBonPhoto(compressed, basePayload.bon_number)
       }
 
       const { data, error: insertError } = await supabase
