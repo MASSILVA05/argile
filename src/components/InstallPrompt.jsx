@@ -22,7 +22,7 @@ export default function InstallPrompt() {
   }
 
   return (
-    <div className="fixed inset-x-4 bottom-4 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-lg border border-ocre bg-bg-card px-4 py-3 shadow-lg">
+    <div className="fixed inset-x-4 bottom-20 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-lg border border-ocre bg-bg-card px-4 py-3 shadow-lg">
       <p className="text-sm text-ink">Installer l'application DPR Chargement sur cet appareil ?</p>
       <div className="flex shrink-0 gap-2">
         <button

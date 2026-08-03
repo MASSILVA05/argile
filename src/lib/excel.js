@@ -1,12 +1,18 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import { FIXED_WEIGHT_TYPE, rateFor } from './unloadingTypes'
-
-const HEADER_FILL = 'FFC4653A' // terracotta
-const AMOUNT_ROW_FILL = 'FFD4A24E' // ocre
-
-const THIN_BORDER = { style: 'thin', color: { argb: 'FF33344F' } }
-const ALL_BORDERS = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, right: THIN_BORDER }
+import {
+  AMOUNT_ROW_FILL,
+  DATA_ROW_HEIGHT,
+  PHOTO_ROW_HEIGHT,
+  PHOTO_WIDTH,
+  PHOTO_HEIGHT,
+  todayISO,
+  fetchPhotoAsBase64,
+  styleHeaderRow,
+  styleDataRow,
+  styleTotalsRow,
+} from './excelHelpers'
 
 const COLUMNS = [
   { header: 'N° Bon', key: 'bon_number', width: 12 },
@@ -22,11 +28,6 @@ const COLUMNS = [
   { header: 'Observations', key: 'observations', width: 30 },
 ]
 
-const DATA_ROW_HEIGHT = 25
-const PHOTO_ROW_HEIGHT = 85
-const PHOTO_WIDTH = 140
-const PHOTO_HEIGHT = 105
-
 const PHOTO_COL_INDEX = COLUMNS.findIndex((c) => c.key === 'photo') + 1
 
 function weightByType(entry, type) {
@@ -37,63 +38,6 @@ function sumByType(entries, type) {
   return entries
     .filter((e) => e.unloading_type === type)
     .reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
-}
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function guessExtension(contentType) {
-  if (contentType?.includes('png')) return 'png'
-  if (contentType?.includes('gif')) return 'gif'
-  return 'jpeg'
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}
-
-async function fetchPhotoAsBase64(url) {
-  const resp = await fetch(url)
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-  const blob = await resp.blob()
-  const base64 = await blobToBase64(blob)
-  return { base64, extension: guessExtension(blob.type) }
-}
-
-const CENTERED_WRAP = { vertical: 'middle', horizontal: 'center', wrapText: true }
-
-function styleHeaderRow(row) {
-  row.eachCell((cell) => {
-    cell.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } }
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } }
-    cell.border = ALL_BORDERS
-    cell.alignment = CENTERED_WRAP
-  })
-}
-
-function styleDataRow(row) {
-  row.eachCell({ includeEmpty: true }, (cell) => {
-    cell.font = { size: 11 }
-    cell.border = ALL_BORDERS
-    cell.alignment = CENTERED_WRAP
-  })
-}
-
-function styleTotalsRow(row, fillArgb) {
-  row.eachCell({ includeEmpty: true }, (cell) => {
-    cell.font = { bold: true, size: 11 }
-    cell.border = ALL_BORDERS
-    cell.alignment = CENTERED_WRAP
-    if (fillArgb) {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } }
-    }
-  })
 }
 
 export async function downloadExcel(entries, { onProgress, includePhotos = true } = {}) {

@@ -1,18 +1,24 @@
 import { supabase } from './supabase'
 
-const BUCKET = 'bon-photos'
-
-export async function uploadBonPhoto(file, bonNumber) {
+export async function uploadPhoto(file, bucket, prefix) {
   const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  const path = `${bonNumber}-${Date.now()}.${ext}`
+  const path = `${prefix}-${Date.now()}.${ext}`
 
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
+  const { error } = await supabase.storage.from(bucket).upload(path, file, {
     cacheControl: '3600',
     upsert: false,
     contentType: file.type || 'image/jpeg',
   })
   if (error) throw error
 
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path)
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
+}
+
+export function uploadBonPhoto(file, bonNumber) {
+  return uploadPhoto(file, 'bon-photos', String(bonNumber))
+}
+
+export function uploadMaintenancePhoto(file, ficheNumber, kind) {
+  return uploadPhoto(file, 'maintenance-photos', `${kind}-${ficheNumber}`)
 }

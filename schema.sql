@@ -225,3 +225,351 @@ revoke all on function admin_update_entry(uuid, text, integer, date, text, text,
 revoke all on function admin_delete_entry(uuid, text) from public;
 grant execute on function admin_update_entry(uuid, text, integer, date, text, text, text, text, numeric, text) to anon, authenticated;
 grant execute on function admin_delete_entry(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- MAINTENANCE : suivi des réparations et achats de pièces
+-- ============================================================
+
+create table if not exists maintenance (
+  id uuid primary key default gen_random_uuid(),
+  fiche_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  machine_name text not null,
+  problem_description text not null,
+  machine_photo_url text,
+  receipt_photo_url text,
+  supplier_name text,
+  purchased_by text,
+  entered_by text,
+  requested_by text,
+  amount numeric(10, 2),
+  is_paid text not null default 'Non' check (is_paid in ('Oui', 'Non', 'En attente')),
+  observations text,
+  created_at timestamptz not null default now()
+);
+
+comment on table maintenance is 'Fiches de maintenance : réparations et achats de pièces';
+comment on column maintenance.fiche_number is 'Numéro de fiche, unique';
+
+create index if not exists maintenance_created_at_idx on maintenance (created_at desc);
+create index if not exists maintenance_machine_name_idx on maintenance (machine_name);
+create index if not exists maintenance_supplier_name_idx on maintenance (supplier_name);
+create index if not exists maintenance_fiche_number_idx on maintenance (fiche_number desc);
+
+alter table maintenance enable row level security;
+
+create policy "Lecture publique maintenance"
+  on maintenance for select
+  using (true);
+
+create policy "Ajout maintenance"
+  on maintenance for insert
+  with check (true);
+
+create policy "Modification maintenance"
+  on maintenance for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression maintenance"
+  on maintenance for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table maintenance;
+
+-- Storage : bucket public pour les photos de maintenance (machine + bon d'achat)
+insert into storage.buckets (id, name, public)
+values ('maintenance-photos', 'maintenance-photos', true)
+on conflict (id) do nothing;
+
+create policy "Lecture publique photos maintenance"
+  on storage.objects for select
+  using (bucket_id = 'maintenance-photos');
+
+create policy "Ajout photos maintenance"
+  on storage.objects for insert
+  with check (bucket_id = 'maintenance-photos');
+
+create policy "Suppression photos maintenance"
+  on storage.objects for delete
+  using (bucket_id = 'maintenance-photos');
+
+-- ============================================================
+-- CARBURANT : citerne + opérations (remplissage / approvisionnement)
+-- ============================================================
+
+create table if not exists fuel_tank (
+  id integer primary key default 1,
+  current_volume numeric(10, 2) not null default 0,
+  max_capacity numeric(10, 2) not null default 10000,
+  check (id = 1)
+);
+
+comment on table fuel_tank is 'Ligne unique représentant l''état courant de la citerne de gazole';
+
+insert into fuel_tank (id, current_volume, max_capacity)
+values (1, 0, 10000)
+on conflict (id) do nothing;
+
+alter table fuel_tank enable row level security;
+
+create policy "Lecture publique citerne"
+  on fuel_tank for select
+  using (true);
+
+create policy "Mise à jour citerne"
+  on fuel_tank for update
+  using (true)
+  with check (true);
+-- Pas de policy insert/delete : la ligne unique (id=1) est créée une seule fois ci-dessus.
+-- La mise à jour du volume n'a pas de verrou 72h : c'est un total courant, pas un
+-- historique, et le déclencheur ci-dessous doit pouvoir l'ajuster à chaque opération.
+
+alter publication supabase_realtime add table fuel_tank;
+
+create table if not exists fuel_entries (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  operation_type text not null check (operation_type in ('Remplissage', 'Approvisionnement')),
+  truck_plate text,
+  driver_name text,
+  volume_liters numeric(8, 2) not null,
+  supplier_name text,
+  observations text,
+  tank_volume_after numeric(10, 2) not null default 0,
+  created_at timestamptz not null default now()
+);
+
+comment on table fuel_entries is 'Opérations sur la citerne de gazole : remplissage véhicule ou approvisionnement';
+comment on column fuel_entries.tank_volume_after is 'Volume de la citerne juste après cette opération, calculé automatiquement (trigger)';
+
+create index if not exists fuel_entries_created_at_idx on fuel_entries (created_at desc);
+create index if not exists fuel_entries_truck_plate_idx on fuel_entries (truck_plate);
+create index if not exists fuel_entries_entry_date_idx on fuel_entries (entry_date);
+create index if not exists fuel_entries_bon_number_idx on fuel_entries (bon_number desc);
+
+alter table fuel_entries enable row level security;
+
+create policy "Lecture publique carburant"
+  on fuel_entries for select
+  using (true);
+
+create policy "Ajout carburant"
+  on fuel_entries for insert
+  with check (true);
+
+create policy "Modification carburant"
+  on fuel_entries for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression carburant"
+  on fuel_entries for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table fuel_entries;
+
+-- Déclencheur : tient à jour fuel_tank.current_volume et fuel_entries.tank_volume_after
+-- à chaque insertion, modification ou suppression d'une opération carburant — que ce
+-- soit via le formulaire normal ou via les fonctions admin_update_fuel/admin_delete_fuel
+-- (les triggers se déclenchent quel que soit le chemin emprunté pour la modification).
+create or replace function fuel_apply_delta()
+returns trigger
+language plpgsql
+as $$
+declare
+  v_current numeric(10, 2);
+  v_delta numeric(10, 2);
+begin
+  select current_volume into v_current from fuel_tank where id = 1;
+
+  if TG_OP = 'INSERT' then
+    v_delta := case when NEW.operation_type = 'Approvisionnement' then NEW.volume_liters else -NEW.volume_liters end;
+    v_current := v_current + v_delta;
+    NEW.tank_volume_after := v_current;
+    update fuel_tank set current_volume = v_current where id = 1;
+    return NEW;
+
+  elsif TG_OP = 'UPDATE' then
+    v_delta := case when OLD.operation_type = 'Approvisionnement' then -OLD.volume_liters else OLD.volume_liters end;
+    v_current := v_current + v_delta;
+    v_delta := case when NEW.operation_type = 'Approvisionnement' then NEW.volume_liters else -NEW.volume_liters end;
+    v_current := v_current + v_delta;
+    NEW.tank_volume_after := v_current;
+    update fuel_tank set current_volume = v_current where id = 1;
+    return NEW;
+
+  elsif TG_OP = 'DELETE' then
+    v_delta := case when OLD.operation_type = 'Approvisionnement' then -OLD.volume_liters else OLD.volume_liters end;
+    v_current := v_current + v_delta;
+    update fuel_tank set current_volume = v_current where id = 1;
+    return OLD;
+  end if;
+
+  return null;
+end;
+$$;
+
+create trigger fuel_entries_before_insert
+  before insert on fuel_entries
+  for each row execute function fuel_apply_delta();
+
+create trigger fuel_entries_before_update
+  before update on fuel_entries
+  for each row execute function fuel_apply_delta();
+
+create trigger fuel_entries_after_delete
+  after delete on fuel_entries
+  for each row execute function fuel_apply_delta();
+
+-- ============================================================
+-- CODE ADMIN pour maintenance et fuel_entries (même principe
+-- que admin_update_entry/admin_delete_entry plus haut)
+-- ============================================================
+
+create or replace function admin_update_maintenance(
+  p_id uuid,
+  p_admin_code text,
+  p_fiche_number integer,
+  p_entry_date date,
+  p_machine_name text,
+  p_problem_description text,
+  p_supplier_name text,
+  p_purchased_by text,
+  p_entered_by text,
+  p_requested_by text,
+  p_amount numeric,
+  p_is_paid text,
+  p_observations text
+)
+returns maintenance
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result maintenance;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update maintenance set
+    fiche_number = p_fiche_number,
+    entry_date = p_entry_date,
+    machine_name = p_machine_name,
+    problem_description = p_problem_description,
+    supplier_name = p_supplier_name,
+    purchased_by = p_purchased_by,
+    entered_by = p_entered_by,
+    requested_by = p_requested_by,
+    amount = p_amount,
+    is_paid = p_is_paid,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Fiche introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_maintenance(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from maintenance where id = p_id;
+end;
+$$;
+
+create or replace function admin_update_fuel(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_operation_type text,
+  p_truck_plate text,
+  p_driver_name text,
+  p_volume_liters numeric,
+  p_supplier_name text,
+  p_observations text
+)
+returns fuel_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result fuel_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update fuel_entries set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    operation_type = p_operation_type,
+    truck_plate = p_truck_plate,
+    driver_name = p_driver_name,
+    volume_liters = p_volume_liters,
+    supplier_name = p_supplier_name,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Opération introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_fuel(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from fuel_entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_maintenance(uuid, text, integer, date, text, text, text, text, text, text, numeric, text, text) from public;
+revoke all on function admin_delete_maintenance(uuid, text) from public;
+grant execute on function admin_update_maintenance(uuid, text, integer, date, text, text, text, text, text, text, numeric, text, text) to anon, authenticated;
+grant execute on function admin_delete_maintenance(uuid, text) to anon, authenticated;
+
+revoke all on function admin_update_fuel(uuid, text, integer, date, text, text, text, numeric, text, text) from public;
+revoke all on function admin_delete_fuel(uuid, text) from public;
+grant execute on function admin_update_fuel(uuid, text, integer, date, text, text, text, numeric, text, text) to anon, authenticated;
+grant execute on function admin_delete_fuel(uuid, text) to anon, authenticated;

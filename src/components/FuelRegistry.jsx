@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { downloadExcel } from '../lib/excel'
-import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
+import { downloadFuelExcel } from '../lib/fuelExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
-import ExportChoiceModal from './ExportChoiceModal'
 
 const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
+const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
 
-export default function Registry() {
+export default function FuelRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -21,9 +20,7 @@ export default function Registry() {
   const [typeFilter, setTypeFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
-  const [lightboxUrl, setLightboxUrl] = useState(null)
-  const [exportProgress, setExportProgress] = useState(null)
-  const [exportChoiceOpen, setExportChoiceOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [editAdminCode, setEditAdminCode] = useState(null)
   const [adminPrompt, setAdminPrompt] = useState(null)
   const [adminCodeValue, setAdminCodeValue] = useState('')
@@ -36,7 +33,7 @@ export default function Registry() {
     async function load() {
       setLoading(true)
       const { data, error: fetchError } = await supabase
-        .from('entries')
+        .from('fuel_entries')
         .select('*')
         .order('created_at', { ascending: false })
       if (!active) return
@@ -52,8 +49,8 @@ export default function Registry() {
     load()
 
     const channel = supabase
-      .channel('entries-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'entries' }, (payload) => {
+      .channel('fuel-entries-registry')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fuel_entries' }, (payload) => {
         setEntries((current) => applyRealtimeChange(current, payload))
       })
       .subscribe()
@@ -67,18 +64,13 @@ export default function Registry() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return entries.filter((e) => {
-      if (typeFilter && e.unloading_type !== typeFilter) return false
+      if (typeFilter && e.operation_type !== typeFilter) return false
       if (!q) return true
-      return [e.bon_number, e.truck_plate, e.driver_name, e.unloading_type, e.ticket_number].some((field) =>
+      return [e.bon_number, e.truck_plate, e.driver_name, e.entry_date, e.supplier_name].some((field) =>
         String(field ?? '').toLowerCase().includes(q)
       )
     })
   }, [entries, query, typeFilter])
-
-  const totals = useMemo(() => {
-    const weight = filtered.reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
-    return { count: filtered.length, weight }
-  }, [filtered])
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -98,36 +90,32 @@ export default function Registry() {
       cancelEdit()
       return
     }
-    const isFixed = editDraft.unloading_type === FIXED_WEIGHT_TYPE
+    const isRefill = editDraft.operation_type === 'Remplissage'
     const payload = {
       bon_number: Number(editDraft.bon_number),
       entry_date: editDraft.entry_date,
-      truck_plate: editDraft.truck_plate.trim(),
-      driver_name: editDraft.driver_name.trim(),
-      unloading_type: editDraft.unloading_type,
-      ticket_number: isFixed ? null : editDraft.ticket_number?.trim() || null,
-      weight_tons: isFixed
-        ? FIXED_WEIGHT_TONS
-        : editDraft.weight_tons === '' || editDraft.weight_tons == null
-          ? null
-          : Number(editDraft.weight_tons),
+      operation_type: editDraft.operation_type,
+      truck_plate: isRefill ? editDraft.truck_plate?.trim() || null : null,
+      driver_name: isRefill ? editDraft.driver_name?.trim() || null : null,
+      volume_liters: Number(editDraft.volume_liters),
+      supplier_name: !isRefill ? editDraft.supplier_name?.trim() || null : null,
       observations: editDraft.observations?.trim() || null,
     }
 
     const { data, error: updateError } = usingAdminCode
-      ? await supabase.rpc('admin_update_entry', {
+      ? await supabase.rpc('admin_update_fuel', {
           p_id: editingId,
           p_admin_code: editAdminCode,
           p_bon_number: payload.bon_number,
           p_entry_date: payload.entry_date,
+          p_operation_type: payload.operation_type,
           p_truck_plate: payload.truck_plate,
           p_driver_name: payload.driver_name,
-          p_unloading_type: payload.unloading_type,
-          p_ticket_number: payload.ticket_number,
-          p_weight_tons: payload.weight_tons,
+          p_volume_liters: payload.volume_liters,
+          p_supplier_name: payload.supplier_name,
           p_observations: payload.observations,
         })
-      : await supabase.from('entries').update(payload).eq('id', editingId).select().single()
+      : await supabase.from('fuel_entries').update(payload).eq('id', editingId).select().single()
 
     if (updateError) {
       setError(`Erreur de mise à jour : ${updateError.message}`)
@@ -168,7 +156,7 @@ export default function Registry() {
     }
 
     setAdminBusy(true)
-    const { error: rpcError } = await supabase.rpc('admin_delete_entry', {
+    const { error: rpcError } = await supabase.rpc('admin_delete_fuel', {
       p_id: adminPrompt.entry.id,
       p_admin_code: adminCodeValue,
     })
@@ -181,18 +169,14 @@ export default function Registry() {
     closeAdminPrompt()
   }
 
-  async function handleExport(includePhotos) {
-    setExportChoiceOpen(false)
-    setExportProgress({ current: 0, total: 0 })
+  async function handleExport() {
+    setExporting(true)
     try {
-      await downloadExcel(filtered, {
-        includePhotos,
-        onProgress: (current, total) => setExportProgress({ current, total }),
-      })
+      await downloadFuelExcel(filtered)
     } catch (err) {
       setError(`Erreur lors de la génération du fichier Excel : ${err.message}`)
     } finally {
-      setExportProgress(null)
+      setExporting(false)
     }
   }
 
@@ -201,9 +185,9 @@ export default function Registry() {
       setError(LOCK_MESSAGE)
       return
     }
-    const ok = window.confirm(`Supprimer le bon n° ${entry.bon_number} (${entry.truck_plate}) ?`)
+    const ok = window.confirm(`Supprimer le bon carburant n° ${entry.bon_number} ?`)
     if (!ok) return
-    const { error: deleteError } = await supabase.from('entries').delete().eq('id', entry.id)
+    const { error: deleteError } = await supabase.from('fuel_entries').delete().eq('id', entry.id)
     if (deleteError) {
       setError(`Erreur de suppression : ${deleteError.message}`)
       return
@@ -219,7 +203,7 @@ export default function Registry() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher : bon, matricule, chauffeur, ticket…"
+            placeholder="Rechercher : bon, matricule, chauffeur, date…"
             className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
           />
           <select
@@ -228,7 +212,7 @@ export default function Registry() {
             className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
           >
             <option value="">Tous les types</option>
-            {UNLOADING_TYPES.map((t) => (
+            {OPERATION_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
@@ -237,27 +221,12 @@ export default function Registry() {
         </div>
         <button
           type="button"
-          onClick={() => setExportChoiceOpen(true)}
-          disabled={exportProgress != null}
+          onClick={handleExport}
+          disabled={exporting}
           className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {exportProgress != null
-            ? exportProgress.total > 0
-              ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
-              : 'Génération en cours…'
-            : 'Exporter Excel'}
+          {exporting ? 'Génération en cours…' : 'Exporter Excel'}
         </button>
-      </div>
-
-      <div className="flex gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
-        <div>
-          <p className="text-xs text-ink-muted">Bons</p>
-          <p className="font-display text-xl text-ocre">{totals.count}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Tonnage cumulé</p>
-          <p className="font-display text-xl text-ocre">{totals.weight.toFixed(2)} T</p>
-        </div>
       </div>
 
       {error && (
@@ -269,21 +238,21 @@ export default function Registry() {
       {loading ? (
         <p className="text-ink-muted">Chargement…</p>
       ) : filtered.length === 0 ? (
-        <p className="text-ink-muted">Aucune entrée.</p>
+        <p className="text-ink-muted">Aucune opération.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1050px] border-collapse text-sm">
+          <table className="w-full min-w-[1000px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Bon</Th>
                 <Th>Date</Th>
                 <Th>Heure</Th>
+                <Th>Type</Th>
                 <Th>Matricule</Th>
                 <Th>Chauffeur</Th>
-                <Th>Type</Th>
-                <Th>Ticket</Th>
-                <Th>Poids (T)</Th>
-                <Th>Photo</Th>
+                <Th>Volume (L)</Th>
+                <Th>Fournisseur</Th>
+                <Th>Réserve après</Th>
                 <Th>Observations</Th>
                 <Th>Actions</Th>
               </tr>
@@ -303,24 +272,12 @@ export default function Registry() {
                     <Td>{entry.bon_number}</Td>
                     <Td>{entry.entry_date}</Td>
                     <Td>{formatTime(entry.entry_time)}</Td>
-                    <Td>{entry.truck_plate}</Td>
-                    <Td>{entry.driver_name}</Td>
-                    <Td>{entry.unloading_type}</Td>
-                    <Td>{entry.ticket_number ?? '—'}</Td>
-                    <Td>{entry.weight_tons ?? '—'}</Td>
-                    <Td>
-                      {entry.photo_url ? (
-                        <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
-                          <img
-                            src={entry.photo_url}
-                            alt={`Bon n° ${entry.bon_number}`}
-                            className="h-10 w-10 rounded object-cover"
-                          />
-                        </button>
-                      ) : (
-                        '—'
-                      )}
-                    </Td>
+                    <Td>{entry.operation_type}</Td>
+                    <Td>{entry.truck_plate ?? '—'}</Td>
+                    <Td>{entry.driver_name ?? '—'}</Td>
+                    <Td>{entry.volume_liters} L</Td>
+                    <Td>{entry.supplier_name ?? '—'}</Td>
+                    <Td>{entry.tank_volume_after} L</Td>
                     <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                       {entry.observations ?? '—'}
                     </Td>
@@ -340,21 +297,6 @@ export default function Registry() {
         </div>
       )}
 
-      {lightboxUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setLightboxUrl(null)}
-        >
-          <img src={lightboxUrl} alt="Bon" className="max-h-full max-w-full rounded-lg" />
-        </div>
-      )}
-
-      <ExportChoiceModal
-        open={exportChoiceOpen}
-        onChoose={handleExport}
-        onCancel={() => setExportChoiceOpen(false)}
-      />
-
       <AdminCodeModal
         prompt={adminPrompt}
         codeValue={adminCodeValue}
@@ -369,21 +311,10 @@ export default function Registry() {
 }
 
 function EditRow({ draft, onChange, onSave, onCancel }) {
-  const isFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
+  const isRefill = draft.operation_type === 'Remplissage'
 
   function set(field, value) {
     onChange({ ...draft, [field]: value })
-  }
-
-  function setType(nextType) {
-    const wasFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
-    const becomesFixed = nextType === FIXED_WEIGHT_TYPE
-    onChange({
-      ...draft,
-      unloading_type: nextType,
-      weight_tons: becomesFixed ? FIXED_WEIGHT_TONS : wasFixed ? '' : draft.weight_tons,
-      ticket_number: becomesFixed ? '' : draft.ticket_number,
-    })
   }
 
   return (
@@ -396,14 +327,8 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       </Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
-        <input type="text" value={draft.truck_plate} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
-      </Td>
-      <Td>
-        <input type="text" value={draft.driver_name} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
-      </Td>
-      <Td>
-        <select value={draft.unloading_type} onChange={(e) => setType(e.target.value)} className={editInputClass}>
-          {UNLOADING_TYPES.map((t) => (
+        <select value={draft.operation_type} onChange={(e) => set('operation_type', e.target.value)} className={editInputClass}>
+          {OPERATION_TYPES.map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
@@ -411,29 +336,30 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
         </select>
       </Td>
       <Td>
-        {isFixed ? (
-          '—'
-        ) : (
-          <input type="text" value={draft.ticket_number ?? ''} onChange={(e) => set('ticket_number', e.target.value)} className={editInputClass} />
-        )}
-      </Td>
-      <Td>
-        <input
-          type="number"
-          step="0.01"
-          value={draft.weight_tons ?? ''}
-          onChange={(e) => set('weight_tons', e.target.value)}
-          className={editInputClass}
-          disabled={isFixed}
-        />
-      </Td>
-      <Td>
-        {draft.photo_url ? (
-          <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
+        {isRefill ? (
+          <input type="text" value={draft.truck_plate ?? ''} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
         ) : (
           '—'
         )}
       </Td>
+      <Td>
+        {isRefill ? (
+          <input type="text" value={draft.driver_name ?? ''} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
+        ) : (
+          '—'
+        )}
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.volume_liters} onChange={(e) => set('volume_liters', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        {!isRefill ? (
+          <input type="text" value={draft.supplier_name ?? ''} onChange={(e) => set('supplier_name', e.target.value)} className={editInputClass} />
+        ) : (
+          '—'
+        )}
+      </Td>
+      <Td>{draft.tank_volume_after} L</Td>
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>

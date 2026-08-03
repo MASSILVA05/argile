@@ -1,24 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { downloadExcel } from '../lib/excel'
-import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
+import { downloadMaintenanceExcel } from '../lib/maintenanceExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportChoiceModal from './ExportChoiceModal'
 
 const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
+const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
 
-export default function Registry() {
+export default function MaintenanceRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
+  const [paidFilter, setPaidFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
@@ -36,7 +36,7 @@ export default function Registry() {
     async function load() {
       setLoading(true)
       const { data, error: fetchError } = await supabase
-        .from('entries')
+        .from('maintenance')
         .select('*')
         .order('created_at', { ascending: false })
       if (!active) return
@@ -52,8 +52,8 @@ export default function Registry() {
     load()
 
     const channel = supabase
-      .channel('entries-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'entries' }, (payload) => {
+      .channel('maintenance-registry')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'maintenance' }, (payload) => {
         setEntries((current) => applyRealtimeChange(current, payload))
       })
       .subscribe()
@@ -67,18 +67,13 @@ export default function Registry() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return entries.filter((e) => {
-      if (typeFilter && e.unloading_type !== typeFilter) return false
+      if (paidFilter && e.is_paid !== paidFilter) return false
       if (!q) return true
-      return [e.bon_number, e.truck_plate, e.driver_name, e.unloading_type, e.ticket_number].some((field) =>
+      return [e.fiche_number, e.machine_name, e.supplier_name, e.purchased_by, e.requested_by].some((field) =>
         String(field ?? '').toLowerCase().includes(q)
       )
     })
-  }, [entries, query, typeFilter])
-
-  const totals = useMemo(() => {
-    const weight = filtered.reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
-    return { count: filtered.length, weight }
-  }, [filtered])
+  }, [entries, query, paidFilter])
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -98,36 +93,37 @@ export default function Registry() {
       cancelEdit()
       return
     }
-    const isFixed = editDraft.unloading_type === FIXED_WEIGHT_TYPE
     const payload = {
-      bon_number: Number(editDraft.bon_number),
+      fiche_number: Number(editDraft.fiche_number),
       entry_date: editDraft.entry_date,
-      truck_plate: editDraft.truck_plate.trim(),
-      driver_name: editDraft.driver_name.trim(),
-      unloading_type: editDraft.unloading_type,
-      ticket_number: isFixed ? null : editDraft.ticket_number?.trim() || null,
-      weight_tons: isFixed
-        ? FIXED_WEIGHT_TONS
-        : editDraft.weight_tons === '' || editDraft.weight_tons == null
-          ? null
-          : Number(editDraft.weight_tons),
+      machine_name: editDraft.machine_name.trim(),
+      problem_description: editDraft.problem_description.trim(),
+      supplier_name: editDraft.supplier_name?.trim() || null,
+      purchased_by: editDraft.purchased_by?.trim() || null,
+      entered_by: editDraft.entered_by?.trim() || null,
+      requested_by: editDraft.requested_by?.trim() || null,
+      amount: editDraft.amount === '' || editDraft.amount == null ? null : Number(editDraft.amount),
+      is_paid: editDraft.is_paid,
       observations: editDraft.observations?.trim() || null,
     }
 
     const { data, error: updateError } = usingAdminCode
-      ? await supabase.rpc('admin_update_entry', {
+      ? await supabase.rpc('admin_update_maintenance', {
           p_id: editingId,
           p_admin_code: editAdminCode,
-          p_bon_number: payload.bon_number,
+          p_fiche_number: payload.fiche_number,
           p_entry_date: payload.entry_date,
-          p_truck_plate: payload.truck_plate,
-          p_driver_name: payload.driver_name,
-          p_unloading_type: payload.unloading_type,
-          p_ticket_number: payload.ticket_number,
-          p_weight_tons: payload.weight_tons,
+          p_machine_name: payload.machine_name,
+          p_problem_description: payload.problem_description,
+          p_supplier_name: payload.supplier_name,
+          p_purchased_by: payload.purchased_by,
+          p_entered_by: payload.entered_by,
+          p_requested_by: payload.requested_by,
+          p_amount: payload.amount,
+          p_is_paid: payload.is_paid,
           p_observations: payload.observations,
         })
-      : await supabase.from('entries').update(payload).eq('id', editingId).select().single()
+      : await supabase.from('maintenance').update(payload).eq('id', editingId).select().single()
 
     if (updateError) {
       setError(`Erreur de mise à jour : ${updateError.message}`)
@@ -168,7 +164,7 @@ export default function Registry() {
     }
 
     setAdminBusy(true)
-    const { error: rpcError } = await supabase.rpc('admin_delete_entry', {
+    const { error: rpcError } = await supabase.rpc('admin_delete_maintenance', {
       p_id: adminPrompt.entry.id,
       p_admin_code: adminCodeValue,
     })
@@ -185,7 +181,7 @@ export default function Registry() {
     setExportChoiceOpen(false)
     setExportProgress({ current: 0, total: 0 })
     try {
-      await downloadExcel(filtered, {
+      await downloadMaintenanceExcel(filtered, {
         includePhotos,
         onProgress: (current, total) => setExportProgress({ current, total }),
       })
@@ -201,9 +197,9 @@ export default function Registry() {
       setError(LOCK_MESSAGE)
       return
     }
-    const ok = window.confirm(`Supprimer le bon n° ${entry.bon_number} (${entry.truck_plate}) ?`)
+    const ok = window.confirm(`Supprimer la fiche n° ${entry.fiche_number} (${entry.machine_name}) ?`)
     if (!ok) return
-    const { error: deleteError } = await supabase.from('entries').delete().eq('id', entry.id)
+    const { error: deleteError } = await supabase.from('maintenance').delete().eq('id', entry.id)
     if (deleteError) {
       setError(`Erreur de suppression : ${deleteError.message}`)
       return
@@ -219,18 +215,18 @@ export default function Registry() {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher : bon, matricule, chauffeur, ticket…"
+            placeholder="Rechercher : fiche, machine, fournisseur, acheteur…"
             className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
           />
           <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
+            value={paidFilter}
+            onChange={(e) => setPaidFilter(e.target.value)}
             className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
           >
-            <option value="">Tous les types</option>
-            {UNLOADING_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            <option value="">Tous les statuts</option>
+            {PAID_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {o}
               </option>
             ))}
           </select>
@@ -249,17 +245,6 @@ export default function Registry() {
         </button>
       </div>
 
-      <div className="flex gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
-        <div>
-          <p className="text-xs text-ink-muted">Bons</p>
-          <p className="font-display text-xl text-ocre">{totals.count}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Tonnage cumulé</p>
-          <p className="font-display text-xl text-ocre">{totals.weight.toFixed(2)} T</p>
-        </div>
-      </div>
-
       {error && (
         <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
           {error}
@@ -269,21 +254,25 @@ export default function Registry() {
       {loading ? (
         <p className="text-ink-muted">Chargement…</p>
       ) : filtered.length === 0 ? (
-        <p className="text-ink-muted">Aucune entrée.</p>
+        <p className="text-ink-muted">Aucune fiche.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1050px] border-collapse text-sm">
+          <table className="w-full min-w-[1200px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
-                <Th>Bon</Th>
+                <Th>Fiche</Th>
                 <Th>Date</Th>
                 <Th>Heure</Th>
-                <Th>Matricule</Th>
-                <Th>Chauffeur</Th>
-                <Th>Type</Th>
-                <Th>Ticket</Th>
-                <Th>Poids (T)</Th>
-                <Th>Photo</Th>
+                <Th>Machine</Th>
+                <Th>Problème</Th>
+                <Th>Fournisseur</Th>
+                <Th>Acheté par</Th>
+                <Th>Saisi par</Th>
+                <Th>Demandé par</Th>
+                <Th>Montant</Th>
+                <Th>Payé</Th>
+                <Th>Photo machine</Th>
+                <Th>Photo bon</Th>
                 <Th>Observations</Th>
                 <Th>Actions</Th>
               </tr>
@@ -300,26 +289,24 @@ export default function Registry() {
                   />
                 ) : (
                   <tr key={entry.id} className="border-b border-border last:border-0">
-                    <Td>{entry.bon_number}</Td>
+                    <Td>{entry.fiche_number}</Td>
                     <Td>{entry.entry_date}</Td>
                     <Td>{formatTime(entry.entry_time)}</Td>
-                    <Td>{entry.truck_plate}</Td>
-                    <Td>{entry.driver_name}</Td>
-                    <Td>{entry.unloading_type}</Td>
-                    <Td>{entry.ticket_number ?? '—'}</Td>
-                    <Td>{entry.weight_tons ?? '—'}</Td>
+                    <Td>{entry.machine_name}</Td>
+                    <Td className="max-w-[200px] truncate" title={entry.problem_description}>
+                      {entry.problem_description}
+                    </Td>
+                    <Td>{entry.supplier_name ?? '—'}</Td>
+                    <Td>{entry.purchased_by ?? '—'}</Td>
+                    <Td>{entry.entered_by ?? '—'}</Td>
+                    <Td>{entry.requested_by ?? '—'}</Td>
+                    <Td>{entry.amount != null ? `${entry.amount} DA` : '—'}</Td>
+                    <Td>{entry.is_paid}</Td>
                     <Td>
-                      {entry.photo_url ? (
-                        <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
-                          <img
-                            src={entry.photo_url}
-                            alt={`Bon n° ${entry.bon_number}`}
-                            className="h-10 w-10 rounded object-cover"
-                          />
-                        </button>
-                      ) : (
-                        '—'
-                      )}
+                      <PhotoThumb url={entry.machine_photo_url} onClick={setLightboxUrl} label={`Fiche n° ${entry.fiche_number}`} />
+                    </Td>
+                    <Td>
+                      <PhotoThumb url={entry.receipt_photo_url} onClick={setLightboxUrl} label={`Fiche n° ${entry.fiche_number}`} />
                     </Td>
                     <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                       {entry.observations ?? '—'}
@@ -345,7 +332,7 @@ export default function Registry() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
           onClick={() => setLightboxUrl(null)}
         >
-          <img src={lightboxUrl} alt="Bon" className="max-h-full max-w-full rounded-lg" />
+          <img src={lightboxUrl} alt="" className="max-h-full max-w-full rounded-lg" />
         </div>
       )}
 
@@ -368,72 +355,61 @@ export default function Registry() {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel }) {
-  const isFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
+function PhotoThumb({ url, onClick, label }) {
+  if (!url) return '—'
+  return (
+    <button type="button" onClick={() => onClick(url)} className="block">
+      <img src={url} alt={label} className="h-10 w-10 rounded object-cover" />
+    </button>
+  )
+}
 
+function EditRow({ draft, onChange, onSave, onCancel }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
-  }
-
-  function setType(nextType) {
-    const wasFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
-    const becomesFixed = nextType === FIXED_WEIGHT_TYPE
-    onChange({
-      ...draft,
-      unloading_type: nextType,
-      weight_tons: becomesFixed ? FIXED_WEIGHT_TONS : wasFixed ? '' : draft.weight_tons,
-      ticket_number: becomesFixed ? '' : draft.ticket_number,
-    })
   }
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
       <Td>
-        <input type="number" value={draft.bon_number} onChange={(e) => set('bon_number', e.target.value)} className={editInputClass} />
+        <input type="number" value={draft.fiche_number} onChange={(e) => set('fiche_number', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
-        <input type="text" value={draft.truck_plate} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
+        <input type="text" value={draft.machine_name} onChange={(e) => set('machine_name', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="text" value={draft.driver_name} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
+        <input type="text" value={draft.problem_description} onChange={(e) => set('problem_description', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <select value={draft.unloading_type} onChange={(e) => setType(e.target.value)} className={editInputClass}>
-          {UNLOADING_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
+        <input type="text" value={draft.supplier_name ?? ''} onChange={(e) => set('supplier_name', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="text" value={draft.purchased_by ?? ''} onChange={(e) => set('purchased_by', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="text" value={draft.entered_by ?? ''} onChange={(e) => set('entered_by', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="text" value={draft.requested_by ?? ''} onChange={(e) => set('requested_by', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.amount ?? ''} onChange={(e) => set('amount', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <select value={draft.is_paid} onChange={(e) => set('is_paid', e.target.value)} className={editInputClass}>
+          {PAID_OPTIONS.map((o) => (
+            <option key={o} value={o}>
+              {o}
             </option>
           ))}
         </select>
       </Td>
-      <Td>
-        {isFixed ? (
-          '—'
-        ) : (
-          <input type="text" value={draft.ticket_number ?? ''} onChange={(e) => set('ticket_number', e.target.value)} className={editInputClass} />
-        )}
-      </Td>
-      <Td>
-        <input
-          type="number"
-          step="0.01"
-          value={draft.weight_tons ?? ''}
-          onChange={(e) => set('weight_tons', e.target.value)}
-          className={editInputClass}
-          disabled={isFixed}
-        />
-      </Td>
-      <Td>
-        {draft.photo_url ? (
-          <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
-        ) : (
-          '—'
-        )}
-      </Td>
+      <Td>{draft.machine_photo_url ? <img src={draft.machine_photo_url} alt="" className="h-10 w-10 rounded object-cover" /> : '—'}</Td>
+      <Td>{draft.receipt_photo_url ? <img src={draft.receipt_photo_url} alt="" className="h-10 w-10 rounded object-cover" /> : '—'}</Td>
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>
