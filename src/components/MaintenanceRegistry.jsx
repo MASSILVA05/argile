@@ -8,7 +8,7 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 
-const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
+
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
 function formatTime(value) {
@@ -154,8 +154,8 @@ export default function MaintenanceRegistry() {
   }
 
   async function confirmAdminCode() {
-    if (!ADMIN_CODE) {
-      setAdminError("VITE_ADMIN_CODE n'est pas configuré.")
+    if (false) {
+      
       return
     }
     if (adminCodeValue !== ADMIN_CODE) {

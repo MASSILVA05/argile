@@ -77,3 +77,25 @@ export function sendFuelEmail(entry) {
     message: lines.join('\n'),
   })
 }
+
+export function sendSandEmail(entry) {
+  const total = Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+  const lines = [
+    `Bon n° ${entry.bon_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Fournisseur : ${entry.supplier_name}`,
+    `Transporteur : ${entry.transporter_name || 'N/A'}`,
+    `Matricule : ${entry.truck_plate || 'N/A'}`,
+    `Chauffeur : ${entry.driver_name || 'N/A'}`,
+    `Quantité : ${entry.quantity_tons} T`,
+    `Prix sable : ${entry.sand_price} DA`,
+    `Prix transport : ${entry.transport_price} DA`,
+    `Total : ${total} DA`,
+    `Observations : ${entry.observations || 'Aucune'}`,
+    `Saisi par : ${entry.entered_by_user || 'N/A'}`,
+  ]
+  return send({
+    subject: 'Nouvelle livraison sable',
+    message: lines.join('\n'),
+  })
+}

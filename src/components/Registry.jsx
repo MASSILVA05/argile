@@ -9,7 +9,7 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 
-const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
+
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -158,8 +158,8 @@ export default function Registry() {
   }
 
   async function confirmAdminCode() {
-    if (!ADMIN_CODE) {
-      setAdminError("VITE_ADMIN_CODE n'est pas configuré.")
+    if (false) {
+      
       return
     }
     if (adminCodeValue !== ADMIN_CODE) {

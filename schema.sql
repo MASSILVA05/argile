@@ -782,3 +782,147 @@ end;
 $$;
 -- Le grant execute existant sur request_login_code(text, text) reste valide
 -- (create or replace ne modifie pas les privilèges déjà accordés).
+
+-- ============================================================
+-- SABLE : suivi des achats de sable (fournisseur + transport séparés)
+-- ============================================================
+
+create table if not exists sand_entries (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  supplier_name text not null,
+  transporter_name text,
+  truck_plate text,
+  driver_name text,
+  quantity_tons numeric(8, 2) not null,
+  sand_price numeric(10, 2) not null,
+  transport_price numeric(10, 2) not null,
+  photo_url text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table sand_entries is 'Livraisons de sable : fournisseur, transporteur, quantité et coûts';
+comment on column sand_entries.sand_price is 'Prix total du sable pour cette livraison (DA)';
+comment on column sand_entries.transport_price is 'Prix total du transport pour cette livraison (DA)';
+
+create index if not exists sand_entries_created_at_idx on sand_entries (created_at desc);
+create index if not exists sand_entries_supplier_name_idx on sand_entries (supplier_name);
+create index if not exists sand_entries_transporter_name_idx on sand_entries (transporter_name);
+create index if not exists sand_entries_truck_plate_idx on sand_entries (truck_plate);
+create index if not exists sand_entries_bon_number_idx on sand_entries (bon_number desc);
+
+alter table sand_entries enable row level security;
+
+create policy "Lecture publique sable"
+  on sand_entries for select
+  using (true);
+
+create policy "Ajout sable"
+  on sand_entries for insert
+  with check (true);
+
+create policy "Modification sable"
+  on sand_entries for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression sable"
+  on sand_entries for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table sand_entries;
+
+-- Storage : bucket public pour les photos des bons de sable
+insert into storage.buckets (id, name, public)
+values ('sable-photos', 'sable-photos', true)
+on conflict (id) do nothing;
+
+create policy "Lecture publique photos sable"
+  on storage.objects for select
+  using (bucket_id = 'sable-photos');
+
+create policy "Ajout photos sable"
+  on storage.objects for insert
+  with check (bucket_id = 'sable-photos');
+
+create policy "Suppression photos sable"
+  on storage.objects for delete
+  using (bucket_id = 'sable-photos');
+
+-- Code admin (même principe que les autres domaines)
+create or replace function admin_update_sand(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_supplier_name text,
+  p_transporter_name text,
+  p_truck_plate text,
+  p_driver_name text,
+  p_quantity_tons numeric,
+  p_sand_price numeric,
+  p_transport_price numeric,
+  p_observations text
+)
+returns sand_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result sand_entries%rowtype;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update sand_entries set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    supplier_name = p_supplier_name,
+    transporter_name = p_transporter_name,
+    truck_plate = p_truck_plate,
+    driver_name = p_driver_name,
+    quantity_tons = p_quantity_tons,
+    sand_price = p_sand_price,
+    transport_price = p_transport_price,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Livraison introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_sand(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from sand_entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text) from public;
+revoke all on function admin_delete_sand(uuid, text) from public;
+grant execute on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text) to anon, authenticated;
+grant execute on function admin_delete_sand(uuid, text) to anon, authenticated;

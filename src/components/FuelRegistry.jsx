@@ -8,7 +8,7 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 
-const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
+
 const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
 
 function formatTime(value) {
@@ -148,8 +148,8 @@ export default function FuelRegistry() {
   }
 
   async function confirmAdminCode() {
-    if (!ADMIN_CODE) {
-      setAdminError("VITE_ADMIN_CODE n'est pas configuré.")
+    if (false) {
+      
       return
     }
     if (adminCodeValue !== ADMIN_CODE) {

@@ -85,3 +85,22 @@ export function notifyFuelEntry(entry) {
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy(`Carburant — ${isRefill ? 'Approvisionnement' : 'Remplissage'}`, lines, 'fuelpump')
 }
+
+export function notifySandEntry(entry) {
+  const total = Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+  const lines = [
+    `Bon n° ${entry.bon_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Fournisseur : ${entry.supplier_name}`,
+  ]
+  if (entry.transporter_name) lines.push(`Transporteur : ${entry.transporter_name}`)
+  if (entry.truck_plate) lines.push(`Matricule : ${entry.truck_plate}`)
+  if (entry.driver_name) lines.push(`Chauffeur : ${entry.driver_name}`)
+  lines.push(`Quantité : ${entry.quantity_tons} T`)
+  lines.push(`Prix sable : ${entry.sand_price} DA`)
+  lines.push(`Prix transport : ${entry.transport_price} DA`)
+  lines.push(`Total : ${total} DA`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy('Nouvelle livraison sable', lines, 'mountain')
+}

@@ -22,3 +22,7 @@ export function uploadBonPhoto(file, bonNumber) {
 export function uploadMaintenancePhoto(file, ficheNumber, kind) {
   return uploadPhoto(file, 'maintenance-photos', `${kind}-${ficheNumber}`)
 }
+
+export function uploadSandPhoto(file, bonNumber) {
+  return uploadPhoto(file, 'sable-photos', String(bonNumber))
+}
