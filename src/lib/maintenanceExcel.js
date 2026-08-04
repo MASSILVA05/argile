@@ -19,13 +19,14 @@ const COLUMNS = [
   { header: 'Problème', key: 'problem_description', width: 30 },
   { header: 'Fournisseur', key: 'supplier_name', width: 20 },
   { header: 'Acheté par', key: 'purchased_by', width: 18 },
-  { header: 'Saisi par', key: 'entered_by', width: 18 },
+  { header: 'Renseigné par', key: 'entered_by', width: 18 },
   { header: 'Demandé par', key: 'requested_by', width: 18 },
   { header: 'Montant (DA)', key: 'amount', width: 15 },
   { header: 'Payé', key: 'is_paid', width: 12 },
   { header: 'Photo machine', key: 'machine_photo', width: 20 },
   { header: 'Photo bon d’achat', key: 'receipt_photo', width: 20 },
   { header: 'Observations', key: 'observations', width: 30 },
+  { header: 'Saisi par', key: 'entered_by_user', width: 18 },
 ]
 
 const MACHINE_PHOTO_COL = COLUMNS.findIndex((c) => c.key === 'machine_photo') + 1
@@ -76,6 +77,7 @@ export async function downloadMaintenanceExcel(entries, { onProgress, includePho
       machine_photo: includePhotos ? '' : entry.machine_photo_url ? 'Oui' : 'Non',
       receipt_photo: includePhotos ? '' : entry.receipt_photo_url ? 'Oui' : 'Non',
       observations: entry.observations ?? '',
+      entered_by_user: entry.entered_by_user ?? '',
     })
     styleDataRow(row)
     row.height = DATA_ROW_HEIGHT

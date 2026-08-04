@@ -306,8 +306,8 @@ export default function Registry() {
                 <Th>Poids (T)</Th>
                 <Th>Photo</Th>
                 <Th>Observations</Th>
-                <Th>Utilisateur</Th>
-                {!isViewer && <Th>Actions</Th>}
+                <Th>Saisi par</Th>
+                <Th>Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -347,16 +347,14 @@ export default function Registry() {
                       {entry.observations ?? '—'}
                     </Td>
                     <Td>{entry.entered_by_user ?? '—'}</Td>
-                    {!isViewer && (
-                      <Td>
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
-                      </Td>
-                    )}
+                    <Td>
+                      <RowActions
+                        entry={entry}
+                        onEdit={() => startEdit(entry)}
+                        onDelete={() => handleDelete(entry)}
+                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                      />
+                    </Td>
                   </tr>
                 )
               )}

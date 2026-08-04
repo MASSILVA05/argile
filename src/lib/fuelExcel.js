@@ -13,6 +13,7 @@ const COLUMNS = [
   { header: 'Fournisseur', key: 'supplier_name', width: 20 },
   { header: 'Réserve après (L)', key: 'tank_volume_after', width: 18 },
   { header: 'Observations', key: 'observations', width: 30 },
+  { header: 'Saisi par', key: 'entered_by_user', width: 18 },
 ]
 
 export async function downloadFuelExcel(entries, { filename } = {}) {
@@ -36,6 +37,7 @@ export async function downloadFuelExcel(entries, { filename } = {}) {
       supplier_name: entry.supplier_name ?? '',
       tank_volume_after: entry.tank_volume_after,
       observations: entry.observations ?? '',
+      entered_by_user: entry.entered_by_user ?? '',
     })
     styleDataRow(row)
     row.height = DATA_ROW_HEIGHT

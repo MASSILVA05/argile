@@ -46,11 +46,11 @@ export function sendMaintenanceEmail(entry) {
     `Fournisseur : ${entry.supplier_name || 'N/A'}`,
     `Acheté par : ${entry.purchased_by || 'N/A'}`,
     `Demandé par : ${entry.requested_by || 'N/A'}`,
-    `Saisi par : ${entry.entered_by || 'N/A'}`,
+    `Renseigné par : ${entry.entered_by || 'N/A'}`,
     `Montant : ${entry.amount != null ? `${entry.amount} DA` : 'N/A'}`,
     `Payé : ${entry.is_paid || 'N/A'}`,
     `Observations : ${entry.observations || 'Aucune'}`,
-    `Utilisateur : ${entry.entered_by_user || 'N/A'}`,
+    `Saisi par : ${entry.entered_by_user || 'N/A'}`,
   ]
   return send({
     subject: 'Nouvelle fiche maintenance',
@@ -70,7 +70,7 @@ export function sendFuelEmail(entry) {
     `Volume : ${entry.volume_liters} L`,
     `Réserve restante : ${entry.tank_volume_after} L`,
     `Observations : ${entry.observations || 'Aucune'}`,
-    `Utilisateur : ${entry.entered_by_user || 'N/A'}`,
+    `Saisi par : ${entry.entered_by_user || 'N/A'}`,
   ]
   return send({
     subject: `Carburant — ${isRefill ? 'Approvisionnement' : 'Remplissage'}`,

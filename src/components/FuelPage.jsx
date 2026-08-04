@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import FuelForm from './FuelForm'
 import FuelRegistry from './FuelRegistry'
-import { useAuth } from '../lib/auth'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
@@ -9,14 +8,12 @@ const TABS = [
 ]
 
 export default function FuelPage() {
-  const { isViewer } = useAuth()
-  const [view, setView] = useState(isViewer ? 'registry' : 'form')
-  const tabs = isViewer ? TABS.filter((t) => t.id !== 'form') : TABS
+  const [view, setView] = useState('form')
 
   return (
     <div className="flex flex-col gap-4">
       <nav className="flex gap-2">
-        {tabs.map((t) => (
+        {TABS.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -32,7 +29,7 @@ export default function FuelPage() {
         ))}
       </nav>
 
-      {view === 'form' && !isViewer ? <FuelForm /> : <FuelRegistry />}
+      {view === 'form' ? <FuelForm /> : <FuelRegistry />}
     </div>
   )
 }

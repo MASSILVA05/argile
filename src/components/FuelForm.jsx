@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { notifyFuelEntry } from '../lib/ntfy'
 import { sendFuelEmail } from '../lib/email'
-import { getSession, useAuth } from '../lib/auth'
+import { getSession } from '../lib/auth'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -24,7 +24,6 @@ const emptyDraft = {
 }
 
 export default function FuelForm() {
-  const { isViewer } = useAuth()
   const [draft, setDraft] = useState(emptyDraft)
   const [plates, setPlates] = useState([])
   const [drivers, setDrivers] = useState([])
@@ -174,10 +173,6 @@ export default function FuelForm() {
 
   const percent = tank ? Math.max(0, Math.min(100, (tank.current_volume / tank.max_capacity) * 100)) : null
   const isLow = percent != null && percent < 20
-
-  if (isViewer) {
-    return <p className="text-ink-muted">Accès non autorisé pour ce compte.</p>
-  }
 
   return (
     <div className="flex flex-col gap-4">

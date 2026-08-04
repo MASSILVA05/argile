@@ -279,8 +279,8 @@ export default function FuelRegistry() {
                 <Th>Fournisseur</Th>
                 <Th>Réserve après</Th>
                 <Th>Observations</Th>
-                <Th>Utilisateur</Th>
-                {!isViewer && <Th>Actions</Th>}
+                <Th>Saisi par</Th>
+                <Th>Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -308,16 +308,14 @@ export default function FuelRegistry() {
                       {entry.observations ?? '—'}
                     </Td>
                     <Td>{entry.entered_by_user ?? '—'}</Td>
-                    {!isViewer && (
-                      <Td>
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
-                      </Td>
-                    )}
+                    <Td>
+                      <RowActions
+                        entry={entry}
+                        onEdit={() => startEdit(entry)}
+                        onDelete={() => handleDelete(entry)}
+                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                      />
+                    </Td>
                   </tr>
                 )
               )}

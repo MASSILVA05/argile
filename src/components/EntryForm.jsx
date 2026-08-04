@@ -6,7 +6,7 @@ import { enqueueEntry } from '../lib/offlineQueue'
 import { uploadBonPhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
-import { getSession, useAuth } from '../lib/auth'
+import { getSession } from '../lib/auth'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -25,7 +25,6 @@ const emptyDraft = {
 }
 
 export default function EntryForm() {
-  const { isViewer } = useAuth()
   const [draft, setDraft] = useState(emptyDraft)
   const [plates, setPlates] = useState([])
   const [drivers, setDrivers] = useState([])
@@ -194,10 +193,6 @@ export default function EntryForm() {
   }
 
   const isFixedWeight = draft.unloading_type === FIXED_WEIGHT_TYPE
-
-  if (isViewer) {
-    return <p className="text-ink-muted">Accès non autorisé pour ce compte.</p>
-  }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">

@@ -26,6 +26,7 @@ const COLUMNS = [
   { header: 'N° Ticket de pesée', key: 'ticket_number', width: 20 },
   { header: 'Photo du bon', key: 'photo', width: 20 },
   { header: 'Observations', key: 'observations', width: 30 },
+  { header: 'Saisi par', key: 'entered_by_user', width: 18 },
 ]
 
 const PHOTO_COL_INDEX = COLUMNS.findIndex((c) => c.key === 'photo') + 1
@@ -66,6 +67,7 @@ export async function downloadExcel(entries, { onProgress, includePhotos = true,
       ticket_number: entry.ticket_number ?? '',
       photo: includePhotos ? '' : entry.photo_url ? 'Oui' : 'Non',
       observations: entry.observations ?? '',
+      entered_by_user: entry.entered_by_user ?? '',
     })
     styleDataRow(row)
     row.height = DATA_ROW_HEIGHT

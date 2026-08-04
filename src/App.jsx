@@ -6,8 +6,7 @@ import FuelPage from './components/FuelPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
-import Watermark from './components/Watermark'
-import { getSession, clearSession, useAuth } from './lib/auth'
+import { getSession, clearSession } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
 
 const TITLES = {
@@ -17,11 +16,22 @@ const TITLES = {
   fuel: 'Carburant',
 }
 
+const SESSION_CHECK_MS = 60_000
+
+function formatRemaining(expiresAt, now) {
+  const ms = expiresAt - now
+  if (ms <= 0) return 'expirée'
+  const totalMinutes = Math.floor(ms / 60_000)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return `${hours}h${String(minutes).padStart(2, '0')}`
+}
+
 function App() {
   const [session, setSession] = useState(() => getSession())
-  const [tab, setTab] = useState(() => (getSession()?.role === 'viewer' ? 'registry' : 'form'))
+  const [tab, setTab] = useState('form')
   const [pending, setPending] = useState(getQueue().length)
-  const { isViewer } = useAuth()
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
     if (!session) return
@@ -29,14 +39,16 @@ function App() {
     return onQueueChange((queue) => setPending(queue.length))
   }, [session])
 
+  // Session stricte 24h : à chaque tick, si la session en localStorage a expiré
+  // (getSession() la supprime elle-même dans ce cas), on déconnecte et on
+  // revient à l'écran de login.
   useEffect(() => {
-    document.body.classList.toggle('viewer-mode', isViewer)
-    return () => document.body.classList.remove('viewer-mode')
-  }, [isViewer])
-
-  useEffect(() => {
-    if (isViewer && tab === 'form') setTab('registry')
-  }, [isViewer, tab])
+    const id = setInterval(() => {
+      setNow(Date.now())
+      if (!getSession()) setSession(null)
+    }, SESSION_CHECK_MS)
+    return () => clearInterval(id)
+  }, [])
 
   if (!session) {
     return <LoginPage onLogin={setSession} />
@@ -49,8 +61,6 @@ function App() {
 
   return (
     <div className="mx-auto flex min-h-svh max-w-4xl flex-col px-4 py-6 pb-24">
-      {isViewer && <Watermark username={session.username} />}
-
       <header className="mb-6 flex items-start justify-between gap-3">
         <div>
           <p className="text-xs tracking-widest text-ocre uppercase">SARL DPR AXXAM</p>
@@ -64,6 +74,7 @@ function App() {
           )}
           <div className="flex items-center gap-2 text-xs text-ink-muted">
             <span>{session.username}</span>
+            <span className="whitespace-nowrap">Session : {formatRemaining(session.expiresAt, now)}</span>
             <button
               type="button"
               onClick={handleLogout}
@@ -76,13 +87,13 @@ function App() {
       </header>
 
       <main className="rounded-xl border border-border bg-bg-card p-4">
-        {tab === 'form' && !isViewer && <EntryForm />}
+        {tab === 'form' && <EntryForm />}
         {tab === 'registry' && <Registry />}
         {tab === 'maintenance' && <MaintenancePage />}
         {tab === 'fuel' && <FuelPage />}
       </main>
 
-      <BottomNav active={tab} onChange={setTab} hideForm={isViewer} />
+      <BottomNav active={tab} onChange={setTab} />
       <InstallPrompt />
     </div>
   )

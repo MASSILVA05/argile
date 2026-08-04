@@ -61,11 +61,11 @@ export function notifyMaintenanceEntry(entry) {
   if (entry.supplier_name) lines.push(`Fournisseur : ${entry.supplier_name}`)
   if (entry.purchased_by) lines.push(`Acheté par : ${entry.purchased_by}`)
   if (entry.requested_by) lines.push(`Demandé par : ${entry.requested_by}`)
-  if (entry.entered_by) lines.push(`Saisi par : ${entry.entered_by}`)
+  if (entry.entered_by) lines.push(`Renseigné par : ${entry.entered_by}`)
   if (entry.amount != null) lines.push(`Montant : ${entry.amount} DA`)
   if (entry.is_paid) lines.push(`Payé : ${entry.is_paid}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
-  if (entry.entered_by_user) lines.push(`Utilisateur : ${entry.entered_by_user}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy('Nouvelle fiche maintenance', lines, 'wrench')
 }
 
@@ -82,6 +82,6 @@ export function notifyFuelEntry(entry) {
   lines.push(`Volume : ${entry.volume_liters} L`)
   lines.push(`Réserve restante : ${entry.tank_volume_after} L`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
-  if (entry.entered_by_user) lines.push(`Utilisateur : ${entry.entered_by_user}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy(`Carburant — ${isRefill ? 'Approvisionnement' : 'Remplissage'}`, lines, 'fuelpump')
 }
