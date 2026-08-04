@@ -28,6 +28,7 @@ export function sendEmailNotification(entry) {
     weight_tons: entry.weight_tons ?? 'N/A',
     amount: amount != null ? formatDA(amount) : 'N/A',
     observations: entry.observations || 'Aucune',
+    entered_by_user: entry.entered_by_user || 'N/A',
   })
 }
 
@@ -49,6 +50,7 @@ export function sendMaintenanceEmail(entry) {
     `Montant : ${entry.amount != null ? `${entry.amount} DA` : 'N/A'}`,
     `Payé : ${entry.is_paid || 'N/A'}`,
     `Observations : ${entry.observations || 'Aucune'}`,
+    `Utilisateur : ${entry.entered_by_user || 'N/A'}`,
   ]
   return send({
     subject: 'Nouvelle fiche maintenance',
@@ -68,6 +70,7 @@ export function sendFuelEmail(entry) {
     `Volume : ${entry.volume_liters} L`,
     `Réserve restante : ${entry.tank_volume_after} L`,
     `Observations : ${entry.observations || 'Aucune'}`,
+    `Utilisateur : ${entry.entered_by_user || 'N/A'}`,
   ]
   return send({
     subject: `Carburant — ${isRefill ? 'Approvisionnement' : 'Remplissage'}`,

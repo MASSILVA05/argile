@@ -573,3 +573,152 @@ revoke all on function admin_update_fuel(uuid, text, integer, date, text, text, 
 revoke all on function admin_delete_fuel(uuid, text) from public;
 grant execute on function admin_update_fuel(uuid, text, integer, date, text, text, text, numeric, text, text) to anon, authenticated;
 grant execute on function admin_delete_fuel(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- AUTHENTIFICATION : 5 utilisateurs, code de vérification à 2 étapes
+-- pour Halim / Bureau / Bilal
+-- ============================================================
+-- pgcrypto : pour hasher les mots de passe par défaut ci-dessous (digest sha256).
+-- pg_net   : pour envoyer la notification ntfy du code de vérification DEPUIS la
+--            base, sans jamais renvoyer le code au navigateur qui le demande.
+--            Si la création échoue ("permission denied"), active l'extension
+--            "pg_net" via Database > Extensions dans le dashboard Supabase, puis
+--            relance uniquement les blocs "create table"/"create function" plus bas.
+create extension if not exists pgcrypto;
+create extension if not exists pg_net;
+
+create table if not exists app_users (
+  id serial primary key,
+  username text unique not null,
+  password_hash text not null,
+  requires_verification boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+comment on table app_users is 'Comptes de connexion à l''application (5 utilisateurs internes)';
+comment on column app_users.password_hash is 'SHA-256 hex du mot de passe (hashé côté client avant envoi, jamais transmis en clair)';
+
+alter table app_users enable row level security;
+-- Aucune policy créée volontairement : app_users n'est accessible ni en lecture ni
+-- en écriture via l'API (anon/authenticated), uniquement depuis l'intérieur des
+-- fonctions SECURITY DEFINER ci-dessous.
+
+-- Mots de passe par défaut À CHANGER après la mise en service
+-- (update app_users set password_hash = encode(digest('nouveau_mdp', 'sha256'), 'hex') where username = '...';)
+insert into app_users (username, password_hash, requires_verification) values
+  ('Ahcene', encode(digest('ahcene2024', 'sha256'), 'hex'), false),
+  ('Massilva', encode(digest('massilva2024', 'sha256'), 'hex'), false),
+  ('Halim', encode(digest('halim2024', 'sha256'), 'hex'), true),
+  ('Bureau', encode(digest('bureau2024', 'sha256'), 'hex'), true),
+  ('Bilal', encode(digest('bilal2024', 'sha256'), 'hex'), true)
+on conflict (username) do nothing;
+
+create table if not exists verification_codes (
+  id uuid primary key default gen_random_uuid(),
+  username text not null,
+  code text not null,
+  expires_at timestamptz not null,
+  used boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+comment on table verification_codes is 'Codes OTP à 6 chiffres (5 min) pour les comptes avec requires_verification';
+
+create index if not exists verification_codes_username_idx on verification_codes (username, created_at desc);
+
+alter table verification_codes enable row level security;
+-- Aucune policy créée volontairement : accessible uniquement via
+-- request_login_code / verify_login_code (SECURITY DEFINER).
+
+-- Topic ntfy privé utilisé pour l'envoi côté serveur du code de connexion.
+-- Doit correspondre exactement à VITE_NTFY_AUTH_TOPIC (.env + Vercel).
+insert into app_settings (key, value)
+values ('ntfy_auth_topic', 'DPR_Auth_Ahcene_Secret')
+on conflict (key) do nothing;
+
+-- Étape 1 : vérifie le mot de passe.
+-- - Compte sans vérification -> { success: true, requires_verification: false }
+-- - Compte avec vérification -> génère un code à 6 chiffres, le stocke (5 min),
+--   l'envoie via ntfy DEPUIS la base (pg_net) et renvoie seulement
+--   { success: true, requires_verification: true } : le code lui-même ne quitte
+--   jamais la base de données autrement que par la notification ntfy.
+create or replace function request_login_code(p_username text, p_password_hash text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+begin
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null or v_user.password_hash <> p_password_hash then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Identifiants invalides');
+  end if;
+
+  if not v_user.requires_verification then
+    return json_build_object('success', true, 'requires_verification', false, 'message', 'Connecté');
+  end if;
+
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at)
+  values (p_username, v_code, now() + interval '5 minutes');
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Code de connexion',
+        'message', 'Code de connexion : ' || v_code || ' — Demandé par : ' || p_username,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'requires_verification', true, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+
+-- Étape 2 (comptes avec vérification uniquement) : valide le code à 6 chiffres.
+create or replace function verify_login_code(p_username text, p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row verification_codes%rowtype;
+begin
+  select * into v_row
+  from verification_codes
+  where username = p_username and code = p_code and used = false and expires_at > now()
+  order by created_at desc
+  limit 1;
+
+  if v_row.id is null then
+    return json_build_object('success', false, 'message', 'Code incorrect ou expiré');
+  end if;
+
+  update verification_codes set used = true where id = v_row.id;
+
+  return json_build_object('success', true, 'message', 'Connecté');
+end;
+$$;
+
+revoke all on function request_login_code(text, text) from public;
+revoke all on function verify_login_code(text, text) from public;
+grant execute on function request_login_code(text, text) to anon, authenticated;
+grant execute on function verify_login_code(text, text) to anon, authenticated;
+
+-- Attribution : quel utilisateur a fait chaque saisie
+alter table entries add column if not exists entered_by_user text;
+alter table maintenance add column if not exists entered_by_user text;
+alter table fuel_entries add column if not exists entered_by_user text;

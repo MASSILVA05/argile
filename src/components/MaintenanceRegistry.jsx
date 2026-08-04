@@ -270,7 +270,7 @@ export default function MaintenanceRegistry() {
         <p className="text-ink-muted">Aucune fiche.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1200px] border-collapse text-sm">
+          <table className="w-full min-w-[1300px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Fiche</Th>
@@ -287,6 +287,7 @@ export default function MaintenanceRegistry() {
                 <Th>Photo machine</Th>
                 <Th>Photo bon</Th>
                 <Th>Observations</Th>
+                <Th>Utilisateur</Th>
                 <Th>Actions</Th>
               </tr>
             </thead>
@@ -324,6 +325,7 @@ export default function MaintenanceRegistry() {
                     <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                       {entry.observations ?? '—'}
                     </Td>
+                    <Td>{entry.entered_by_user ?? '—'}</Td>
                     <Td>
                       <RowActions
                         entry={entry}
@@ -434,6 +436,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">

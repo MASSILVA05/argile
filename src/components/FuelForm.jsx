@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { notifyFuelEntry } from '../lib/ntfy'
 import { sendFuelEmail } from '../lib/email'
+import { getSession } from '../lib/auth'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -138,6 +139,7 @@ export default function FuelForm() {
       volume_liters: Number(draft.volume_liters),
       supplier_name: !isRefill ? draft.supplier_name.trim() || null : null,
       observations: draft.observations.trim() || null,
+      entered_by_user: getSession()?.username ?? null,
     }
 
     const { data, error: insertError } = await supabase

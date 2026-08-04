@@ -4,6 +4,7 @@ import { notifyMaintenanceEntry } from '../lib/ntfy'
 import { sendMaintenanceEmail } from '../lib/email'
 import { uploadMaintenancePhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
+import { getSession } from '../lib/auth'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -140,6 +141,7 @@ export default function MaintenanceForm() {
         amount: draft.amount === '' ? null : Number(draft.amount),
         is_paid: draft.is_paid,
         observations: draft.observations.trim() || null,
+        entered_by_user: getSession()?.username ?? null,
       }
 
       const { data, error: insertError } = await supabase

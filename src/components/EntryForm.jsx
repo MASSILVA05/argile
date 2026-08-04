@@ -6,6 +6,7 @@ import { enqueueEntry } from '../lib/offlineQueue'
 import { uploadBonPhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
+import { getSession } from '../lib/auth'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -135,6 +136,7 @@ export default function EntryForm() {
       ticket_number: draft.unloading_type === FIXED_WEIGHT_TYPE ? null : draft.ticket_number.trim() || null,
       weight_tons: draft.unloading_type === FIXED_WEIGHT_TYPE ? FIXED_WEIGHT_TONS : Number(draft.weight_tons),
       observations: draft.observations.trim() || null,
+      entered_by_user: getSession()?.username ?? null,
     }
 
     if (!navigator.onLine) {

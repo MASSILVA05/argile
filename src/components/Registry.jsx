@@ -285,7 +285,7 @@ export default function Registry() {
         <p className="text-ink-muted">Aucune entrée.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1050px] border-collapse text-sm">
+          <table className="w-full min-w-[1150px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Bon</Th>
@@ -298,6 +298,7 @@ export default function Registry() {
                 <Th>Poids (T)</Th>
                 <Th>Photo</Th>
                 <Th>Observations</Th>
+                <Th>Utilisateur</Th>
                 <Th>Actions</Th>
               </tr>
             </thead>
@@ -337,6 +338,7 @@ export default function Registry() {
                     <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                       {entry.observations ?? '—'}
                     </Td>
+                    <Td>{entry.entered_by_user ?? '—'}</Td>
                     <Td>
                       <RowActions
                         entry={entry}
@@ -457,6 +459,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">
