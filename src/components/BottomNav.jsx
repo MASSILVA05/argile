@@ -57,11 +57,12 @@ const TABS = [
   { id: 'fuel', label: 'Carburant', Icon: FuelIcon },
 ]
 
-export default function BottomNav({ active, onChange }) {
+export default function BottomNav({ active, onChange, hideForm }) {
+  const tabs = hideForm ? TABS.filter((t) => t.id !== 'form') : TABS
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-bg-card pb-[env(safe-area-inset-bottom)]">
       <div className="mx-auto flex max-w-4xl">
-        {TABS.map(({ id, label, Icon }) => (
+        {tabs.map(({ id, label, Icon }) => (
           <button
             key={id}
             type="button"

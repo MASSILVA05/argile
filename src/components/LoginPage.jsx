@@ -8,6 +8,7 @@ export default function LoginPage({ onLogin }) {
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [pendingRole, setPendingRole] = useState(null)
 
   async function handleCredentialsSubmit(e) {
     e.preventDefault()
@@ -25,10 +26,11 @@ export default function LoginPage({ onLogin }) {
       return
     }
     if (result.requiresVerification) {
+      setPendingRole(result.role)
       setStep('code')
       return
     }
-    onLogin(saveSession(username))
+    onLogin(saveSession(username, result.role))
   }
 
   async function handleCodeSubmit(e) {
@@ -46,7 +48,7 @@ export default function LoginPage({ onLogin }) {
       setError(result.message || 'Code incorrect ou expiré.')
       return
     }
-    onLogin(saveSession(username))
+    onLogin(saveSession(username, pendingRole))
   }
 
   return (

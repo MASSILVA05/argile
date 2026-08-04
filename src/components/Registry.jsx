@@ -4,6 +4,7 @@ import { downloadExcel } from '../lib/excel'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
+import { useAuth } from '../lib/auth'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -15,6 +16,7 @@ function formatTime(value) {
 }
 
 export default function Registry() {
+  const { isAdmin, isViewer } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -140,6 +142,10 @@ export default function Registry() {
   }
 
   function openAdminPrompt(action, entry) {
+    if (!isAdmin) {
+      setError(LOCK_MESSAGE)
+      return
+    }
     setAdminPrompt({ action, entry })
     setAdminCodeValue('')
     setAdminError('')
@@ -248,18 +254,20 @@ export default function Registry() {
             ))}
           </select>
         </div>
-        <button
-          type="button"
-          onClick={() => { setExportError(''); setExportModalOpen(true) }}
-          disabled={exportProgress != null}
-          className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {exportProgress != null
-            ? exportProgress.total > 0
-              ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
-              : 'Génération en cours…'
-            : 'Exporter Excel'}
-        </button>
+        {!isViewer && (
+          <button
+            type="button"
+            onClick={() => { setExportError(''); setExportModalOpen(true) }}
+            disabled={exportProgress != null}
+            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exportProgress != null
+              ? exportProgress.total > 0
+                ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
+                : 'Génération en cours…'
+              : 'Exporter Excel'}
+          </button>
+        )}
       </div>
 
       <div className="flex gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
@@ -299,7 +307,7 @@ export default function Registry() {
                 <Th>Photo</Th>
                 <Th>Observations</Th>
                 <Th>Utilisateur</Th>
-                <Th>Actions</Th>
+                {!isViewer && <Th>Actions</Th>}
               </tr>
             </thead>
             <tbody>
@@ -339,14 +347,16 @@ export default function Registry() {
                       {entry.observations ?? '—'}
                     </Td>
                     <Td>{entry.entered_by_user ?? '—'}</Td>
-                    <Td>
-                      <RowActions
-                        entry={entry}
-                        onEdit={() => startEdit(entry)}
-                        onDelete={() => handleDelete(entry)}
-                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                      />
-                    </Td>
+                    {!isViewer && (
+                      <Td>
+                        <RowActions
+                          entry={entry}
+                          onEdit={() => startEdit(entry)}
+                          onDelete={() => handleDelete(entry)}
+                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                        />
+                      </Td>
+                    )}
                   </tr>
                 )
               )}

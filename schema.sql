@@ -722,3 +722,63 @@ grant execute on function verify_login_code(text, text) to anon, authenticated;
 alter table entries add column if not exists entered_by_user text;
 alter table maintenance add column if not exists entered_by_user text;
 alter table fuel_entries add column if not exists entered_by_user text;
+
+-- ============================================================
+-- RÔLES : admin (tout accès) / editor (saisie + consultation + export,
+-- pas de code admin) / viewer (consultation seule, ni saisie ni export)
+-- ============================================================
+alter table app_users add column if not exists role text not null default 'editor';
+
+update app_users set role = 'admin' where username in ('Ahcene', 'Massilva');
+update app_users set role = 'viewer' where username = 'Bilal';
+-- Halim et Bureau restent 'editor' (valeur par défaut de la colonne).
+
+-- request_login_code renvoie désormais aussi le rôle : l'application en a
+-- besoin dès la connexion pour afficher/masquer les bonnes fonctionnalités,
+-- avant même que verify_login_code (comptes avec vérification) ne soit appelée.
+create or replace function request_login_code(p_username text, p_password_hash text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+begin
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null or v_user.password_hash <> p_password_hash then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Identifiants invalides');
+  end if;
+
+  if not v_user.requires_verification then
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'message', 'Connecté');
+  end if;
+
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at)
+  values (p_username, v_code, now() + interval '5 minutes');
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Code de connexion',
+        'message', 'Code de connexion : ' || v_code || ' — Demandé par : ' || p_username,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'requires_verification', true, 'role', v_user.role, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+-- Le grant execute existant sur request_login_code(text, text) reste valide
+-- (create or replace ne modifie pas les privilèges déjà accordés).

@@ -49,4 +49,12 @@
   #root {
     min-height: 100svh;
   }
+
+  /* Anti-capture d'écran partielle (rôle viewer) : empêche la sélection/copie
+     de texte. Ne bloque pas une vraie capture d'écran, d'où le watermark
+     nominatif ajouté en plus (Watermark.jsx) pour rendre une fuite traçable. */
+  body.viewer-mode {
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }

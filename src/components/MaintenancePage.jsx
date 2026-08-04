@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import MaintenanceForm from './MaintenanceForm'
 import MaintenanceRegistry from './MaintenanceRegistry'
+import { useAuth } from '../lib/auth'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
@@ -8,12 +9,14 @@ const TABS = [
 ]
 
 export default function MaintenancePage() {
-  const [view, setView] = useState('form')
+  const { isViewer } = useAuth()
+  const [view, setView] = useState(isViewer ? 'registry' : 'form')
+  const tabs = isViewer ? TABS.filter((t) => t.id !== 'form') : TABS
 
   return (
     <div className="flex flex-col gap-4">
       <nav className="flex gap-2">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -29,7 +32,7 @@ export default function MaintenancePage() {
         ))}
       </nav>
 
-      {view === 'form' ? <MaintenanceForm /> : <MaintenanceRegistry />}
+      {view === 'form' && !isViewer ? <MaintenanceForm /> : <MaintenanceRegistry />}
     </div>
   )
 }

@@ -4,7 +4,7 @@ import { notifyMaintenanceEntry } from '../lib/ntfy'
 import { sendMaintenanceEmail } from '../lib/email'
 import { uploadMaintenancePhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
-import { getSession } from '../lib/auth'
+import { getSession, useAuth } from '../lib/auth'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -28,6 +28,7 @@ const emptyDraft = {
 }
 
 export default function MaintenanceForm() {
+  const { isViewer } = useAuth()
   const [draft, setDraft] = useState(emptyDraft)
   const [machines, setMachines] = useState([])
   const [suppliers, setSuppliers] = useState([])
@@ -176,6 +177,10 @@ export default function MaintenanceForm() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (isViewer) {
+    return <p className="text-ink-muted">Accès non autorisé pour ce compte.</p>
   }
 
   return (

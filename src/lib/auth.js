@@ -21,9 +21,9 @@ export function getSession() {
   }
 }
 
-export function saveSession(username) {
+export function saveSession(username, role) {
   const loginTime = Date.now()
-  const session = { username, loginTime, expiresAt: loginTime + SESSION_HOURS * 3600 * 1000 }
+  const session = { username, role, loginTime, expiresAt: loginTime + SESSION_HOURS * 3600 * 1000 }
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   return session
 }
@@ -32,9 +32,24 @@ export function clearSession() {
   localStorage.removeItem(SESSION_KEY)
 }
 
+// admin  : tout accès, seul rôle pouvant utiliser le code admin (déblocage 72h)
+// editor : saisie + consultation + export, pas de code admin
+// viewer : consultation seule, ni saisie ni export ni modification
+export function useAuth() {
+  const session = getSession()
+  const role = session?.role ?? null
+  return {
+    username: session?.username ?? null,
+    role,
+    isAdmin: role === 'admin',
+    isEditor: role === 'editor',
+    isViewer: role === 'viewer',
+  }
+}
+
 // Étape 1 : vérifie le mot de passe.
-// - utilisateur sans vérification -> { success: true, requiresVerification: false }, session déjà valide
-// - utilisateur avec vérification -> { success: true, requiresVerification: true }, code envoyé
+// - utilisateur sans vérification -> { success: true, requiresVerification: false, role }, session déjà valide
+// - utilisateur avec vérification -> { success: true, requiresVerification: true, role }, code envoyé
 //   à l'administrateur via ntfy côté serveur (la fonction ne renvoie jamais le code lui-même)
 export async function requestLogin(username, password) {
   const passwordHash = await sha256(password)
@@ -46,6 +61,7 @@ export async function requestLogin(username, password) {
   return {
     success: !!data?.success,
     requiresVerification: !!data?.requires_verification,
+    role: data?.role ?? null,
     message: data?.message ?? '',
   }
 }

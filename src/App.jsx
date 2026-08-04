@@ -6,7 +6,8 @@ import FuelPage from './components/FuelPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
-import { getSession, clearSession } from './lib/auth'
+import Watermark from './components/Watermark'
+import { getSession, clearSession, useAuth } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
 
 const TITLES = {
@@ -18,14 +19,24 @@ const TITLES = {
 
 function App() {
   const [session, setSession] = useState(() => getSession())
-  const [tab, setTab] = useState('form')
+  const [tab, setTab] = useState(() => (getSession()?.role === 'viewer' ? 'registry' : 'form'))
   const [pending, setPending] = useState(getQueue().length)
+  const { isViewer } = useAuth()
 
   useEffect(() => {
     if (!session) return
     flushQueue()
     return onQueueChange((queue) => setPending(queue.length))
   }, [session])
+
+  useEffect(() => {
+    document.body.classList.toggle('viewer-mode', isViewer)
+    return () => document.body.classList.remove('viewer-mode')
+  }, [isViewer])
+
+  useEffect(() => {
+    if (isViewer && tab === 'form') setTab('registry')
+  }, [isViewer, tab])
 
   if (!session) {
     return <LoginPage onLogin={setSession} />
@@ -38,6 +49,8 @@ function App() {
 
   return (
     <div className="mx-auto flex min-h-svh max-w-4xl flex-col px-4 py-6 pb-24">
+      {isViewer && <Watermark username={session.username} />}
+
       <header className="mb-6 flex items-start justify-between gap-3">
         <div>
           <p className="text-xs tracking-widest text-ocre uppercase">SARL DPR AXXAM</p>
@@ -63,13 +76,13 @@ function App() {
       </header>
 
       <main className="rounded-xl border border-border bg-bg-card p-4">
-        {tab === 'form' && <EntryForm />}
+        {tab === 'form' && !isViewer && <EntryForm />}
         {tab === 'registry' && <Registry />}
         {tab === 'maintenance' && <MaintenancePage />}
         {tab === 'fuel' && <FuelPage />}
       </main>
 
-      <BottomNav active={tab} onChange={setTab} />
+      <BottomNav active={tab} onChange={setTab} hideForm={isViewer} />
       <InstallPrompt />
     </div>
   )
