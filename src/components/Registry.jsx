@@ -3,9 +3,10 @@ import { supabase } from '../lib/supabase'
 import { downloadExcel } from '../lib/excel'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
+import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
-import ExportChoiceModal from './ExportChoiceModal'
+import ExportFilterModal from './ExportFilterModal'
 
 const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
 
@@ -23,7 +24,8 @@ export default function Registry() {
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
   const [exportProgress, setExportProgress] = useState(null)
-  const [exportChoiceOpen, setExportChoiceOpen] = useState(false)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportError, setExportError] = useState('')
   const [editAdminCode, setEditAdminCode] = useState(null)
   const [adminPrompt, setAdminPrompt] = useState(null)
   const [adminCodeValue, setAdminCodeValue] = useState('')
@@ -181,12 +183,23 @@ export default function Registry() {
     closeAdminPrompt()
   }
 
-  async function handleExport(includePhotos) {
-    setExportChoiceOpen(false)
+  function exportSuggestions(field) {
+    return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
+  }
+
+  async function handleExport(filters, includePhotos) {
+    const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'unloading_type' })
+    if (toExport.length === 0) {
+      setExportError('Aucune donnée pour ces critères')
+      return
+    }
+    setExportError('')
+    setExportModalOpen(false)
     setExportProgress({ current: 0, total: 0 })
     try {
-      await downloadExcel(filtered, {
+      await downloadExcel(toExport, {
         includePhotos,
+        filename: buildExportFilename('Registre_Chargement', filters.startDate, filters.endDate),
         onProgress: (current, total) => setExportProgress({ current, total }),
       })
     } catch (err) {
@@ -237,7 +250,7 @@ export default function Registry() {
         </div>
         <button
           type="button"
-          onClick={() => setExportChoiceOpen(true)}
+          onClick={() => { setExportError(''); setExportModalOpen(true) }}
           disabled={exportProgress != null}
           className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -349,10 +362,17 @@ export default function Registry() {
         </div>
       )}
 
-      <ExportChoiceModal
-        open={exportChoiceOpen}
-        onChoose={handleExport}
-        onCancel={() => setExportChoiceOpen(false)}
+      <ExportFilterModal
+        open={exportModalOpen}
+        categorical={{ field: 'unloading_type', label: 'Type de déchargement', options: UNLOADING_TYPES }}
+        textFilters={[
+          { field: 'truck_plate', label: 'Matricule', suggestions: exportSuggestions('truck_plate') },
+          { field: 'driver_name', label: 'Chauffeur', suggestions: exportSuggestions('driver_name') },
+        ]}
+        hasPhotos
+        error={exportError}
+        onExport={handleExport}
+        onCancel={() => setExportModalOpen(false)}
       />
 
       <AdminCodeModal

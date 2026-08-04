@@ -15,7 +15,7 @@ const COLUMNS = [
   { header: 'Observations', key: 'observations', width: 30 },
 ]
 
-export async function downloadFuelExcel(entries) {
+export async function downloadFuelExcel(entries, { filename } = {}) {
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('Carburant')
   sheet.columns = COLUMNS
@@ -45,5 +45,5 @@ export async function downloadFuelExcel(entries) {
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
-  saveAs(blob, `Registre_Carburant_${todayISO()}.xlsx`)
+  saveAs(blob, filename || `Registre_Carburant_${todayISO()}.xlsx`)
 }

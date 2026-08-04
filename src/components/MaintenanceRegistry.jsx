@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { downloadMaintenanceExcel } from '../lib/maintenanceExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
+import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
-import ExportChoiceModal from './ExportChoiceModal'
+import ExportFilterModal from './ExportFilterModal'
 
 const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
@@ -23,7 +24,8 @@ export default function MaintenanceRegistry() {
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
   const [exportProgress, setExportProgress] = useState(null)
-  const [exportChoiceOpen, setExportChoiceOpen] = useState(false)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportError, setExportError] = useState('')
   const [editAdminCode, setEditAdminCode] = useState(null)
   const [adminPrompt, setAdminPrompt] = useState(null)
   const [adminCodeValue, setAdminCodeValue] = useState('')
@@ -177,12 +179,23 @@ export default function MaintenanceRegistry() {
     closeAdminPrompt()
   }
 
-  async function handleExport(includePhotos) {
-    setExportChoiceOpen(false)
+  function exportSuggestions(field) {
+    return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
+  }
+
+  async function handleExport(filters, includePhotos) {
+    const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'is_paid' })
+    if (toExport.length === 0) {
+      setExportError('Aucune donnée pour ces critères')
+      return
+    }
+    setExportError('')
+    setExportModalOpen(false)
     setExportProgress({ current: 0, total: 0 })
     try {
-      await downloadMaintenanceExcel(filtered, {
+      await downloadMaintenanceExcel(toExport, {
         includePhotos,
+        filename: buildExportFilename('Registre_Maintenance', filters.startDate, filters.endDate),
         onProgress: (current, total) => setExportProgress({ current, total }),
       })
     } catch (err) {
@@ -233,7 +246,7 @@ export default function MaintenanceRegistry() {
         </div>
         <button
           type="button"
-          onClick={() => setExportChoiceOpen(true)}
+          onClick={() => { setExportError(''); setExportModalOpen(true) }}
           disabled={exportProgress != null}
           className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -336,10 +349,18 @@ export default function MaintenanceRegistry() {
         </div>
       )}
 
-      <ExportChoiceModal
-        open={exportChoiceOpen}
-        onChoose={handleExport}
-        onCancel={() => setExportChoiceOpen(false)}
+      <ExportFilterModal
+        open={exportModalOpen}
+        categorical={{ field: 'is_paid', label: 'Statut payé', options: PAID_OPTIONS }}
+        textFilters={[
+          { field: 'machine_name', label: 'Machine', suggestions: exportSuggestions('machine_name') },
+          { field: 'supplier_name', label: 'Fournisseur', suggestions: exportSuggestions('supplier_name') },
+          { field: 'purchased_by', label: 'Acheté par', suggestions: exportSuggestions('purchased_by') },
+        ]}
+        hasPhotos
+        error={exportError}
+        onExport={handleExport}
+        onCancel={() => setExportModalOpen(false)}
       />
 
       <AdminCodeModal

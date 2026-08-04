@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { downloadFuelExcel } from '../lib/fuelExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
+import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
+import ExportFilterModal from './ExportFilterModal'
 
 const ADMIN_CODE = import.meta.env.VITE_ADMIN_CODE
 const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
@@ -21,6 +23,8 @@ export default function FuelRegistry() {
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportError, setExportError] = useState('')
   const [editAdminCode, setEditAdminCode] = useState(null)
   const [adminPrompt, setAdminPrompt] = useState(null)
   const [adminCodeValue, setAdminCodeValue] = useState('')
@@ -169,10 +173,23 @@ export default function FuelRegistry() {
     closeAdminPrompt()
   }
 
-  async function handleExport() {
+  function exportSuggestions(field) {
+    return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
+  }
+
+  async function handleExport(filters) {
+    const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'operation_type' })
+    if (toExport.length === 0) {
+      setExportError('Aucune donnée pour ces critères')
+      return
+    }
+    setExportError('')
+    setExportModalOpen(false)
     setExporting(true)
     try {
-      await downloadFuelExcel(filtered)
+      await downloadFuelExcel(toExport, {
+        filename: buildExportFilename('Registre_Carburant', filters.startDate, filters.endDate),
+      })
     } catch (err) {
       setError(`Erreur lors de la génération du fichier Excel : ${err.message}`)
     } finally {
@@ -221,7 +238,7 @@ export default function FuelRegistry() {
         </div>
         <button
           type="button"
-          onClick={handleExport}
+          onClick={() => { setExportError(''); setExportModalOpen(true) }}
           disabled={exporting}
           className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -296,6 +313,19 @@ export default function FuelRegistry() {
           </table>
         </div>
       )}
+
+      <ExportFilterModal
+        open={exportModalOpen}
+        categorical={{ field: 'operation_type', label: "Type d'opération", options: OPERATION_TYPES }}
+        textFilters={[
+          { field: 'truck_plate', label: 'Matricule', suggestions: exportSuggestions('truck_plate') },
+          { field: 'driver_name', label: 'Chauffeur', suggestions: exportSuggestions('driver_name') },
+        ]}
+        hasPhotos={false}
+        error={exportError}
+        onExport={handleExport}
+        onCancel={() => setExportModalOpen(false)}
+      />
 
       <AdminCodeModal
         prompt={adminPrompt}

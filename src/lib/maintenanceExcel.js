@@ -46,7 +46,7 @@ async function embedPhoto(workbook, sheet, row, colIndex, url) {
   }
 }
 
-export async function downloadMaintenanceExcel(entries, { onProgress, includePhotos = true } = {}) {
+export async function downloadMaintenanceExcel(entries, { onProgress, includePhotos = true, filename } = {}) {
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('Maintenance')
   sheet.columns = COLUMNS
@@ -102,5 +102,5 @@ export async function downloadMaintenanceExcel(entries, { onProgress, includePho
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
-  saveAs(blob, `Registre_Maintenance_${todayISO()}.xlsx`)
+  saveAs(blob, filename || `Registre_Maintenance_${todayISO()}.xlsx`)
 }
