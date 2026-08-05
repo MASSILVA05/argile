@@ -926,3 +926,73 @@ revoke all on function admin_update_sand(uuid, text, integer, date, text, text, 
 revoke all on function admin_delete_sand(uuid, text) from public;
 grant execute on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text) to anon, authenticated;
 grant execute on function admin_delete_sand(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- CODE HEBDOMADAIRE : pour les comptes avec requires_verification (Halim,
+-- Bureau, Bilal), le code ntfy n'est demandé que le samedi (premier jour
+-- ouvré de la semaine en Algérie). Dimanche à jeudi : mot de passe seul.
+-- Vendredi : jour de repos, connexion refusée. Les comptes sans vérification
+-- (admin : Ahcene, Massilva) se connectent toujours directement, sans
+-- restriction de jour (les horaires 8h-17h sont gérés côté client, voir
+-- LoginPage.jsx / lib/auth.js).
+-- ============================================================
+create or replace function request_login_code(p_username text, p_password_hash text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+  v_dow int;
+begin
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null or v_user.password_hash <> p_password_hash then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Identifiants invalides');
+  end if;
+
+  if not v_user.requires_verification then
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'message', 'Connecté');
+  end if;
+
+  -- Jour de la semaine en Algérie (0 = dimanche ... 5 = vendredi, 6 = samedi).
+  v_dow := extract(dow from (now() at time zone 'Africa/Algiers'));
+
+  if v_dow = 5 then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Jour de repos — accès indisponible');
+  end if;
+
+  if v_dow <> 6 then
+    -- Dimanche à jeudi : mot de passe seul suffit, pas de code.
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'message', 'Connecté');
+  end if;
+
+  -- Samedi : code de vérification requis.
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at)
+  values (p_username, v_code, now() + interval '5 minutes');
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Code de connexion',
+        'message', 'Code de connexion : ' || v_code || ' — Demandé par : ' || p_username,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'requires_verification', true, 'role', v_user.role, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+-- Le grant execute existant sur request_login_code(text, text) reste valide
+-- (create or replace ne modifie pas les privilèges déjà accordés).

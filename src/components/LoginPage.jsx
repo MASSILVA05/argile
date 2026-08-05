@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import { USERNAMES, requestLogin, verifyCode, saveSession } from '../lib/auth'
+import { useEffect, useState } from 'react'
+import { USERNAMES, requestLogin, verifyCode, saveSession, getLoginAccessStatus } from '../lib/auth'
+
+const ACCESS_CHECK_MS = 30_000
 
 export default function LoginPage({ onLogin }) {
   const [step, setStep] = useState('credentials')
@@ -9,9 +11,20 @@ export default function LoginPage({ onLogin }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [pendingRole, setPendingRole] = useState(null)
+  const [access, setAccess] = useState(() => getLoginAccessStatus(username))
+
+  // Horaires d'accès (8h-17h, vendredi fermé) : recalculés au changement
+  // d'utilisateur et périodiquement pour couvrir le cas où l'heure bascule
+  // pendant que la page de login reste ouverte.
+  useEffect(() => {
+    setAccess(getLoginAccessStatus(username))
+    const id = setInterval(() => setAccess(getLoginAccessStatus(username)), ACCESS_CHECK_MS)
+    return () => clearInterval(id)
+  }, [username])
 
   async function handleCredentialsSubmit(e) {
     e.preventDefault()
+    if (!access.allowed) return
     if (!password) {
       setError('Le mot de passe est obligatoire.')
       return
@@ -81,8 +94,15 @@ export default function LoginPage({ onLogin }) {
                 className={inputClass}
                 autoFocus
                 required
+                disabled={!access.allowed}
               />
             </Field>
+
+            {!access.allowed && (
+              <p className="rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-3 text-sm text-ocre">
+                {access.message}
+              </p>
+            )}
 
             {error && (
               <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
@@ -92,7 +112,7 @@ export default function LoginPage({ onLogin }) {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !access.allowed}
               className="min-h-12 rounded-lg bg-terracotta px-4 py-3 font-display text-lg font-medium tracking-wide text-ink transition-colors hover:bg-terracotta-hover disabled:opacity-50"
             >
               {loading ? 'Connexion…' : 'Se connecter'}

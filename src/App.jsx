@@ -41,9 +41,9 @@ function App() {
     return onQueueChange((queue) => setPending(queue.length))
   }, [session])
 
-  // Session stricte 24h : à chaque tick, si la session en localStorage a expiré
-  // (getSession() la supprime elle-même dans ce cas), on déconnecte et on
-  // revient à l'écran de login.
+  // Session valable jusqu'à 17h (Algérie) du jour en cours : à chaque tick, si
+  // la session en localStorage a expiré (getSession() la supprime elle-même
+  // dans ce cas), on déconnecte et on revient à l'écran de login.
   useEffect(() => {
     const id = setInterval(() => {
       setNow(Date.now())

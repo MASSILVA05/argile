@@ -3,8 +3,69 @@ import { sha256 } from './hash'
 
 export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal']
 
+// Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
+export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
+
 const SESSION_KEY = 'dpr-session'
-const SESSION_HOURS = 24
+const ALGERIA_TZ = 'Africa/Algiers'
+const WORK_START_HOUR = 8
+const WORK_END_HOUR = 17
+
+// Décompose une date dans le fuseau horaire de l'Algérie (UTC+1 fixe, sans heure d'été).
+function getAlgeriaParts(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ALGERIA_TZ,
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const map = {}
+  for (const part of parts) map[part.type] = part.value
+  const WEEKDAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
+  return {
+    dayOfWeek: WEEKDAYS[map.weekday],
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    hour: Number(map.hour),
+    minute: Number(map.minute),
+  }
+}
+
+// Prochaine échéance de 17h (Algérie) à partir de `date` : aujourd'hui si pas encore
+// atteinte, sinon demain (couvre le cas d'une connexion admin après 17h, seuls les
+// admins pouvant se connecter en dehors de la plage 8h-17h).
+function nextWorkEndTimestamp(date) {
+  const { year, month, day } = getAlgeriaParts(date)
+  // Algérie = UTC+1 toute l'année -> 17h Algérie = 16h UTC.
+  let expiresAt = Date.UTC(year, month - 1, day, WORK_END_HOUR - 1, 0, 0, 0)
+  if (expiresAt <= date.getTime()) {
+    expiresAt = Date.UTC(year, month - 1, day + 1, WORK_END_HOUR - 1, 0, 0, 0)
+  }
+  return expiresAt
+}
+
+// Vérifie si `username` peut accéder à la page de connexion à l'instant `date`.
+// Les admins (Ahcene, Massilva) n'ont aucune restriction. Les autres comptes
+// (Halim, Bureau, Bilal) : accès uniquement 8h-17h, du dimanche au samedi
+// (vendredi = jour de repos, pas d'accès).
+export function getLoginAccessStatus(username, date = new Date()) {
+  if (ADMIN_USERNAMES.includes(username)) return { allowed: true }
+
+  const { dayOfWeek, hour } = getAlgeriaParts(date)
+
+  if (dayOfWeek === 5) {
+    return { allowed: false, message: 'Jour de repos — accès indisponible' }
+  }
+  if (hour < WORK_START_HOUR || hour >= WORK_END_HOUR) {
+    return { allowed: false, message: 'Accès disponible de 8h à 17h' }
+  }
+  return { allowed: true }
+}
 
 export function getSession() {
   try {
@@ -23,7 +84,8 @@ export function getSession() {
 
 export function saveSession(username, role) {
   const loginTime = Date.now()
-  const session = { username, role, loginTime, expiresAt: loginTime + SESSION_HOURS * 3600 * 1000 }
+  const expiresAt = nextWorkEndTimestamp(new Date(loginTime))
+  const session = { username, role, loginTime, expiresAt }
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   return session
 }
