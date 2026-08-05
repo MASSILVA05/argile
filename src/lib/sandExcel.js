@@ -5,6 +5,7 @@ import {
   PHOTO_ROW_HEIGHT,
   PHOTO_WIDTH,
   PHOTO_HEIGHT,
+  AMOUNT_ROW_FILL,
   todayISO,
   fetchPhotoAsBase64,
   styleHeaderRow,
@@ -21,9 +22,22 @@ const COLUMNS = [
   { header: 'Matricule', key: 'truck_plate', width: 18 },
   { header: 'Chauffeur', key: 'driver_name', width: 22 },
   { header: 'Quantité (T)', key: 'quantity_tons', width: 14 },
-  { header: 'Prix sable (DA)', key: 'sand_price', width: 16 },
-  { header: 'Prix transport (DA)', key: 'transport_price', width: 18 },
-  { header: 'Total (DA)', key: 'total', width: 16 },
+  { header: 'Prix unitaire (DA/T)', key: 'unit_price', width: 16 },
+  { header: 'Total sable (DA)', key: 'sand_total', width: 16 },
+  { header: 'Transport (DA)', key: 'transport_price', width: 16 },
+  { header: 'Total général (DA)', key: 'total', width: 18 },
+  { header: 'Statut paiement fourn.', key: 'supplier_paid', width: 16 },
+  { header: 'Mode paiement fourn.', key: 'supplier_payment_mode', width: 16 },
+  { header: 'N° chèque fourn.', key: 'supplier_cheque_number', width: 16 },
+  { header: 'Banque fourn.', key: 'supplier_cheque_bank', width: 16 },
+  { header: 'Date paiement fourn.', key: 'supplier_payment_date', width: 16 },
+  { header: 'Montant payé fourn. (DA)', key: 'supplier_amount_paid', width: 18 },
+  { header: 'Statut paiement transp.', key: 'transporter_paid', width: 16 },
+  { header: 'Mode paiement transp.', key: 'transporter_payment_mode', width: 16 },
+  { header: 'N° chèque transp.', key: 'transporter_cheque_number', width: 16 },
+  { header: 'Banque transp.', key: 'transporter_cheque_bank', width: 16 },
+  { header: 'Date paiement transp.', key: 'transporter_payment_date', width: 16 },
+  { header: 'Montant payé transp. (DA)', key: 'transporter_amount_paid', width: 18 },
   { header: 'Photo', key: 'photo', width: 20 },
   { header: 'Saisi par', key: 'entered_by_user', width: 18 },
   { header: 'Observations', key: 'observations', width: 30 },
@@ -32,7 +46,7 @@ const COLUMNS = [
 const PHOTO_COL_INDEX = COLUMNS.findIndex((c) => c.key === 'photo') + 1
 
 function total(entry) {
-  return Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+  return Number(entry.sand_total || 0) + Number(entry.transport_price || 0)
 }
 
 export async function downloadSandExcel(entries, { onProgress, includePhotos = true, filename } = {}) {
@@ -58,9 +72,22 @@ export async function downloadSandExcel(entries, { onProgress, includePhotos = t
       truck_plate: entry.truck_plate ?? '',
       driver_name: entry.driver_name ?? '',
       quantity_tons: entry.quantity_tons,
-      sand_price: entry.sand_price,
+      unit_price: entry.unit_price,
+      sand_total: entry.sand_total,
       transport_price: entry.transport_price,
       total: total(entry),
+      supplier_paid: entry.supplier_paid ?? '',
+      supplier_payment_mode: entry.supplier_payment_mode ?? '',
+      supplier_cheque_number: entry.supplier_cheque_number ?? '',
+      supplier_cheque_bank: entry.supplier_cheque_bank ?? '',
+      supplier_payment_date: entry.supplier_payment_date ?? '',
+      supplier_amount_paid: entry.supplier_amount_paid ?? '',
+      transporter_paid: entry.transporter_paid ?? '',
+      transporter_payment_mode: entry.transporter_payment_mode ?? '',
+      transporter_cheque_number: entry.transporter_cheque_number ?? '',
+      transporter_cheque_bank: entry.transporter_cheque_bank ?? '',
+      transporter_payment_date: entry.transporter_payment_date ?? '',
+      transporter_amount_paid: entry.transporter_amount_paid ?? '',
       photo: includePhotos ? '' : entry.photo_url ? 'Oui' : 'Non',
       entered_by_user: entry.entered_by_user ?? '',
       observations: entry.observations ?? '',
@@ -86,18 +113,38 @@ export async function downloadSandExcel(entries, { onProgress, includePhotos = t
   }
 
   const quantityTotal = entries.reduce((sum, e) => sum + (Number(e.quantity_tons) || 0), 0)
-  const sandPriceTotal = entries.reduce((sum, e) => sum + (Number(e.sand_price) || 0), 0)
-  const transportPriceTotal = entries.reduce((sum, e) => sum + (Number(e.transport_price) || 0), 0)
+  const sandTotalSum = entries.reduce((sum, e) => sum + (Number(e.sand_total) || 0), 0)
+  const transportTotal = entries.reduce((sum, e) => sum + (Number(e.transport_price) || 0), 0)
+  const supplierDue = entries
+    .filter((e) => e.supplier_paid !== 'Payé')
+    .reduce((sum, e) => sum + (Number(e.sand_total) || 0), 0)
+  const transporterDue = entries
+    .filter((e) => e.transporter_paid !== 'Payé')
+    .reduce((sum, e) => sum + (Number(e.transport_price) || 0), 0)
 
   const totalsRow = sheet.addRow({
     bon_number: 'TOTAL',
     quantity_tons: quantityTotal.toFixed(2),
-    sand_price: sandPriceTotal,
-    transport_price: transportPriceTotal,
-    total: sandPriceTotal + transportPriceTotal,
+    sand_total: sandTotalSum,
+    transport_price: transportTotal,
+    total: sandTotalSum + transportTotal,
   })
   styleTotalsRow(totalsRow, null)
   totalsRow.height = DATA_ROW_HEIGHT
+
+  const supplierDueRow = sheet.addRow({
+    bon_number: 'RESTE À PAYER FOURNISSEURS',
+    sand_total: supplierDue,
+  })
+  styleTotalsRow(supplierDueRow, AMOUNT_ROW_FILL)
+  supplierDueRow.height = DATA_ROW_HEIGHT
+
+  const transporterDueRow = sheet.addRow({
+    bon_number: 'RESTE À PAYER TRANSPORTEURS',
+    transport_price: transporterDue,
+  })
+  styleTotalsRow(transporterDueRow, AMOUNT_ROW_FILL)
+  transporterDueRow.height = DATA_ROW_HEIGHT
 
   const buffer = await workbook.xlsx.writeBuffer()
   const blob = new Blob([buffer], {

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --no-install eslint src/components/SandForm.jsx src/components/SandRegistry.jsx src/lib/sandExcel.js src/lib/sandPayment.js src/lib/ntfy.js src/lib/email.js)",
+      "Bash(./node_modules/.bin/oxlint src/components/SandForm.jsx src/components/SandRegistry.jsx src/lib/sandExcel.js src/lib/sandPayment.js src/lib/ntfy.js src/lib/email.js)",
+      "Bash(./node_modules/.bin/oxlint src *)"
+    ]
+  }
+}

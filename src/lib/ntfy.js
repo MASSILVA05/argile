@@ -87,7 +87,7 @@ export function notifyFuelEntry(entry) {
 }
 
 export function notifySandEntry(entry) {
-  const total = Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+  const total = Number(entry.sand_total || 0) + Number(entry.transport_price || 0)
   const lines = [
     `Bon n° ${entry.bon_number}`,
     `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
@@ -97,9 +97,12 @@ export function notifySandEntry(entry) {
   if (entry.truck_plate) lines.push(`Matricule : ${entry.truck_plate}`)
   if (entry.driver_name) lines.push(`Chauffeur : ${entry.driver_name}`)
   lines.push(`Quantité : ${entry.quantity_tons} T`)
-  lines.push(`Prix sable : ${entry.sand_price} DA`)
-  lines.push(`Prix transport : ${entry.transport_price} DA`)
-  lines.push(`Total : ${total} DA`)
+  lines.push(`Prix unitaire : ${entry.unit_price} DA/T`)
+  lines.push(`Total sable : ${entry.sand_total} DA`)
+  lines.push(`Transport : ${entry.transport_price} DA`)
+  lines.push(`Total général : ${total} DA`)
+  lines.push(`Paiement fournisseur : ${entry.supplier_paid ?? 'Non payé'}`)
+  lines.push(`Paiement transporteur : ${entry.transporter_paid ?? 'Non payé'}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy('Nouvelle livraison sable', lines, 'mountain')

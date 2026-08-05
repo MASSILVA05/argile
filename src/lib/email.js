@@ -79,7 +79,7 @@ export function sendFuelEmail(entry) {
 }
 
 export function sendSandEmail(entry) {
-  const total = Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+  const total = Number(entry.sand_total || 0) + Number(entry.transport_price || 0)
   const lines = [
     `Bon n° ${entry.bon_number}`,
     `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
@@ -88,9 +88,12 @@ export function sendSandEmail(entry) {
     `Matricule : ${entry.truck_plate || 'N/A'}`,
     `Chauffeur : ${entry.driver_name || 'N/A'}`,
     `Quantité : ${entry.quantity_tons} T`,
-    `Prix sable : ${entry.sand_price} DA`,
-    `Prix transport : ${entry.transport_price} DA`,
-    `Total : ${total} DA`,
+    `Prix unitaire : ${entry.unit_price} DA/T`,
+    `Total sable : ${entry.sand_total} DA`,
+    `Transport : ${entry.transport_price} DA`,
+    `Total général : ${total} DA`,
+    `Paiement fournisseur : ${entry.supplier_paid ?? 'Non payé'}`,
+    `Paiement transporteur : ${entry.transporter_paid ?? 'Non payé'}`,
     `Observations : ${entry.observations || 'Aucune'}`,
     `Saisi par : ${entry.entered_by_user || 'N/A'}`,
   ]

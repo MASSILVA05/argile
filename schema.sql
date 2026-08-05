@@ -996,3 +996,132 @@ end;
 $$;
 -- Le grant execute existant sur request_login_code(text, text) reste valide
 -- (create or replace ne modifie pas les privilèges déjà accordés).
+
+-- ============================================================
+-- SABLE : prix unitaire (remplace sand_price, qui était un montant total)
+-- + suivi indépendant des paiements fournisseur / transporteur, réglables
+-- plus tard (saisie initiale possible avec les deux statuts à "Non payé").
+-- ============================================================
+
+-- 1) Prix unitaire (DA/T). Rétro-calculé depuis l'ancien sand_price (montant
+--    total) pour les lignes existantes, avant de devenir NOT NULL.
+alter table sand_entries add column if not exists unit_price numeric(10, 2);
+
+update sand_entries
+set unit_price = round(sand_price / nullif(quantity_tons, 0), 2)
+where unit_price is null;
+
+update sand_entries set unit_price = 0 where unit_price is null;
+
+alter table sand_entries alter column unit_price set not null;
+
+-- 2) Total sable calculé automatiquement (remplace sand_price).
+alter table sand_entries
+  add column if not exists sand_total numeric(10, 2) generated always as (quantity_tons * unit_price) stored;
+
+alter table sand_entries drop column if exists sand_price;
+
+comment on column sand_entries.unit_price is 'Prix unitaire du sable (DA/T)';
+comment on column sand_entries.sand_total is 'Total sable = quantity_tons * unit_price (calculé automatiquement)';
+
+-- 3) Paiement fournisseur (sable) et transporteur, indépendants l'un de l'autre.
+alter table sand_entries
+  add column if not exists supplier_paid text not null default 'Non payé'
+    check (supplier_paid in ('Non payé', 'Payé')),
+  add column if not exists supplier_payment_mode text
+    check (supplier_payment_mode in ('Espèces', 'Versement', 'Chèque')),
+  add column if not exists supplier_cheque_number text,
+  add column if not exists supplier_cheque_bank text,
+  add column if not exists supplier_payment_date date,
+  add column if not exists supplier_amount_paid numeric(10, 2),
+  add column if not exists transporter_paid text not null default 'Non payé'
+    check (transporter_paid in ('Non payé', 'Payé')),
+  add column if not exists transporter_payment_mode text
+    check (transporter_payment_mode in ('Espèces', 'Versement', 'Chèque')),
+  add column if not exists transporter_cheque_number text,
+  add column if not exists transporter_cheque_bank text,
+  add column if not exists transporter_payment_date date,
+  add column if not exists transporter_amount_paid numeric(10, 2);
+
+-- 4) admin_update_sand : nouvelle signature (p_sand_price -> p_unit_price +
+-- champs de paiement). L'ancienne fonction est supprimée explicitement car
+-- changer la liste de paramètres crée une surcharge distincte plutôt que de
+-- remplacer l'existante.
+drop function if exists admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text);
+
+create or replace function admin_update_sand(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_supplier_name text,
+  p_transporter_name text,
+  p_truck_plate text,
+  p_driver_name text,
+  p_quantity_tons numeric,
+  p_unit_price numeric,
+  p_transport_price numeric,
+  p_observations text,
+  p_supplier_paid text,
+  p_supplier_payment_mode text,
+  p_supplier_cheque_number text,
+  p_supplier_cheque_bank text,
+  p_supplier_payment_date date,
+  p_supplier_amount_paid numeric,
+  p_transporter_paid text,
+  p_transporter_payment_mode text,
+  p_transporter_cheque_number text,
+  p_transporter_cheque_bank text,
+  p_transporter_payment_date date,
+  p_transporter_amount_paid numeric
+)
+returns sand_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result sand_entries%rowtype;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update sand_entries set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    supplier_name = p_supplier_name,
+    transporter_name = p_transporter_name,
+    truck_plate = p_truck_plate,
+    driver_name = p_driver_name,
+    quantity_tons = p_quantity_tons,
+    unit_price = p_unit_price,
+    transport_price = p_transport_price,
+    observations = p_observations,
+    supplier_paid = p_supplier_paid,
+    supplier_payment_mode = p_supplier_payment_mode,
+    supplier_cheque_number = p_supplier_cheque_number,
+    supplier_cheque_bank = p_supplier_cheque_bank,
+    supplier_payment_date = p_supplier_payment_date,
+    supplier_amount_paid = p_supplier_amount_paid,
+    transporter_paid = p_transporter_paid,
+    transporter_payment_mode = p_transporter_payment_mode,
+    transporter_cheque_number = p_transporter_cheque_number,
+    transporter_cheque_bank = p_transporter_cheque_bank,
+    transporter_payment_date = p_transporter_payment_date,
+    transporter_amount_paid = p_transporter_amount_paid
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Livraison introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text, text, text, text, text, date, numeric, text, text, text, text, date, numeric) from public;
+grant execute on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text, text, text, text, text, date, numeric, text, text, text, text, date, numeric) to anon, authenticated;

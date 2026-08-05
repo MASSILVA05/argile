@@ -4,6 +4,7 @@ import { downloadSandExcel } from '../lib/sandExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { PAYMENT_MODES, PAID_OPTIONS, buildPaymentPayload } from '../lib/sandPayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -13,7 +14,7 @@ function formatTime(value) {
 }
 
 function total(entry) {
-  return Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+  return Number(entry.sand_total || 0) + Number(entry.transport_price || 0)
 }
 
 export default function SandRegistry() {
@@ -22,6 +23,8 @@ export default function SandRegistry() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
+  const [supplierPaidFilter, setSupplierPaidFilter] = useState('')
+  const [transporterPaidFilter, setTransporterPaidFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
@@ -68,15 +71,22 @@ export default function SandRegistry() {
     }
   }, [])
 
+  const banks = useMemo(
+    () => [...new Set(entries.flatMap((e) => [e.supplier_cheque_bank, e.transporter_cheque_bank]).filter(Boolean))],
+    [entries]
+  )
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return entries
-    return entries.filter((e) =>
-      [e.bon_number, e.supplier_name, e.transporter_name, e.truck_plate, e.driver_name].some((field) =>
+    return entries.filter((e) => {
+      if (supplierPaidFilter && e.supplier_paid !== supplierPaidFilter) return false
+      if (transporterPaidFilter && e.transporter_paid !== transporterPaidFilter) return false
+      if (!q) return true
+      return [e.bon_number, e.supplier_name, e.transporter_name, e.truck_plate, e.driver_name].some((field) =>
         String(field ?? '').toLowerCase().includes(q)
       )
-    )
-  }, [entries, query])
+    })
+  }, [entries, query, supplierPaidFilter, transporterPaidFilter])
 
   const totals = useMemo(() => {
     const quantity = filtered.reduce((sum, e) => sum + (Number(e.quantity_tons) || 0), 0)
@@ -110,9 +120,11 @@ export default function SandRegistry() {
       truck_plate: editDraft.truck_plate?.trim() || null,
       driver_name: editDraft.driver_name?.trim() || null,
       quantity_tons: Number(editDraft.quantity_tons),
-      sand_price: Number(editDraft.sand_price),
+      unit_price: Number(editDraft.unit_price),
       transport_price: Number(editDraft.transport_price),
       observations: editDraft.observations?.trim() || null,
+      ...buildPaymentPayload(editDraft, 'supplier'),
+      ...buildPaymentPayload(editDraft, 'transporter'),
     }
 
     const { data, error: updateError } = usingAdminCode
@@ -126,9 +138,21 @@ export default function SandRegistry() {
           p_truck_plate: payload.truck_plate,
           p_driver_name: payload.driver_name,
           p_quantity_tons: payload.quantity_tons,
-          p_sand_price: payload.sand_price,
+          p_unit_price: payload.unit_price,
           p_transport_price: payload.transport_price,
           p_observations: payload.observations,
+          p_supplier_paid: payload.supplier_paid,
+          p_supplier_payment_mode: payload.supplier_payment_mode,
+          p_supplier_cheque_number: payload.supplier_cheque_number,
+          p_supplier_cheque_bank: payload.supplier_cheque_bank,
+          p_supplier_payment_date: payload.supplier_payment_date,
+          p_supplier_amount_paid: payload.supplier_amount_paid,
+          p_transporter_paid: payload.transporter_paid,
+          p_transporter_payment_mode: payload.transporter_payment_mode,
+          p_transporter_cheque_number: payload.transporter_cheque_number,
+          p_transporter_cheque_bank: payload.transporter_cheque_bank,
+          p_transporter_payment_date: payload.transporter_payment_date,
+          p_transporter_amount_paid: payload.transporter_amount_paid,
         })
       : await supabase.from('sand_entries').update(payload).eq('id', editingId).select().single()
 
@@ -223,13 +247,39 @@ export default function SandRegistry() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Rechercher : bon, fournisseur, transporteur, matricule, chauffeur…"
-          className="min-h-11 flex-1 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta"
-        />
+        <div className="flex flex-1 flex-col gap-3 sm:flex-row">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher : bon, fournisseur, transporteur, matricule, chauffeur…"
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
+          />
+          <select
+            value={supplierPaidFilter}
+            onChange={(e) => setSupplierPaidFilter(e.target.value)}
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+          >
+            <option value="">Statut fourn. : tous</option>
+            {PAID_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          <select
+            value={transporterPaidFilter}
+            onChange={(e) => setTransporterPaidFilter(e.target.value)}
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+          >
+            <option value="">Statut transp. : tous</option>
+            {PAID_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </div>
         {!isViewer && (
           <button
             type="button"
@@ -273,7 +323,7 @@ export default function SandRegistry() {
         <p className="text-ink-muted">Aucune livraison.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1300px] border-collapse text-sm">
+          <table className="w-full min-w-[1900px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Bon</Th>
@@ -284,9 +334,12 @@ export default function SandRegistry() {
                 <Th>Matricule</Th>
                 <Th>Chauffeur</Th>
                 <Th>Quantité (T)</Th>
-                <Th>Prix sable (DA)</Th>
-                <Th>Prix transport (DA)</Th>
-                <Th>Total (DA)</Th>
+                <Th>Prix unit.</Th>
+                <Th>Total sable (DA)</Th>
+                <Th>Transport (DA)</Th>
+                <Th>Total général (DA)</Th>
+                <Th>Statut fourn.</Th>
+                <Th>Statut transp.</Th>
                 <Th>Photo</Th>
                 <Th>Saisi par</Th>
                 <Th>Observations</Th>
@@ -302,6 +355,7 @@ export default function SandRegistry() {
                     onChange={setEditDraft}
                     onSave={saveEdit}
                     onCancel={cancelEdit}
+                    bankSuggestions={banks}
                   />
                 ) : (
                   <tr key={entry.id} className="border-b border-border last:border-0">
@@ -313,9 +367,16 @@ export default function SandRegistry() {
                     <Td>{entry.truck_plate ?? '—'}</Td>
                     <Td>{entry.driver_name ?? '—'}</Td>
                     <Td>{entry.quantity_tons}</Td>
-                    <Td>{entry.sand_price}</Td>
+                    <Td>{entry.unit_price}</Td>
+                    <Td>{Number(entry.sand_total || 0).toLocaleString('fr-FR')}</Td>
                     <Td>{entry.transport_price}</Td>
                     <Td>{total(entry).toLocaleString('fr-FR')}</Td>
+                    <Td>
+                      <PaidBadge status={entry.supplier_paid} />
+                    </Td>
+                    <Td>
+                      <PaidBadge status={entry.transporter_paid} />
+                    </Td>
                     <Td>
                       {entry.photo_url ? (
                         <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
@@ -384,10 +445,103 @@ export default function SandRegistry() {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel }) {
+function PaidBadge({ status }) {
+  const isPaid = status === 'Payé'
+  return (
+    <span
+      className={`inline-block rounded-full border px-2 py-0.5 text-xs whitespace-nowrap ${
+        isPaid ? 'border-green-500/50 bg-green-500/10 text-green-500' : 'border-terracotta/50 bg-terracotta/10 text-terracotta'
+      }`}
+    >
+      {status ?? 'Non payé'}
+    </span>
+  )
+}
+
+function PaymentEditCell({ prefix, draft, set, bankSuggestions, defaultAmount }) {
+  const paid = draft[`${prefix}_paid`]
+  const mode = draft[`${prefix}_payment_mode`]
+
+  function setPaid(value) {
+    set(`${prefix}_paid`, value)
+    if (value === 'Payé' && !draft[`${prefix}_amount_paid`]) {
+      set(`${prefix}_amount_paid`, String(defaultAmount))
+    }
+  }
+
+  return (
+    <div className="flex min-w-40 flex-col gap-1">
+      <select value={paid ?? 'Non payé'} onChange={(e) => setPaid(e.target.value)} className={editInputClass}>
+        {PAID_OPTIONS.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+      {paid === 'Payé' && (
+        <>
+          <select
+            value={mode ?? ''}
+            onChange={(e) => set(`${prefix}_payment_mode`, e.target.value)}
+            className={editInputClass}
+          >
+            <option value="">Mode…</option>
+            {PAYMENT_MODES.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          {mode === 'Chèque' && (
+            <>
+              <input
+                type="text"
+                placeholder="N° chèque"
+                value={draft[`${prefix}_cheque_number`] ?? ''}
+                onChange={(e) => set(`${prefix}_cheque_number`, e.target.value)}
+                className={editInputClass}
+              />
+              <input
+                type="text"
+                list={`${prefix}-edit-banks-list`}
+                placeholder="Banque"
+                value={draft[`${prefix}_cheque_bank`] ?? ''}
+                onChange={(e) => set(`${prefix}_cheque_bank`, e.target.value)}
+                className={editInputClass}
+              />
+              <datalist id={`${prefix}-edit-banks-list`}>
+                {bankSuggestions.map((b) => (
+                  <option key={b} value={b} />
+                ))}
+              </datalist>
+            </>
+          )}
+          <input
+            type="date"
+            value={draft[`${prefix}_payment_date`] ?? ''}
+            onChange={(e) => set(`${prefix}_payment_date`, e.target.value)}
+            className={editInputClass}
+          />
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Montant"
+            value={draft[`${prefix}_amount_paid`] ?? ''}
+            onChange={(e) => set(`${prefix}_amount_paid`, e.target.value)}
+            className={editInputClass}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
+
+  const sandTotal = (Number(draft.quantity_tons) || 0) * (Number(draft.unit_price) || 0)
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
@@ -414,12 +568,25 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
         <input type="number" step="0.01" value={draft.quantity_tons} onChange={(e) => set('quantity_tons', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="number" step="0.01" value={draft.sand_price} onChange={(e) => set('sand_price', e.target.value)} className={editInputClass} />
+        <input type="number" step="0.01" value={draft.unit_price} onChange={(e) => set('unit_price', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{sandTotal.toLocaleString('fr-FR')}</Td>
       <Td>
         <input type="number" step="0.01" value={draft.transport_price} onChange={(e) => set('transport_price', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>{total(draft).toLocaleString('fr-FR')}</Td>
+      <Td>{(sandTotal + (Number(draft.transport_price) || 0)).toLocaleString('fr-FR')}</Td>
+      <Td>
+        <PaymentEditCell prefix="supplier" draft={draft} set={set} bankSuggestions={bankSuggestions} defaultAmount={sandTotal} />
+      </Td>
+      <Td>
+        <PaymentEditCell
+          prefix="transporter"
+          draft={draft}
+          set={set}
+          bankSuggestions={bankSuggestions}
+          defaultAmount={Number(draft.transport_price) || 0}
+        />
+      </Td>
       <Td>{draft.photo_url ? <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" /> : '—'}</Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>
