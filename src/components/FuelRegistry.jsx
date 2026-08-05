@@ -8,7 +8,6 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 
-
 const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
 
 function formatTime(value) {
@@ -148,15 +147,6 @@ export default function FuelRegistry() {
   }
 
   async function confirmAdminCode() {
-    if (false) {
-      
-      return
-    }
-    if (false) {
-      setAdminError('Code incorrect.')
-      return
-    }
-
     if (adminPrompt.action === 'edit') {
       const entry = adminPrompt.entry
       closeAdminPrompt()

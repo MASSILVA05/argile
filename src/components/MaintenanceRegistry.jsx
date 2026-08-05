@@ -8,7 +8,6 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 
-
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
 function formatTime(value) {
@@ -154,15 +153,6 @@ export default function MaintenanceRegistry() {
   }
 
   async function confirmAdminCode() {
-    if (false) {
-      
-      return
-    }
-    if (false) {
-      setAdminError('Code incorrect.')
-      return
-    }
-
     if (adminPrompt.action === 'edit') {
       const entry = adminPrompt.entry
       closeAdminPrompt()

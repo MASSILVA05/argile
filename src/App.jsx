@@ -3,6 +3,7 @@ import EntryForm from './components/EntryForm'
 import Registry from './components/Registry'
 import MaintenancePage from './components/MaintenancePage'
 import FuelPage from './components/FuelPage'
+import SandPage from './components/SandPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
@@ -14,6 +15,7 @@ const TITLES = {
   registry: 'Registre de chargement',
   maintenance: 'Maintenance',
   fuel: 'Carburant',
+  sand: 'Sable',
 }
 
 const SESSION_CHECK_MS = 60_000
@@ -91,6 +93,7 @@ function App() {
         {tab === 'registry' && <Registry />}
         {tab === 'maintenance' && <MaintenancePage />}
         {tab === 'fuel' && <FuelPage />}
+        {tab === 'sand' && <SandPage />}
       </main>
 
       <BottomNav active={tab} onChange={setTab} />

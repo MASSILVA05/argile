@@ -50,11 +50,22 @@ function FuelIcon(props) {
   )
 }
 
+function SandIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <path d="M3 20h18" />
+      <path d="M5 20l6-13 6 13" />
+      <path d="M9 20l2.5-9L14 20" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
   { id: 'maintenance', label: 'Maintenance', Icon: WrenchIcon },
   { id: 'fuel', label: 'Carburant', Icon: FuelIcon },
+  { id: 'sand', label: 'Sable', Icon: SandIcon },
 ]
 
 export default function BottomNav({ active, onChange }) {

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { downloadExcel } from '../lib/excel'
-import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
+import { downloadSandExcel } from '../lib/sandExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
@@ -13,13 +12,16 @@ function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
 
-export default function Registry() {
+function total(entry) {
+  return Number(entry.sand_price || 0) + Number(entry.transport_price || 0)
+}
+
+export default function SandRegistry() {
   const { isAdmin, isViewer } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
@@ -38,7 +40,7 @@ export default function Registry() {
     async function load() {
       setLoading(true)
       const { data, error: fetchError } = await supabase
-        .from('entries')
+        .from('sand_entries')
         .select('*')
         .order('created_at', { ascending: false })
       if (!active) return
@@ -54,8 +56,8 @@ export default function Registry() {
     load()
 
     const channel = supabase
-      .channel('entries-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'entries' }, (payload) => {
+      .channel('sand-entries-registry')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sand_entries' }, (payload) => {
         setEntries((current) => applyRealtimeChange(current, payload))
       })
       .subscribe()
@@ -68,18 +70,18 @@ export default function Registry() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return entries.filter((e) => {
-      if (typeFilter && e.unloading_type !== typeFilter) return false
-      if (!q) return true
-      return [e.bon_number, e.truck_plate, e.driver_name, e.unloading_type, e.ticket_number].some((field) =>
+    if (!q) return entries
+    return entries.filter((e) =>
+      [e.bon_number, e.supplier_name, e.transporter_name, e.truck_plate, e.driver_name].some((field) =>
         String(field ?? '').toLowerCase().includes(q)
       )
-    })
-  }, [entries, query, typeFilter])
+    )
+  }, [entries, query])
 
   const totals = useMemo(() => {
-    const weight = filtered.reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
-    return { count: filtered.length, weight }
+    const quantity = filtered.reduce((sum, e) => sum + (Number(e.quantity_tons) || 0), 0)
+    const amount = filtered.reduce((sum, e) => sum + total(e), 0)
+    return { count: filtered.length, quantity, amount }
   }, [filtered])
 
   function startEdit(entry) {
@@ -100,36 +102,35 @@ export default function Registry() {
       cancelEdit()
       return
     }
-    const isFixed = editDraft.unloading_type === FIXED_WEIGHT_TYPE
     const payload = {
       bon_number: Number(editDraft.bon_number),
       entry_date: editDraft.entry_date,
-      truck_plate: editDraft.truck_plate.trim(),
-      driver_name: editDraft.driver_name.trim(),
-      unloading_type: editDraft.unloading_type,
-      ticket_number: isFixed ? null : editDraft.ticket_number?.trim() || null,
-      weight_tons: isFixed
-        ? FIXED_WEIGHT_TONS
-        : editDraft.weight_tons === '' || editDraft.weight_tons == null
-          ? null
-          : Number(editDraft.weight_tons),
+      supplier_name: editDraft.supplier_name.trim(),
+      transporter_name: editDraft.transporter_name?.trim() || null,
+      truck_plate: editDraft.truck_plate?.trim() || null,
+      driver_name: editDraft.driver_name?.trim() || null,
+      quantity_tons: Number(editDraft.quantity_tons),
+      sand_price: Number(editDraft.sand_price),
+      transport_price: Number(editDraft.transport_price),
       observations: editDraft.observations?.trim() || null,
     }
 
     const { data, error: updateError } = usingAdminCode
-      ? await supabase.rpc('admin_update_entry', {
+      ? await supabase.rpc('admin_update_sand', {
           p_id: editingId,
           p_admin_code: editAdminCode,
           p_bon_number: payload.bon_number,
           p_entry_date: payload.entry_date,
+          p_supplier_name: payload.supplier_name,
+          p_transporter_name: payload.transporter_name,
           p_truck_plate: payload.truck_plate,
           p_driver_name: payload.driver_name,
-          p_unloading_type: payload.unloading_type,
-          p_ticket_number: payload.ticket_number,
-          p_weight_tons: payload.weight_tons,
+          p_quantity_tons: payload.quantity_tons,
+          p_sand_price: payload.sand_price,
+          p_transport_price: payload.transport_price,
           p_observations: payload.observations,
         })
-      : await supabase.from('entries').update(payload).eq('id', editingId).select().single()
+      : await supabase.from('sand_entries').update(payload).eq('id', editingId).select().single()
 
     if (updateError) {
       setError(`Erreur de mise à jour : ${updateError.message}`)
@@ -165,7 +166,7 @@ export default function Registry() {
     }
 
     setAdminBusy(true)
-    const { error: rpcError } = await supabase.rpc('admin_delete_entry', {
+    const { error: rpcError } = await supabase.rpc('admin_delete_sand', {
       p_id: adminPrompt.entry.id,
       p_admin_code: adminCodeValue,
     })
@@ -183,7 +184,7 @@ export default function Registry() {
   }
 
   async function handleExport(filters, includePhotos) {
-    const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'unloading_type' })
+    const toExport = applyExportFilters(entries, filters)
     if (toExport.length === 0) {
       setExportError('Aucune donnée pour ces critères')
       return
@@ -192,9 +193,9 @@ export default function Registry() {
     setExportModalOpen(false)
     setExportProgress({ current: 0, total: 0 })
     try {
-      await downloadExcel(toExport, {
+      await downloadSandExcel(toExport, {
         includePhotos,
-        filename: buildExportFilename('Registre_Chargement', filters.startDate, filters.endDate),
+        filename: buildExportFilename('Registre_Sable', filters.startDate, filters.endDate),
         onProgress: (current, total) => setExportProgress({ current, total }),
       })
     } catch (err) {
@@ -209,9 +210,9 @@ export default function Registry() {
       setError(LOCK_MESSAGE)
       return
     }
-    const ok = window.confirm(`Supprimer le bon n° ${entry.bon_number} (${entry.truck_plate}) ?`)
+    const ok = window.confirm(`Supprimer le bon sable n° ${entry.bon_number} (${entry.supplier_name}) ?`)
     if (!ok) return
-    const { error: deleteError } = await supabase.from('entries').delete().eq('id', entry.id)
+    const { error: deleteError } = await supabase.from('sand_entries').delete().eq('id', entry.id)
     if (deleteError) {
       setError(`Erreur de suppression : ${deleteError.message}`)
       return
@@ -222,27 +223,13 @@ export default function Registry() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 flex-col gap-3 sm:flex-row">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher : bon, matricule, chauffeur, ticket…"
-            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
-          />
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
-          >
-            <option value="">Tous les types</option>
-            {UNLOADING_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </div>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Rechercher : bon, fournisseur, transporteur, matricule, chauffeur…"
+          className="min-h-11 flex-1 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta"
+        />
         {!isViewer && (
           <button
             type="button"
@@ -265,8 +252,12 @@ export default function Registry() {
           <p className="font-display text-xl text-ocre">{totals.count}</p>
         </div>
         <div>
-          <p className="text-xs text-ink-muted">Tonnage cumulé</p>
-          <p className="font-display text-xl text-ocre">{totals.weight.toFixed(2)} T</p>
+          <p className="text-xs text-ink-muted">Quantité cumulée</p>
+          <p className="font-display text-xl text-ocre">{totals.quantity.toFixed(2)} T</p>
+        </div>
+        <div>
+          <p className="text-xs text-ink-muted">Total (DA)</p>
+          <p className="font-display text-xl text-ocre">{totals.amount.toLocaleString('fr-FR')}</p>
         </div>
       </div>
 
@@ -279,23 +270,26 @@ export default function Registry() {
       {loading ? (
         <p className="text-ink-muted">Chargement…</p>
       ) : filtered.length === 0 ? (
-        <p className="text-ink-muted">Aucune entrée.</p>
+        <p className="text-ink-muted">Aucune livraison.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1150px] border-collapse text-sm">
+          <table className="w-full min-w-[1300px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>Bon</Th>
                 <Th>Date</Th>
                 <Th>Heure</Th>
+                <Th>Fournisseur</Th>
+                <Th>Transporteur</Th>
                 <Th>Matricule</Th>
                 <Th>Chauffeur</Th>
-                <Th>Type</Th>
-                <Th>Ticket</Th>
-                <Th>Poids (T)</Th>
+                <Th>Quantité (T)</Th>
+                <Th>Prix sable (DA)</Th>
+                <Th>Prix transport (DA)</Th>
+                <Th>Total (DA)</Th>
                 <Th>Photo</Th>
-                <Th>Observations</Th>
                 <Th>Saisi par</Th>
+                <Th>Observations</Th>
                 <Th>Actions</Th>
               </tr>
             </thead>
@@ -314,11 +308,14 @@ export default function Registry() {
                     <Td>{entry.bon_number}</Td>
                     <Td>{entry.entry_date}</Td>
                     <Td>{formatTime(entry.entry_time)}</Td>
-                    <Td>{entry.truck_plate}</Td>
-                    <Td>{entry.driver_name}</Td>
-                    <Td>{entry.unloading_type}</Td>
-                    <Td>{entry.ticket_number ?? '—'}</Td>
-                    <Td>{entry.weight_tons ?? '—'}</Td>
+                    <Td>{entry.supplier_name}</Td>
+                    <Td>{entry.transporter_name ?? '—'}</Td>
+                    <Td>{entry.truck_plate ?? '—'}</Td>
+                    <Td>{entry.driver_name ?? '—'}</Td>
+                    <Td>{entry.quantity_tons}</Td>
+                    <Td>{entry.sand_price}</Td>
+                    <Td>{entry.transport_price}</Td>
+                    <Td>{total(entry).toLocaleString('fr-FR')}</Td>
                     <Td>
                       {entry.photo_url ? (
                         <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
@@ -332,10 +329,10 @@ export default function Registry() {
                         '—'
                       )}
                     </Td>
+                    <Td>{entry.entered_by_user ?? '—'}</Td>
                     <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                       {entry.observations ?? '—'}
                     </Td>
-                    <Td>{entry.entered_by_user ?? '—'}</Td>
                     <Td>
                       <RowActions
                         entry={entry}
@@ -363,10 +360,10 @@ export default function Registry() {
 
       <ExportFilterModal
         open={exportModalOpen}
-        categorical={{ field: 'unloading_type', label: 'Type de déchargement', options: UNLOADING_TYPES }}
         textFilters={[
+          { field: 'supplier_name', label: 'Fournisseur', suggestions: exportSuggestions('supplier_name') },
+          { field: 'transporter_name', label: 'Transporteur', suggestions: exportSuggestions('transporter_name') },
           { field: 'truck_plate', label: 'Matricule', suggestions: exportSuggestions('truck_plate') },
-          { field: 'driver_name', label: 'Chauffeur', suggestions: exportSuggestions('driver_name') },
         ]}
         hasPhotos
         error={exportError}
@@ -388,21 +385,8 @@ export default function Registry() {
 }
 
 function EditRow({ draft, onChange, onSave, onCancel }) {
-  const isFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
-
   function set(field, value) {
     onChange({ ...draft, [field]: value })
-  }
-
-  function setType(nextType) {
-    const wasFixed = draft.unloading_type === FIXED_WEIGHT_TYPE
-    const becomesFixed = nextType === FIXED_WEIGHT_TYPE
-    onChange({
-      ...draft,
-      unloading_type: nextType,
-      weight_tons: becomesFixed ? FIXED_WEIGHT_TONS : wasFixed ? '' : draft.weight_tons,
-      ticket_number: becomesFixed ? '' : draft.ticket_number,
-    })
   }
 
   return (
@@ -415,48 +399,32 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       </Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
-        <input type="text" value={draft.truck_plate} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
+        <input type="text" value={draft.supplier_name} onChange={(e) => set('supplier_name', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="text" value={draft.driver_name} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
+        <input type="text" value={draft.transporter_name ?? ''} onChange={(e) => set('transporter_name', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <select value={draft.unloading_type} onChange={(e) => setType(e.target.value)} className={editInputClass}>
-          {UNLOADING_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <input type="text" value={draft.truck_plate ?? ''} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        {isFixed ? (
-          '—'
-        ) : (
-          <input type="text" value={draft.ticket_number ?? ''} onChange={(e) => set('ticket_number', e.target.value)} className={editInputClass} />
-        )}
+        <input type="text" value={draft.driver_name ?? ''} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input
-          type="number"
-          step="0.01"
-          value={draft.weight_tons ?? ''}
-          onChange={(e) => set('weight_tons', e.target.value)}
-          className={editInputClass}
-          disabled={isFixed}
-        />
+        <input type="number" step="0.01" value={draft.quantity_tons} onChange={(e) => set('quantity_tons', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        {draft.photo_url ? (
-          <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
-        ) : (
-          '—'
-        )}
+        <input type="number" step="0.01" value={draft.sand_price} onChange={(e) => set('sand_price', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.transport_price} onChange={(e) => set('transport_price', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>{total(draft).toLocaleString('fr-FR')}</Td>
+      <Td>{draft.photo_url ? <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" /> : '—'}</Td>
+      <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">
