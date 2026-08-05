@@ -1,5 +1,5 @@
-const MAX_WIDTH = 800
-const JPEG_QUALITY = 0.6
+const MAX_WIDTH = 400
+const JPEG_QUALITY = 0.4
 
 export function compressImage(file, { maxWidth = MAX_WIDTH, quality = JPEG_QUALITY } = {}) {
   return new Promise((resolve, reject) => {
