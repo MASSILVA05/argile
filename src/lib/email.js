@@ -102,3 +102,26 @@ export function sendSandEmail(entry) {
     message: lines.join('\n'),
   })
 }
+
+export function sendInvoiceEmail(entry) {
+  const lines = [
+    `Facture n° ${entry.invoice_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Client : ${entry.client_name}`,
+    `Total HT : ${entry.total_ht} DA`,
+    `Remise : ${entry.discount_percent ?? 0} %`,
+    `TVA : ${entry.total_tva} DA`,
+    `TTC : ${entry.total_ttc} DA`,
+    `Timbre : ${entry.stamp_duty ?? 0} DA`,
+    `Total Net : ${entry.total_net} DA`,
+    `Paiement : ${entry.payment_status ?? 'Non payé'}`,
+    `Réf. Commande : ${entry.ref_commande || 'N/A'}`,
+    `Réf. Livraison : ${entry.ref_livraison || 'N/A'}`,
+    `Observations : ${entry.observations || 'Aucune'}`,
+    `Saisi par : ${entry.entered_by_user || 'N/A'}`,
+  ]
+  return send({
+    subject: 'Nouvelle facture',
+    message: lines.join('\n'),
+  })
+}

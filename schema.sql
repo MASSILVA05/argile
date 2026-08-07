@@ -1125,3 +1125,144 @@ $$;
 
 revoke all on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text, text, text, text, text, date, numeric, text, text, text, text, date, numeric) from public;
 grant execute on function admin_update_sand(uuid, text, integer, date, text, text, text, text, numeric, numeric, numeric, text, text, text, text, text, date, numeric, text, text, text, text, date, numeric) to anon, authenticated;
+
+-- ============================================================
+-- FACTURES : registre général des factures de ventes (onglet "Factures")
+-- ============================================================
+
+create table if not exists invoices (
+  id uuid primary key default gen_random_uuid(),
+  invoice_number text not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  client_name text not null,
+  total_ht numeric(12, 2) not null,
+  discount_percent numeric(5, 2) default 0,
+  total_tva numeric(12, 2) generated always as (total_ht * 0.19 * (1 - discount_percent / 100)) stored,
+  total_ttc numeric(12, 2) generated always as (
+    total_ht * (1 - discount_percent / 100) + total_ht * 0.19 * (1 - discount_percent / 100)
+  ) stored,
+  stamp_duty numeric(10, 2) default 0,
+  total_net numeric(12, 2) generated always as (
+    total_ht * (1 - discount_percent / 100) + total_ht * 0.19 * (1 - discount_percent / 100) + stamp_duty
+  ) stored,
+  payment_status text default 'Non payé' check (payment_status in ('Espèces', 'Chèque', 'Virement', 'Non payé')),
+  cheque_number text,
+  cheque_bank text,
+  ref_commande text,
+  ref_livraison text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table invoices is 'Registre général des factures de ventes';
+comment on column invoices.total_tva is 'TVA = total_ht * 0.19 * (1 - discount_percent/100), calculée automatiquement';
+comment on column invoices.total_ttc is 'TTC = HT remisé + TVA, calculé automatiquement';
+comment on column invoices.total_net is 'Net à payer = TTC + timbre, calculé automatiquement';
+
+create index if not exists invoices_created_at_idx on invoices (created_at desc);
+create index if not exists invoices_entry_date_idx on invoices (entry_date desc);
+create index if not exists invoices_client_name_idx on invoices (client_name);
+create index if not exists invoices_invoice_number_idx on invoices (invoice_number);
+create index if not exists invoices_payment_status_idx on invoices (payment_status);
+
+alter table invoices enable row level security;
+
+create policy "Lecture publique factures"
+  on invoices for select
+  using (true);
+
+create policy "Ajout factures"
+  on invoices for insert
+  with check (true);
+
+create policy "Modification factures"
+  on invoices for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression factures"
+  on invoices for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table invoices;
+
+-- Code admin (même principe que admin_update_entry/admin_delete_entry plus haut) :
+-- permet de modifier/supprimer une facture après le verrou de 72h.
+create or replace function admin_update_invoice(
+  p_id uuid,
+  p_admin_code text,
+  p_invoice_number text,
+  p_entry_date date,
+  p_client_name text,
+  p_total_ht numeric,
+  p_discount_percent numeric,
+  p_stamp_duty numeric,
+  p_payment_status text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_ref_commande text,
+  p_ref_livraison text,
+  p_observations text
+)
+returns invoices
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result invoices;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update invoices set
+    invoice_number = p_invoice_number,
+    entry_date = p_entry_date,
+    client_name = p_client_name,
+    total_ht = p_total_ht,
+    discount_percent = p_discount_percent,
+    stamp_duty = p_stamp_duty,
+    payment_status = p_payment_status,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    ref_commande = p_ref_commande,
+    ref_livraison = p_ref_livraison,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Facture introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_invoice(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from invoices where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_invoice(uuid, text, text, date, text, numeric, numeric, numeric, text, text, text, text, text, text) from public;
+revoke all on function admin_delete_invoice(uuid, text) from public;
+grant execute on function admin_update_invoice(uuid, text, text, date, text, numeric, numeric, numeric, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function admin_delete_invoice(uuid, text) to anon, authenticated;

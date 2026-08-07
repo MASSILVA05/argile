@@ -60,12 +60,25 @@ function SandIcon(props) {
   )
 }
 
+function InvoiceIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <path d="M6 2h9l3 3v17H6z" />
+      <path d="M15 2v3h3" />
+      <path d="M9 11h6" />
+      <path d="M9 15h6" />
+      <path d="M9 19h3" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
   { id: 'maintenance', label: 'Maintenance', Icon: WrenchIcon },
   { id: 'fuel', label: 'Carburant', Icon: FuelIcon },
   { id: 'sand', label: 'Sable', Icon: SandIcon },
+  { id: 'invoices', label: 'Factures', Icon: InvoiceIcon },
 ]
 
 export default function BottomNav({ active, onChange }) {

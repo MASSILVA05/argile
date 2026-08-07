@@ -107,3 +107,21 @@ export function notifySandEntry(entry) {
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy('Nouvelle livraison sable', lines, 'mountain')
 }
+
+export function notifyInvoiceEntry(entry) {
+  const lines = [
+    `Facture n° ${entry.invoice_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Client : ${entry.client_name}`,
+    `Total HT : ${entry.total_ht} DA`,
+  ]
+  if (entry.discount_percent) lines.push(`Remise : ${entry.discount_percent} %`)
+  lines.push(`TVA : ${entry.total_tva} DA`)
+  lines.push(`TTC : ${entry.total_ttc} DA`)
+  if (entry.stamp_duty) lines.push(`Timbre : ${entry.stamp_duty} DA`)
+  lines.push(`Total Net : ${entry.total_net} DA`)
+  lines.push(`Paiement : ${entry.payment_status ?? 'Non payé'}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy('Nouvelle facture', lines, 'receipt')
+}
