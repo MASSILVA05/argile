@@ -31,11 +31,36 @@ export default function InvoiceForm() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [clock, setClock] = useState(() => formatHHMM(new Date()))
+  const [clientInfo, setClientInfo] = useState(null)
 
   useEffect(() => {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // Recherche le client dans `clients` (référentiel + solde historique) à
+  // chaque changement du nom saisi, avec un léger debounce pour ne pas
+  // interroger la base à chaque frappe.
+  useEffect(() => {
+    const name = draft.client_name.trim()
+    if (!name) {
+      setClientInfo(null)
+      return
+    }
+    let cancelled = false
+    const id = setTimeout(async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('name, total_invoiced, total_paid, balance')
+        .ilike('name', name)
+        .maybeSingle()
+      if (!cancelled) setClientInfo(data ? { found: true, ...data } : { found: false })
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(id)
+    }
+  }, [draft.client_name])
 
   function dedupe(list) {
     return [...new Set((list ?? []).filter(Boolean))]
@@ -202,6 +227,7 @@ export default function InvoiceForm() {
             <option key={c} value={c} />
           ))}
         </datalist>
+        <ClientInfoPanel info={clientInfo} />
       </Field>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -377,6 +403,31 @@ function Field({ label, required, children }) {
       </span>
       {children}
     </label>
+  )
+}
+
+function formatDA(value) {
+  return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
+}
+
+function ClientInfoPanel({ info }) {
+  if (!info) return null
+
+  if (!info.found) {
+    return <p className="text-xs text-ink-muted">Nouveau client — pas d'historique</p>
+  }
+
+  const balancePositive = Number(info.balance) > 0
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-soft px-3 py-2 text-sm">
+      <p className={`font-display ${balancePositive ? 'text-terracotta' : 'text-green-500'}`}>
+        Dernier solde : {formatDA(info.balance)} DA
+      </p>
+      <p className="text-xs text-ink-muted">
+        Total facturé : {formatDA(info.total_invoiced)} DA | Total réglé : {formatDA(info.total_paid)} DA
+      </p>
+    </div>
   )
 }
 

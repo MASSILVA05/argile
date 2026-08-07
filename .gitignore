@@ -16,6 +16,10 @@ dist-ssr
 .env
 .env.local
 
+# Fichiers sources d'import ponctuel (données clients réelles, ne doivent
+# jamais être commitées) : voir scripts/import-situations.js
+Situation_*.xlsx
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

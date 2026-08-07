@@ -1266,3 +1266,128 @@ revoke all on function admin_update_invoice(uuid, text, text, date, text, numeri
 revoke all on function admin_delete_invoice(uuid, text) from public;
 grant execute on function admin_update_invoice(uuid, text, text, date, text, numeric, numeric, numeric, text, text, text, text, text, text) to anon, authenticated;
 grant execute on function admin_delete_invoice(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- CLIENTS : référentiel + solde de compte (import historique
+-- depuis Situation_Globale.xlsx via scripts/import-situations.js,
+-- puis tenu à jour automatiquement par l'activité native dans `invoices`).
+-- ============================================================
+
+create table if not exists clients (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  total_invoiced numeric(14, 2) not null default 0,
+  total_paid numeric(14, 2) not null default 0,
+  balance numeric(14, 2) not null default 0,
+  source text not null default 'manual',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+comment on table clients is 'Référentiel clients : solde de compte cumulant l''historique importé (Situation_Globale.xlsx) et l''activité native de la table invoices';
+comment on column clients.balance is 'total_invoiced - total_paid ; positif = client débiteur';
+comment on column clients.source is '''import_historique'' pour les lignes créées par scripts/import-situations.js, ''manual'' sinon';
+
+create index if not exists clients_name_lower_idx on clients (lower(name));
+create index if not exists clients_balance_idx on clients (balance desc);
+
+alter table clients enable row level security;
+
+create policy "Lecture publique clients"
+  on clients for select
+  using (true);
+
+create policy "Ajout clients"
+  on clients for insert
+  with check (true);
+
+create policy "Modification clients"
+  on clients for update
+  using (true)
+  with check (true);
+-- Pas de verrou 72h ici (contrairement aux autres tables) : balance/total_invoiced/
+-- total_paid sont des totaux courants tenus à jour en continu par le trigger
+-- ci-dessous à chaque écriture dans `invoices`, pas un historique figé.
+
+alter publication supabase_realtime add table clients;
+
+create table if not exists client_yearly_stats (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references clients(id) on delete cascade,
+  year integer not null,
+  amount numeric(14, 2) not null,
+  unique (client_id, year)
+);
+
+comment on table client_yearly_stats is 'Chiffre d''affaires annuel par client, importé depuis l''onglet Chiffre_Affaires_Clients de Situation_Globale.xlsx (année 2024 volontairement exclue : données sources incomplètes/suspectes)';
+
+create index if not exists client_yearly_stats_client_id_idx on client_yearly_stats (client_id);
+
+alter table client_yearly_stats enable row level security;
+
+create policy "Lecture publique stats annuelles clients"
+  on client_yearly_stats for select
+  using (true);
+
+create policy "Ajout stats annuelles clients"
+  on client_yearly_stats for insert
+  with check (true);
+
+create policy "Modification stats annuelles clients"
+  on client_yearly_stats for update
+  using (true)
+  with check (true);
+
+alter publication supabase_realtime add table client_yearly_stats;
+
+-- Tient à jour clients.total_invoiced / total_paid / balance à chaque écriture
+-- sur `invoices` (insert direct, update -- y compris via admin_update_invoice --,
+-- delete -- y compris via admin_delete_invoice), en ajoutant/retirant le
+-- total_net de la facture sur le compte du client correspondant (recherche
+-- insensible à la casse sur clients.name). N'agit que si le client existe déjà
+-- dans `clients` (pas de création automatique) : voir le formulaire de saisie,
+-- qui affiche "Nouveau client — pas d'historique" dans ce cas.
+create or replace function sync_client_balance_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_client_id uuid;
+  v_new_client_id uuid;
+begin
+  if TG_OP = 'UPDATE' or TG_OP = 'DELETE' then
+    select id into v_old_client_id from clients where lower(name) = lower(OLD.client_name) limit 1;
+    if v_old_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced - OLD.total_net,
+        total_paid = total_paid - case when OLD.payment_status is distinct from 'Non payé' then OLD.total_net else 0 end,
+        updated_at = now()
+      where id = v_old_client_id;
+    end if;
+  end if;
+
+  if TG_OP = 'INSERT' or TG_OP = 'UPDATE' then
+    select id into v_new_client_id from clients where lower(name) = lower(NEW.client_name) limit 1;
+    if v_new_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced + NEW.total_net,
+        total_paid = total_paid + case when NEW.payment_status is distinct from 'Non payé' then NEW.total_net else 0 end,
+        updated_at = now()
+      where id = v_new_client_id;
+    end if;
+  end if;
+
+  update clients set balance = total_invoiced - total_paid
+  where id = v_old_client_id or id = v_new_client_id;
+
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+drop trigger if exists invoices_sync_client_balance on invoices;
+
+create trigger invoices_sync_client_balance
+  after insert or update or delete on invoices
+  for each row execute function sync_client_balance_from_invoice();
