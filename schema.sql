@@ -2098,3 +2098,29 @@ drop trigger if exists invoices_sync_stock on invoices;
 create trigger invoices_sync_stock
   after insert or update or delete on invoices
   for each row execute function sync_stock_from_invoice();
+
+-- ============================================================
+-- STOCK : colonnes supplémentaires pour reproduire fidèlement la fiche
+-- papier "FICHE DE STOCKS PRODUITS FINIS" sur les mouvements de type
+-- Production (nulles/à 0 pour les mouvements Vente/Ajustement, qui n'ont
+-- pas cette granularité).
+-- ============================================================
+
+alter table stock_movements add column if not exists cadence_theorique numeric(10, 2);
+alter table stock_movements add column if not exists feuillard numeric(10, 2);
+alter table stock_movements add column if not exists stock_start numeric(12, 2) default 0;
+alter table stock_movements add column if not exists cadence_reelle numeric(10, 2);
+alter table stock_movements add column if not exists consommation numeric(10, 2);
+alter table stock_movements add column if not exists stock_final numeric(12, 2);
+alter table stock_movements add column if not exists nb_wagon integer default 0;
+alter table stock_movements add column if not exists nb_paquet integer default 0;
+alter table stock_movements add column if not exists total_wagon integer default 0;
+alter table stock_movements add column if not exists total_paquets integer default 0;
+alter table stock_movements add column if not exists nb_briques integer default 0;
+alter table stock_movements add column if not exists commercial numeric(12, 2) default 0;
+alter table stock_movements add column if not exists stocks_fin_journee numeric(12, 2);
+
+comment on column stock_movements.stock_start is 'Report : stock en début de journée (= stock_after de la dernière saisie du même produit)';
+comment on column stock_movements.nb_briques is 'Production du jour en nombre de briques -- alimente `quantity` pour ce mouvement (pas de conversion wagon/paquet -> briques automatique)';
+comment on column stock_movements.commercial is 'Quantité vendue ce jour pour ce produit, calculée depuis invoices.qty_b8/qty_b12 (entry_date = stock_movements.entry_date)';
+comment on column stock_movements.stocks_fin_journee is 'Report + Production (nb_briques) - Commercial, snapshot du jour pour la fiche papier';

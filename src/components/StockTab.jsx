@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { getSession } from '../lib/auth'
+import { downloadStockExcel } from '../lib/stockExcel'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -13,11 +14,19 @@ function formatQty(value) {
 }
 
 const emptyDraft = {
+  entry_date: todayISO(),
   product_name: 'B8',
   movement_type: 'Production',
+  cadence_theorique: '',
+  feuillard: '',
+  stock_start: '0',
+  cadence_reelle: '',
+  consommation: '',
+  stock_final: '0',
+  nb_wagon: '',
+  nb_paquet: '',
+  nb_briques: '',
   quantity: '',
-  wagons: '',
-  paquets: '',
   observations: '',
 }
 
@@ -27,8 +36,12 @@ export default function StockTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [draft, setDraft] = useState(emptyDraft)
+  const [stockFinalTouched, setStockFinalTouched] = useState(false)
+  const [commercial, setCommercial] = useState(0)
+  const [lastProduction, setLastProduction] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -51,6 +64,7 @@ export default function StockTab() {
     }
 
     load()
+    loadLastProduction()
 
     const stockChannel = supabase
       .channel('product-stock')
@@ -71,16 +85,93 @@ export default function StockTab() {
       supabase.removeChannel(stockChannel)
       supabase.removeChannel(movementChannel)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Dernier mouvement de type Production par produit, pour cumuler
+  // Total WAGON / Total PAQUETS (report + saisie du jour).
+  async function loadLastProduction() {
+    const results = {}
+    for (const product of PRODUCTS) {
+      const { data } = await supabase
+        .from('stock_movements')
+        .select('total_wagon, total_paquets')
+        .eq('product_name', product)
+        .eq('movement_type', 'Production')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      results[product] = data ?? { total_wagon: 0, total_paquets: 0 }
+    }
+    setLastProduction(results)
+  }
+
+  // Ne réinitialise "Stock final modifié à la main" que sur un vrai
+  // changement de produit -- pas à chaque rafraîchissement temps réel de
+  // `stocks` (ex: une vente en cours ailleurs), pour ne pas effacer une
+  // correction manuelle en cours de saisie.
+  useEffect(() => {
+    if (draft.movement_type !== 'Production') return
+    setStockFinalTouched(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.product_name, draft.movement_type])
+
+  // Report = stock actuel du produit (toujours égal au stock_after de la
+  // dernière saisie, quel que soit son type, grâce au trigger stock_movements_apply).
+  useEffect(() => {
+    if (draft.movement_type !== 'Production') return
+    const stock = stocks.find((s) => s.product_name === draft.product_name)
+    setDraft((d) => ({ ...d, stock_start: stock ? String(stock.current_stock) : '0' }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.product_name, draft.movement_type, stocks])
+
+  // Commercial = quantité vendue ce jour pour ce produit, depuis invoices.
+  useEffect(() => {
+    if (draft.movement_type !== 'Production') return
+    let cancelled = false
+    async function loadCommercial() {
+      const column = draft.product_name === 'B8' ? 'qty_b8' : 'qty_b12'
+      const { data } = await supabase.from('invoices').select(column).eq('entry_date', draft.entry_date)
+      if (cancelled) return
+      const sum = (data ?? []).reduce((s, r) => s + (Number(r[column]) || 0), 0)
+      setCommercial(sum)
+    }
+    loadCommercial()
+    return () => {
+      cancelled = true
+    }
+  }, [draft.product_name, draft.entry_date, draft.movement_type])
+
+  const stockStart = Number(draft.stock_start) || 0
+  const nbBriques = Number(draft.nb_briques) || 0
+  const nbWagon = Number(draft.nb_wagon) || 0
+  const nbPaquet = Number(draft.nb_paquet) || 0
+  const computedStockFinal = stockStart + nbBriques
+  const stocksFinJournee = stockStart + nbBriques - commercial
+  const prevTotals = lastProduction[draft.product_name] ?? { total_wagon: 0, total_paquets: 0 }
+  const totalWagon = (Number(prevTotals.total_wagon) || 0) + nbWagon
+  const totalPaquets = (Number(prevTotals.total_paquets) || 0) + nbPaquet
+
+  // Stock final = calculé par défaut (Report + Production), mais reste
+  // modifiable à la main ("calculé ou saisi") -- on arrête de le recalculer
+  // dès que l'utilisateur y touche directement.
+  useEffect(() => {
+    if (draft.movement_type !== 'Production' || stockFinalTouched) return
+    setDraft((d) => ({ ...d, stock_final: String(computedStockFinal) }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockStart, nbBriques, stockFinalTouched, draft.movement_type])
 
   function update(field, value) {
     setDraft((d) => ({ ...d, [field]: value }))
   }
 
   function validate() {
-    if (draft.quantity === '' || Number(draft.quantity) === 0) return 'La quantité est obligatoire.'
-    if (draft.movement_type === 'Production' && Number(draft.quantity) < 0) {
-      return 'La quantité de production doit être positive (utilisez "Ajustement" pour une correction négative).'
+    if (draft.movement_type === 'Ajustement') {
+      if (draft.quantity === '' || Number(draft.quantity) === 0) return 'La quantité est obligatoire.'
+      return ''
+    }
+    if (draft.nb_briques === '' || Number(draft.nb_briques) < 0) {
+      return 'Le nombre de briques est obligatoire.'
     }
     return ''
   }
@@ -96,23 +187,42 @@ export default function StockTab() {
     setError('')
     setSubmitting(true)
 
-    const notes = []
-    if (draft.movement_type === 'Production') {
-      if (draft.wagons !== '') notes.push(`${draft.wagons} wagon(s)`)
-      if (draft.paquets !== '') notes.push(`${draft.paquets} paquet(s)`)
-    }
-    if (draft.observations.trim()) notes.push(draft.observations.trim())
+    const isProduction = draft.movement_type === 'Production'
 
-    const payload = {
-      entry_date: todayISO(),
-      entry_time: formatHHMM(new Date()),
-      product_name: draft.product_name,
-      movement_type: draft.movement_type,
-      quantity: Number(draft.quantity),
-      stock_after: 0, // recalculé par le trigger stock_movements_before_insert
-      observations: notes.length > 0 ? notes.join(' — ') : null,
-      entered_by_user: getSession()?.username ?? null,
-    }
+    const payload = isProduction
+      ? {
+          entry_date: draft.entry_date,
+          entry_time: formatHHMM(new Date()),
+          product_name: draft.product_name,
+          movement_type: 'Production',
+          quantity: nbBriques,
+          stock_after: 0, // recalculé par le trigger stock_movements_before_insert
+          cadence_theorique: draft.cadence_theorique === '' ? null : Number(draft.cadence_theorique),
+          feuillard: draft.feuillard === '' ? null : Number(draft.feuillard),
+          stock_start: stockStart,
+          cadence_reelle: draft.cadence_reelle === '' ? null : Number(draft.cadence_reelle),
+          consommation: draft.consommation === '' ? null : Number(draft.consommation),
+          stock_final: Number(draft.stock_final) || 0,
+          nb_wagon: nbWagon,
+          nb_paquet: nbPaquet,
+          total_wagon: totalWagon,
+          total_paquets: totalPaquets,
+          nb_briques: nbBriques,
+          commercial,
+          stocks_fin_journee: stocksFinJournee,
+          observations: draft.observations.trim() || null,
+          entered_by_user: getSession()?.username ?? null,
+        }
+      : {
+          entry_date: draft.entry_date,
+          entry_time: formatHHMM(new Date()),
+          product_name: draft.product_name,
+          movement_type: 'Ajustement',
+          quantity: Number(draft.quantity),
+          stock_after: 0,
+          observations: draft.observations.trim() || null,
+          entered_by_user: getSession()?.username ?? null,
+        }
 
     const { error: insertError } = await supabase.from('stock_movements').insert(payload).select().single()
 
@@ -122,12 +232,23 @@ export default function StockTab() {
       return
     }
 
-    setDraft(emptyDraft)
+    setDraft({ ...emptyDraft, entry_date: draft.entry_date, product_name: draft.product_name })
+    setStockFinalTouched(false)
     setSuccess(`Mouvement ${draft.movement_type} enregistré pour ${draft.product_name}.`)
     setSubmitting(false)
+    loadLastProduction()
   }
 
-  const dailySummary = useMemo(() => buildDailySummary(movements), [movements])
+  async function handleExport() {
+    setExporting(true)
+    try {
+      await downloadStockExcel(movements)
+    } catch (err) {
+      setError(`Erreur lors de la génération du fichier Excel : ${err.message}`)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -138,9 +259,18 @@ export default function StockTab() {
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4 rounded-xl border border-border bg-bg-card p-4">
-        <h2 className="font-display text-lg text-ink">Saisie manuelle (production / ajustement)</h2>
+        <h2 className="font-display text-lg text-ink">Fiche de stocks produits finis</h2>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Field label="Date" required>
+            <input
+              type="date"
+              value={draft.entry_date}
+              onChange={(e) => update('entry_date', e.target.value)}
+              className={inputClass}
+              required
+            />
+          </Field>
           <Field label="Produit" required>
             <select value={draft.product_name} onChange={(e) => update('product_name', e.target.value)} className={inputClass}>
               {PRODUCTS.map((p) => (
@@ -161,46 +291,186 @@ export default function StockTab() {
           </Field>
         </div>
 
-        <Field label="Quantité" required>
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            value={draft.quantity}
-            onChange={(e) => update('quantity', e.target.value)}
-            className={inputClass}
-            placeholder={draft.movement_type === 'Ajustement' ? 'positif ou négatif' : 'obligatoire'}
-            required
-          />
-        </Field>
+        {draft.movement_type === 'Ajustement' ? (
+          <Field label="Quantité (+ ou -)" required>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              value={draft.quantity}
+              onChange={(e) => update('quantity', e.target.value)}
+              className={inputClass}
+              placeholder="positif ou négatif"
+              required
+            />
+          </Field>
+        ) : (
+          <>
+            <p className="font-display text-sm text-ocre">Production</p>
 
-        {draft.movement_type === 'Production' && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Nombre WAGON">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Cadence théorique">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={draft.cadence_theorique}
+                  onChange={(e) => update('cadence_theorique', e.target.value)}
+                  className={inputClass}
+                  placeholder="optionnel"
+                />
+              </Field>
+              <Field label="Feuillard">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={draft.feuillard}
+                  onChange={(e) => update('feuillard', e.target.value)}
+                  className={inputClass}
+                  placeholder="optionnel"
+                />
+              </Field>
+            </div>
+
+            <Field label="Stock (début de journée / report)">
+              <input
+                type="text"
+                value={formatQty(draft.stock_start)}
+                readOnly
+                disabled
+                className={`${inputClass} cursor-not-allowed opacity-60`}
+              />
+            </Field>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Cadence réelle">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={draft.cadence_reelle}
+                  onChange={(e) => update('cadence_reelle', e.target.value)}
+                  className={inputClass}
+                  placeholder="optionnel"
+                />
+              </Field>
+              <Field label="Consommation">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={draft.consommation}
+                  onChange={(e) => update('consommation', e.target.value)}
+                  className={inputClass}
+                  placeholder="optionnel"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Nombre WAGON">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min="0"
+                  value={draft.nb_wagon}
+                  onChange={(e) => update('nb_wagon', e.target.value)}
+                  className={inputClass}
+                  placeholder="optionnel"
+                />
+              </Field>
+              <Field label="Nombre PAQUET">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  step="1"
+                  min="0"
+                  value={draft.nb_paquet}
+                  onChange={(e) => update('nb_paquet', e.target.value)}
+                  className={inputClass}
+                  placeholder="optionnel"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Total WAGON (cumulé)">
+                <input
+                  type="text"
+                  value={totalWagon}
+                  readOnly
+                  disabled
+                  className={`${inputClass} cursor-not-allowed opacity-60`}
+                />
+              </Field>
+              <Field label="Total PAQUETS (cumulé)">
+                <input
+                  type="text"
+                  value={totalPaquets}
+                  readOnly
+                  disabled
+                  className={`${inputClass} cursor-not-allowed opacity-60`}
+                />
+              </Field>
+            </div>
+
+            <Field label="Nombre de briques" required>
               <input
                 type="number"
                 inputMode="numeric"
                 step="1"
                 min="0"
-                value={draft.wagons}
-                onChange={(e) => update('wagons', e.target.value)}
+                value={draft.nb_briques}
+                onChange={(e) => update('nb_briques', e.target.value)}
                 className={inputClass}
-                placeholder="optionnel"
+                required
               />
             </Field>
-            <Field label="Nombre PAQUET">
+
+            <Field label="Stock final">
               <input
                 type="number"
-                inputMode="numeric"
-                step="1"
-                min="0"
-                value={draft.paquets}
-                onChange={(e) => update('paquets', e.target.value)}
+                step="0.01"
+                value={draft.stock_final}
+                onChange={(e) => {
+                  setStockFinalTouched(true)
+                  update('stock_final', e.target.value)
+                }}
                 className={inputClass}
-                placeholder="optionnel"
               />
+              <span className="text-xs text-ink-muted">Calculé automatiquement (Report + Production), modifiable si besoin.</span>
             </Field>
-          </div>
+
+            <p className="font-display text-sm text-ocre">Commercial</p>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Field label="Report">
+                <input
+                  type="text"
+                  value={formatQty(stockStart)}
+                  readOnly
+                  disabled
+                  className={`${inputClass} cursor-not-allowed opacity-60`}
+                />
+              </Field>
+              <Field label="Commercial (vendu ce jour)">
+                <input
+                  type="text"
+                  value={formatQty(commercial)}
+                  readOnly
+                  disabled
+                  className={`${inputClass} cursor-not-allowed opacity-60`}
+                />
+              </Field>
+              <Field label="Stocks fin journée">
+                <input
+                  type="text"
+                  value={formatQty(stocksFinJournee)}
+                  readOnly
+                  disabled
+                  className={`${inputClass} cursor-not-allowed font-display text-ocre`}
+                />
+              </Field>
+            </div>
+          </>
         )}
 
         <Field label="Observations">
@@ -231,54 +501,43 @@ export default function StockTab() {
       </form>
 
       <div className="flex flex-col gap-3">
-        <h2 className="font-display text-lg text-ink">Résumé journalier</h2>
-        {dailySummary.length === 0 ? (
-          <p className="text-ink-muted">Aucun mouvement.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[700px] border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
-                  <Th>Date</Th>
-                  <Th>Produit</Th>
-                  <Th>Report</Th>
-                  <Th>Production</Th>
-                  <Th>Commercial (ventes)</Th>
-                  <Th>Stock fin de journée</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {dailySummary.map((row) => (
-                  <tr key={`${row.product}-${row.date}`} className="border-b border-border last:border-0">
-                    <Td>{row.date}</Td>
-                    <Td>{row.product}</Td>
-                    <Td>{row.report != null ? formatQty(row.report) : '—'}</Td>
-                    <Td>{formatQty(row.production)}</Td>
-                    <Td>{formatQty(row.ventes)}</Td>
-                    <Td className="font-display text-ocre">{formatQty(row.finJournee)}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-3">
-        <h2 className="font-display text-lg text-ink">Mouvements récents</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-lg text-ink">Mouvements récents</h2>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || movements.length === 0}
+            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exporting ? 'Génération…' : 'Exporter Excel'}
+          </button>
+        </div>
         {loading ? (
           <p className="text-ink-muted">Chargement…</p>
         ) : movements.length === 0 ? (
           <p className="text-ink-muted">Aucun mouvement.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[900px] border-collapse text-sm">
+            <table className="w-full min-w-[2600px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th>Date</Th>
                   <Th>Heure</Th>
                   <Th>Produit</Th>
                   <Th>Type</Th>
+                  <Th>Cadence théo.</Th>
+                  <Th>Feuillard</Th>
+                  <Th>Report</Th>
+                  <Th>Cadence réelle</Th>
+                  <Th>Consommation</Th>
+                  <Th>Stock final</Th>
+                  <Th>Nb WAGON</Th>
+                  <Th>Nb PAQUET</Th>
+                  <Th>Total WAGON</Th>
+                  <Th>Total PAQUETS</Th>
+                  <Th>Nb briques</Th>
+                  <Th>Commercial</Th>
+                  <Th>Stock fin journée</Th>
                   <Th>Quantité</Th>
                   <Th>Stock après</Th>
                   <Th>Référence</Th>
@@ -287,13 +546,28 @@ export default function StockTab() {
                 </tr>
               </thead>
               <tbody>
-                {movements.slice(0, 100).map((m) => (
+                {movements.slice(0, 150).map((m) => (
                   <tr key={m.id} className="border-b border-border last:border-0">
                     <Td>{m.entry_date}</Td>
                     <Td>{m.entry_time ? m.entry_time.slice(0, 5) : '—'}</Td>
                     <Td>{m.product_name}</Td>
                     <Td>
                       <MovementBadge type={m.movement_type} />
+                    </Td>
+                    <Td>{m.cadence_theorique ?? '—'}</Td>
+                    <Td>{m.feuillard ?? '—'}</Td>
+                    <Td>{m.movement_type === 'Production' ? formatQty(m.stock_start) : '—'}</Td>
+                    <Td>{m.cadence_reelle ?? '—'}</Td>
+                    <Td>{m.consommation ?? '—'}</Td>
+                    <Td>{m.movement_type === 'Production' ? formatQty(m.stock_final) : '—'}</Td>
+                    <Td>{m.nb_wagon ?? '—'}</Td>
+                    <Td>{m.nb_paquet ?? '—'}</Td>
+                    <Td>{m.total_wagon ?? '—'}</Td>
+                    <Td>{m.total_paquets ?? '—'}</Td>
+                    <Td>{m.nb_briques ?? '—'}</Td>
+                    <Td>{m.movement_type === 'Production' ? formatQty(m.commercial) : '—'}</Td>
+                    <Td className={m.movement_type === 'Production' ? 'font-display text-ocre' : ''}>
+                      {m.movement_type === 'Production' ? formatQty(m.stocks_fin_journee) : '—'}
                     </Td>
                     <Td className={Number(m.quantity) < 0 ? 'text-terracotta' : 'text-green-500'}>
                       {Number(m.quantity) > 0 ? '+' : ''}
@@ -314,43 +588,6 @@ export default function StockTab() {
       </div>
     </div>
   )
-}
-
-// Reconstruit, pour chaque (produit, jour) présent dans les mouvements
-// chargés, le Report (stock juste avant le 1er mouvement du jour), la
-// Production et le Commercial (ventes, en valeur positive) du jour, et le
-// Stock fin de journée (stock_after du dernier mouvement du jour) -- ce
-// dernier vient directement de la colonne stock_after, donc toujours exact
-// même si d'autres mouvements (Ajustement) ont eu lieu le même jour.
-function buildDailySummary(movements) {
-  const groups = new Map()
-  for (const m of movements) {
-    const key = `${m.product_name}|${m.entry_date}`
-    if (!groups.has(key)) {
-      groups.set(key, { product: m.product_name, date: m.entry_date, production: 0, ventes: 0, items: [] })
-    }
-    const group = groups.get(key)
-    if (m.movement_type === 'Production') group.production += Number(m.quantity)
-    if (m.movement_type === 'Vente') group.ventes += Math.max(0, -Number(m.quantity))
-    group.items.push(m)
-  }
-
-  const rows = []
-  for (const group of groups.values()) {
-    const sorted = [...group.items].sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-    const first = sorted[0]
-    const last = sorted[sorted.length - 1]
-    rows.push({
-      product: group.product,
-      date: group.date,
-      report: first ? Number(first.stock_after) - Number(first.quantity) : null,
-      production: group.production,
-      ventes: group.ventes,
-      finJournee: last ? Number(last.stock_after) : 0,
-    })
-  }
-
-  return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.product.localeCompare(b.product)))
 }
 
 function StockGauge({ stock, product }) {
