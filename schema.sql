@@ -2124,3 +2124,99 @@ comment on column stock_movements.stock_start is 'Report : stock en début de jo
 comment on column stock_movements.nb_briques is 'Production du jour en nombre de briques -- alimente `quantity` pour ce mouvement (pas de conversion wagon/paquet -> briques automatique)';
 comment on column stock_movements.commercial is 'Quantité vendue ce jour pour ce produit, calculée depuis invoices.qty_b8/qty_b12 (entry_date = stock_movements.entry_date)';
 comment on column stock_movements.stocks_fin_journee is 'Report + Production (nb_briques) - Commercial, snapshot du jour pour la fiche papier';
+
+-- ============================================================
+-- NOUVEAU RÔLE 'maintenance_only' + UTILISATEUR KARIM
+-- ============================================================
+
+insert into app_users (username, password_hash, requires_verification, role)
+values ('Karim', encode(digest('karim2024', 'sha256'), 'hex'), true, 'maintenance_only')
+on conflict (username) do nothing;
+
+-- Note : request_login_code n'a besoin d'aucune modification pour gérer ce
+-- nouveau rôle. La fonction ne contient aucune liste de rôles en dur : elle
+-- lit et renvoie systématiquement v_user.role tel qu'il est stocké dans
+-- app_users, quelle que soit sa valeur ('admin', 'editor', 'viewer',
+-- 'maintenance_only', ...). Le contrôle d'accès par page (quels onglets un
+-- rôle peut voir) est géré côté application (src/lib/auth.js), pas ici.
+-- app_users.role n'a par ailleurs aucune contrainte CHECK limitant ses
+-- valeurs possibles, donc 'maintenance_only' est déjà accepté tel quel.
+
+-- ============================================================
+-- NORMALISATION DES NOMS DE CLIENTS EN MAJUSCULES : évite les doublons
+-- ("Kerdja Mourad" / "KERDJA MOURAD" / "kerdja mourad" doivent toujours
+-- correspondre à la même entrée dans `clients`). Appliqué en BEFORE INSERT
+-- OR UPDATE sur chaque table où un nom de client est saisi librement, donc
+-- valable quel que soit le chemin d'écriture (formulaire, admin_update_*,
+-- import, edition directe en base).
+-- ============================================================
+
+create or replace function normalize_clients_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  NEW.name := upper(trim(NEW.name));
+  return NEW;
+end;
+$$;
+
+drop trigger if exists clients_normalize_name on clients;
+create trigger clients_normalize_name
+  before insert or update on clients
+  for each row execute function normalize_clients_name();
+
+create or replace function normalize_invoices_client_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  if NEW.client_name is not null then
+    NEW.client_name := upper(trim(NEW.client_name));
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists invoices_normalize_client_name on invoices;
+create trigger invoices_normalize_client_name
+  before insert or update on invoices
+  for each row execute function normalize_invoices_client_name();
+
+create or replace function normalize_entries_client_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  if NEW.client_name is not null then
+    NEW.client_name := upper(trim(NEW.client_name));
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists entries_normalize_client_name on entries;
+create trigger entries_normalize_client_name
+  before insert or update on entries
+  for each row execute function normalize_entries_client_name();
+
+create or replace function normalize_client_advances_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  if NEW.client_name is not null then
+    NEW.client_name := upper(trim(NEW.client_name));
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists client_advances_normalize_name on client_advances;
+create trigger client_advances_normalize_name
+  before insert or update on client_advances
+  for each row execute function normalize_client_advances_name();
+
+-- Les triggers BEFORE ci-dessus s'exécutent avant invoices_sync_client_balance,
+-- invoices_sync_stock et entries_decrement_client_advance (tous des triggers
+-- AFTER) : ces derniers voient donc toujours un client_name déjà normalisé.

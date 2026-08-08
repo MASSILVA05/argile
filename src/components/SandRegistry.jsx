@@ -8,6 +8,7 @@ import { PAYMENT_MODES, PAID_OPTIONS, buildPaymentPayload } from '../lib/sandPay
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import PrintHeader from './PrintHeader'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -246,7 +247,7 @@ export default function SandRegistry() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row">
           <input
             type="text"
@@ -280,39 +281,33 @@ export default function SandRegistry() {
             ))}
           </select>
         </div>
-        {!isViewer && (
+        <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => { setExportError(''); setExportModalOpen(true) }}
-            disabled={exportProgress != null}
-            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => window.print()}
+            className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
-            {exportProgress != null
-              ? exportProgress.total > 0
-                ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
-                : 'Génération en cours…'
-              : 'Exporter Excel'}
+            Imprimer
           </button>
-        )}
-      </div>
-
-      <div className="flex gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
-        <div>
-          <p className="text-xs text-ink-muted">Bons</p>
-          <p className="font-display text-xl text-ocre">{totals.count}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Quantité cumulée</p>
-          <p className="font-display text-xl text-ocre">{totals.quantity.toFixed(2)} T</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Total (DA)</p>
-          <p className="font-display text-xl text-ocre">{totals.amount.toLocaleString('fr-FR')}</p>
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={() => { setExportError(''); setExportModalOpen(true) }}
+              disabled={exportProgress != null}
+              className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {exportProgress != null
+                ? exportProgress.total > 0
+                  ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
+                  : 'Génération en cours…'
+                : 'Exporter Excel'}
+            </button>
+          )}
         </div>
       </div>
 
       {error && (
-        <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
+        <p className="no-print rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
           {error}
         </p>
       )}
@@ -322,91 +317,110 @@ export default function SandRegistry() {
       ) : filtered.length === 0 ? (
         <p className="text-ink-muted">Aucune livraison.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1900px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
-                <Th>Bon</Th>
-                <Th>Date</Th>
-                <Th>Heure</Th>
-                <Th>Fournisseur</Th>
-                <Th>Transporteur</Th>
-                <Th>Matricule</Th>
-                <Th>Chauffeur</Th>
-                <Th>Quantité (T)</Th>
-                <Th>Prix unit.</Th>
-                <Th>Total sable (DA)</Th>
-                <Th>Transport (DA)</Th>
-                <Th>Total général (DA)</Th>
-                <Th>Statut fourn.</Th>
-                <Th>Statut transp.</Th>
-                <Th>Photo</Th>
-                <Th>Saisi par</Th>
-                <Th>Observations</Th>
-                <Th>Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((entry) =>
-                editingId === entry.id ? (
-                  <EditRow
-                    key={entry.id}
-                    draft={editDraft}
-                    onChange={setEditDraft}
-                    onSave={saveEdit}
-                    onCancel={cancelEdit}
-                    bankSuggestions={banks}
-                  />
-                ) : (
-                  <tr key={entry.id} className="border-b border-border last:border-0">
-                    <Td>{entry.bon_number}</Td>
-                    <Td>{entry.entry_date}</Td>
-                    <Td>{formatTime(entry.entry_time)}</Td>
-                    <Td>{entry.supplier_name}</Td>
-                    <Td>{entry.transporter_name ?? '—'}</Td>
-                    <Td>{entry.truck_plate ?? '—'}</Td>
-                    <Td>{entry.driver_name ?? '—'}</Td>
-                    <Td>{entry.quantity_tons}</Td>
-                    <Td>{entry.unit_price}</Td>
-                    <Td>{Number(entry.sand_total || 0).toLocaleString('fr-FR')}</Td>
-                    <Td>{entry.transport_price}</Td>
-                    <Td>{total(entry).toLocaleString('fr-FR')}</Td>
-                    <Td>
-                      <PaidBadge status={entry.supplier_paid} />
-                    </Td>
-                    <Td>
-                      <PaidBadge status={entry.transporter_paid} />
-                    </Td>
-                    <Td>
-                      {entry.photo_url ? (
-                        <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
-                          <img
-                            src={entry.photo_url}
-                            alt={`Bon n° ${entry.bon_number}`}
-                            className="h-10 w-10 rounded object-cover"
-                          />
-                        </button>
-                      ) : (
-                        '—'
-                      )}
-                    </Td>
-                    <Td>{entry.entered_by_user ?? '—'}</Td>
-                    <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
-                      {entry.observations ?? '—'}
-                    </Td>
-                    <Td>
-                      <RowActions
-                        entry={entry}
-                        onEdit={() => startEdit(entry)}
-                        onDelete={() => handleDelete(entry)}
-                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                      />
-                    </Td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
+        <div className="print-area">
+          <PrintHeader title="Registre sable" />
+
+          <div className="mb-4 flex gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
+            <div>
+              <p className="text-xs text-ink-muted">Bons</p>
+              <p className="font-display text-xl text-ocre">{totals.count}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Quantité cumulée</p>
+              <p className="font-display text-xl text-ocre">{totals.quantity.toFixed(2)} T</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Total (DA)</p>
+              <p className="font-display text-xl text-ocre">{totals.amount.toLocaleString('fr-FR')}</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[1900px] border-collapse text-[11px] sm:text-sm">
+              <thead>
+                <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                  <Th sticky>Bon</Th>
+                  <Th>Date</Th>
+                  <Th>Heure</Th>
+                  <Th>Fournisseur</Th>
+                  <Th>Transporteur</Th>
+                  <Th>Matricule</Th>
+                  <Th>Chauffeur</Th>
+                  <Th>Quantité (T)</Th>
+                  <Th>Prix unit.</Th>
+                  <Th>Total sable (DA)</Th>
+                  <Th>Transport (DA)</Th>
+                  <Th>Total général (DA)</Th>
+                  <Th>Statut fourn.</Th>
+                  <Th>Statut transp.</Th>
+                  <Th>Photo</Th>
+                  <Th>Saisi par</Th>
+                  <Th>Observations</Th>
+                  <Th className="no-print">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry) =>
+                  editingId === entry.id ? (
+                    <EditRow
+                      key={entry.id}
+                      draft={editDraft}
+                      onChange={setEditDraft}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      bankSuggestions={banks}
+                    />
+                  ) : (
+                    <tr key={entry.id} className="border-b border-border last:border-0">
+                      <Td sticky>{entry.bon_number}</Td>
+                      <Td>{entry.entry_date}</Td>
+                      <Td>{formatTime(entry.entry_time)}</Td>
+                      <Td>{entry.supplier_name}</Td>
+                      <Td>{entry.transporter_name ?? '—'}</Td>
+                      <Td>{entry.truck_plate ?? '—'}</Td>
+                      <Td>{entry.driver_name ?? '—'}</Td>
+                      <Td>{entry.quantity_tons}</Td>
+                      <Td>{entry.unit_price}</Td>
+                      <Td>{Number(entry.sand_total || 0).toLocaleString('fr-FR')}</Td>
+                      <Td>{entry.transport_price}</Td>
+                      <Td>{total(entry).toLocaleString('fr-FR')}</Td>
+                      <Td>
+                        <PaidBadge status={entry.supplier_paid} />
+                      </Td>
+                      <Td>
+                        <PaidBadge status={entry.transporter_paid} />
+                      </Td>
+                      <Td>
+                        {entry.photo_url ? (
+                          <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
+                            <img
+                              src={entry.photo_url}
+                              alt={`Bon n° ${entry.bon_number}`}
+                              className="h-10 w-10 rounded object-cover"
+                            />
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </Td>
+                      <Td>{entry.entered_by_user ?? '—'}</Td>
+                      <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
+                        {entry.observations ?? '—'}
+                      </Td>
+                      <Td className="no-print">
+                        <RowActions
+                          entry={entry}
+                          onEdit={() => startEdit(entry)}
+                          onDelete={() => handleDelete(entry)}
+                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                        />
+                      </Td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -545,7 +559,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
-      <Td>
+      <Td sticky="bg-bg-soft">
         <input type="number" value={draft.bon_number} onChange={(e) => set('bon_number', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
@@ -592,7 +606,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>
+      <Td className="no-print">
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">
             Enregistrer
@@ -606,13 +620,22 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
   )
 }
 
-function Th({ children }) {
-  return <th className="px-3 py-2 font-display font-medium whitespace-nowrap">{children}</th>
+function Th({ children, sticky, className = '' }) {
+  return (
+    <th
+      className={`px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2 ${
+        sticky ? 'sticky left-0 z-20 bg-bg-soft' : ''
+      } ${className}`}
+    >
+      {children}
+    </th>
+  )
 }
 
-function Td({ children, className = '', title }) {
+function Td({ children, className = '', title, sticky }) {
+  const stickyClass = sticky ? `sticky left-0 z-10 ${sticky === true ? 'bg-bg-card' : sticky}` : ''
   return (
-    <td className={`px-3 py-2 whitespace-nowrap ${className}`} title={title}>
+    <td className={`px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2 ${stickyClass} ${className}`} title={title}>
       {children}
     </td>
   )

@@ -57,9 +57,9 @@ export default function ClientBalancesModal({ open, onClose }) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 sm:flex sm:items-center sm:justify-center sm:p-4" onClick={onClose}>
       <div
-        className="my-8 w-full max-w-3xl rounded-xl border border-border bg-bg-card p-5"
+        className="min-h-full w-full bg-bg-card p-5 sm:my-8 sm:min-h-0 sm:max-w-3xl sm:rounded-xl sm:border sm:border-border"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -95,22 +95,22 @@ export default function ClientBalancesModal({ open, onClose }) {
           <p className="text-ink-muted">Aucun client.</p>
         ) : (
           <div className="max-h-[60vh] overflow-y-auto overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[600px] border-collapse text-sm">
+            <table className="w-full min-w-[600px] border-collapse text-[11px] sm:text-sm">
               <thead className="sticky top-0 bg-bg-soft">
                 <tr className="border-b border-border text-left text-ink-muted">
-                  <th className="px-3 py-2 font-display font-medium">Client</th>
-                  <th className="px-3 py-2 font-display font-medium whitespace-nowrap">Total facturé</th>
-                  <th className="px-3 py-2 font-display font-medium whitespace-nowrap">Total réglé</th>
-                  <th className="px-3 py-2 font-display font-medium whitespace-nowrap">Solde dû</th>
+                  <th className="px-1 py-1 font-display font-medium sm:px-3 sm:py-2">Client</th>
+                  <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Total facturé</th>
+                  <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Total réglé</th>
+                  <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Solde dû</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((c) => (
                   <tr key={c.id} className="border-b border-border last:border-0">
-                    <td className="px-3 py-2">{c.name}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDA(c.total_invoiced)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{formatDA(c.total_paid)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">
+                    <td className="px-1 py-1 sm:px-3 sm:py-2">{c.name}</td>
+                    <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">{formatDA(c.total_invoiced)}</td>
+                    <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">{formatDA(c.total_paid)}</td>
+                    <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">
                       <span
                         className={`inline-block rounded-full border px-2 py-0.5 text-xs ${
                           Number(c.balance) > 0

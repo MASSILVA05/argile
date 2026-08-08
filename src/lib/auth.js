@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim']
 
 // Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
@@ -94,9 +94,25 @@ export function clearSession() {
   localStorage.removeItem(SESSION_KEY)
 }
 
-// admin  : tout accès, seul rôle pouvant utiliser le code admin (déblocage 72h)
-// editor : saisie + consultation + export, pas de code admin
-// viewer : consultation seule, ni saisie ni export ni modification
+// admin            : tout accès, seul rôle pouvant utiliser le code admin (déblocage 72h)
+// editor           : saisie + consultation + export, pas de code admin
+// viewer (Bilal)   : Chargement (saisie uniquement, pas de registre) + Maintenance
+//                    (saisie + registre), aucune autre page, pas d'export Excel
+// maintenance_only (Karim) : uniquement Maintenance (saisie + registre)
+//
+// Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
+// cette table (ne devrait pas arriver) retombe sur le plus restrictif.
+export const ROLE_TABS = {
+  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices'],
+  editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices'],
+  viewer: ['form', 'maintenance'],
+  maintenance_only: ['maintenance'],
+}
+
+export function allowedTabsForRole(role) {
+  return ROLE_TABS[role] ?? ROLE_TABS.viewer
+}
+
 export function useAuth() {
   const session = getSession()
   const role = session?.role ?? null
@@ -106,6 +122,7 @@ export function useAuth() {
     isAdmin: role === 'admin',
     isEditor: role === 'editor',
     isViewer: role === 'viewer',
+    isMaintenanceOnly: role === 'maintenance_only',
   }
 }
 

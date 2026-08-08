@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import PrintHeader from './PrintHeader'
 
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
@@ -218,7 +219,7 @@ export default function MaintenanceRegistry() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row">
           <input
             type="text"
@@ -240,24 +241,33 @@ export default function MaintenanceRegistry() {
             ))}
           </select>
         </div>
-        {!isViewer && (
+        <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => { setExportError(''); setExportModalOpen(true) }}
-            disabled={exportProgress != null}
-            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => window.print()}
+            className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
-            {exportProgress != null
-              ? exportProgress.total > 0
-                ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
-                : 'Génération en cours…'
-              : 'Exporter Excel'}
+            Imprimer
           </button>
-        )}
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={() => { setExportError(''); setExportModalOpen(true) }}
+              disabled={exportProgress != null}
+              className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {exportProgress != null
+                ? exportProgress.total > 0
+                  ? `Génération en cours… ${exportProgress.current}/${exportProgress.total} photos`
+                  : 'Génération en cours…'
+                : 'Exporter Excel'}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
-        <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
+        <p className="no-print rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
           {error}
         </p>
       )}
@@ -267,76 +277,79 @@ export default function MaintenanceRegistry() {
       ) : filtered.length === 0 ? (
         <p className="text-ink-muted">Aucune fiche.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1300px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
-                <Th>Fiche</Th>
-                <Th>Date</Th>
-                <Th>Heure</Th>
-                <Th>Machine</Th>
-                <Th>Problème</Th>
-                <Th>Fournisseur</Th>
-                <Th>Acheté par</Th>
-                <Th>Renseigné par</Th>
-                <Th>Demandé par</Th>
-                <Th>Montant</Th>
-                <Th>Payé</Th>
-                <Th>Photo machine</Th>
-                <Th>Photo bon</Th>
-                <Th>Observations</Th>
-                <Th>Saisi par</Th>
-                <Th>Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((entry) =>
-                editingId === entry.id ? (
-                  <EditRow
-                    key={entry.id}
-                    draft={editDraft}
-                    onChange={setEditDraft}
-                    onSave={saveEdit}
-                    onCancel={cancelEdit}
-                  />
-                ) : (
-                  <tr key={entry.id} className="border-b border-border last:border-0">
-                    <Td>{entry.fiche_number}</Td>
-                    <Td>{entry.entry_date}</Td>
-                    <Td>{formatTime(entry.entry_time)}</Td>
-                    <Td>{entry.machine_name}</Td>
-                    <Td className="max-w-[200px] truncate" title={entry.problem_description}>
-                      {entry.problem_description}
-                    </Td>
-                    <Td>{entry.supplier_name ?? '—'}</Td>
-                    <Td>{entry.purchased_by ?? '—'}</Td>
-                    <Td>{entry.entered_by ?? '—'}</Td>
-                    <Td>{entry.requested_by ?? '—'}</Td>
-                    <Td>{entry.amount != null ? `${entry.amount} DA` : '—'}</Td>
-                    <Td>{entry.is_paid}</Td>
-                    <Td>
-                      <PhotoThumb url={entry.machine_photo_url} onClick={setLightboxUrl} label={`Fiche n° ${entry.fiche_number}`} />
-                    </Td>
-                    <Td>
-                      <PhotoThumb url={entry.receipt_photo_url} onClick={setLightboxUrl} label={`Fiche n° ${entry.fiche_number}`} />
-                    </Td>
-                    <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
-                      {entry.observations ?? '—'}
-                    </Td>
-                    <Td>{entry.entered_by_user ?? '—'}</Td>
-                    <Td>
-                      <RowActions
-                        entry={entry}
-                        onEdit={() => startEdit(entry)}
-                        onDelete={() => handleDelete(entry)}
-                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                      />
-                    </Td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
+        <div className="print-area">
+          <PrintHeader title="Registre de maintenance" />
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[1300px] border-collapse text-[11px] sm:text-sm">
+              <thead>
+                <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                  <Th sticky>Fiche</Th>
+                  <Th>Date</Th>
+                  <Th>Heure</Th>
+                  <Th>Machine</Th>
+                  <Th>Problème</Th>
+                  <Th>Fournisseur</Th>
+                  <Th>Acheté par</Th>
+                  <Th>Renseigné par</Th>
+                  <Th>Demandé par</Th>
+                  <Th>Montant</Th>
+                  <Th>Payé</Th>
+                  <Th>Photo machine</Th>
+                  <Th>Photo bon</Th>
+                  <Th>Observations</Th>
+                  <Th>Saisi par</Th>
+                  <Th className="no-print">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry) =>
+                  editingId === entry.id ? (
+                    <EditRow
+                      key={entry.id}
+                      draft={editDraft}
+                      onChange={setEditDraft}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                    />
+                  ) : (
+                    <tr key={entry.id} className="border-b border-border last:border-0">
+                      <Td sticky>{entry.fiche_number}</Td>
+                      <Td>{entry.entry_date}</Td>
+                      <Td>{formatTime(entry.entry_time)}</Td>
+                      <Td>{entry.machine_name}</Td>
+                      <Td className="max-w-[200px] truncate" title={entry.problem_description}>
+                        {entry.problem_description}
+                      </Td>
+                      <Td>{entry.supplier_name ?? '—'}</Td>
+                      <Td>{entry.purchased_by ?? '—'}</Td>
+                      <Td>{entry.entered_by ?? '—'}</Td>
+                      <Td>{entry.requested_by ?? '—'}</Td>
+                      <Td>{entry.amount != null ? `${entry.amount} DA` : '—'}</Td>
+                      <Td>{entry.is_paid}</Td>
+                      <Td>
+                        <PhotoThumb url={entry.machine_photo_url} onClick={setLightboxUrl} label={`Fiche n° ${entry.fiche_number}`} />
+                      </Td>
+                      <Td>
+                        <PhotoThumb url={entry.receipt_photo_url} onClick={setLightboxUrl} label={`Fiche n° ${entry.fiche_number}`} />
+                      </Td>
+                      <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
+                        {entry.observations ?? '—'}
+                      </Td>
+                      <Td>{entry.entered_by_user ?? '—'}</Td>
+                      <Td className="no-print">
+                        <RowActions
+                          entry={entry}
+                          onEdit={() => startEdit(entry)}
+                          onDelete={() => handleDelete(entry)}
+                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                        />
+                      </Td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -392,7 +405,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
-      <Td>
+      <Td sticky="bg-bg-soft">
         <input type="number" value={draft.fiche_number} onChange={(e) => set('fiche_number', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
@@ -435,7 +448,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
       </Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
-      <Td>
+      <Td className="no-print">
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">
             Enregistrer
@@ -449,13 +462,22 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
   )
 }
 
-function Th({ children }) {
-  return <th className="px-3 py-2 font-display font-medium whitespace-nowrap">{children}</th>
+function Th({ children, sticky, className = '' }) {
+  return (
+    <th
+      className={`px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2 ${
+        sticky ? 'sticky left-0 z-20 bg-bg-soft' : ''
+      } ${className}`}
+    >
+      {children}
+    </th>
+  )
 }
 
-function Td({ children, className = '', title }) {
+function Td({ children, className = '', title, sticky }) {
+  const stickyClass = sticky ? `sticky left-0 z-10 ${sticky === true ? 'bg-bg-card' : sticky}` : ''
   return (
-    <td className={`px-3 py-2 whitespace-nowrap ${className}`} title={title}>
+    <td className={`px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2 ${stickyClass} ${className}`} title={title}>
       {children}
     </td>
   )

@@ -73,11 +73,11 @@ export default function ExportFilterModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 p-4"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/70 sm:flex sm:items-center sm:justify-center sm:p-4"
       onClick={onCancel}
     >
       <div
-        className="my-8 w-full max-w-md rounded-xl border border-border bg-bg-card p-5"
+        className="min-h-full w-full bg-bg-card p-5 sm:my-8 sm:min-h-0 sm:max-w-md sm:rounded-xl sm:border sm:border-border"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-3 font-display text-lg text-ink">Filtrer l'export</h2>

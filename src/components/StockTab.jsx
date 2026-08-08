@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { getSession } from '../lib/auth'
-import { downloadStockExcel } from '../lib/stockExcel'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -32,8 +31,6 @@ const emptyDraft = {
 
 export default function StockTab() {
   const [stocks, setStocks] = useState([])
-  const [movements, setMovements] = useState([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [draft, setDraft] = useState(emptyDraft)
   const [stockFinalTouched, setStockFinalTouched] = useState(false)
@@ -41,26 +38,19 @@ export default function StockTab() {
   const [lastProduction, setLastProduction] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState('')
-  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     let active = true
 
     async function load() {
-      setLoading(true)
-      const [{ data: stockRows, error: stockError }, { data: movementRows, error: movementError }] = await Promise.all([
-        supabase.from('product_stock').select('*').order('product_name'),
-        supabase.from('stock_movements').select('*').order('created_at', { ascending: false }).limit(500),
-      ])
+      const { data: stockRows, error: stockError } = await supabase.from('product_stock').select('*').order('product_name')
       if (!active) return
-      if (stockError || movementError) {
-        setError(`Erreur de chargement : ${(stockError || movementError).message}`)
+      if (stockError) {
+        setError(`Erreur de chargement : ${stockError.message}`)
       } else {
         setStocks(stockRows ?? [])
-        setMovements(movementRows ?? [])
         setError('')
       }
-      setLoading(false)
     }
 
     load()
@@ -73,17 +63,9 @@ export default function StockTab() {
       })
       .subscribe()
 
-    const movementChannel = supabase
-      .channel('stock-movements')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_movements' }, (payload) => {
-        setMovements((current) => [payload.new, ...current])
-      })
-      .subscribe()
-
     return () => {
       active = false
       supabase.removeChannel(stockChannel)
-      supabase.removeChannel(movementChannel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -237,17 +219,6 @@ export default function StockTab() {
     setSuccess(`Mouvement ${draft.movement_type} enregistré pour ${draft.product_name}.`)
     setSubmitting(false)
     loadLastProduction()
-  }
-
-  async function handleExport() {
-    setExporting(true)
-    try {
-      await downloadStockExcel(movements)
-    } catch (err) {
-      setError(`Erreur lors de la génération du fichier Excel : ${err.message}`)
-    } finally {
-      setExporting(false)
-    }
   }
 
   return (
@@ -499,93 +470,6 @@ export default function StockTab() {
           {submitting ? 'Enregistrement…' : 'Enregistrer le mouvement'}
         </button>
       </form>
-
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-lg text-ink">Mouvements récents</h2>
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={exporting || movements.length === 0}
-            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {exporting ? 'Génération…' : 'Exporter Excel'}
-          </button>
-        </div>
-        {loading ? (
-          <p className="text-ink-muted">Chargement…</p>
-        ) : movements.length === 0 ? (
-          <p className="text-ink-muted">Aucun mouvement.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[2600px] border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
-                  <Th>Date</Th>
-                  <Th>Heure</Th>
-                  <Th>Produit</Th>
-                  <Th>Type</Th>
-                  <Th>Cadence théo.</Th>
-                  <Th>Feuillard</Th>
-                  <Th>Report</Th>
-                  <Th>Cadence réelle</Th>
-                  <Th>Consommation</Th>
-                  <Th>Stock final</Th>
-                  <Th>Nb WAGON</Th>
-                  <Th>Nb PAQUET</Th>
-                  <Th>Total WAGON</Th>
-                  <Th>Total PAQUETS</Th>
-                  <Th>Nb briques</Th>
-                  <Th>Commercial</Th>
-                  <Th>Stock fin journée</Th>
-                  <Th>Quantité</Th>
-                  <Th>Stock après</Th>
-                  <Th>Référence</Th>
-                  <Th>Observations</Th>
-                  <Th>Saisi par</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {movements.slice(0, 150).map((m) => (
-                  <tr key={m.id} className="border-b border-border last:border-0">
-                    <Td>{m.entry_date}</Td>
-                    <Td>{m.entry_time ? m.entry_time.slice(0, 5) : '—'}</Td>
-                    <Td>{m.product_name}</Td>
-                    <Td>
-                      <MovementBadge type={m.movement_type} />
-                    </Td>
-                    <Td>{m.cadence_theorique ?? '—'}</Td>
-                    <Td>{m.feuillard ?? '—'}</Td>
-                    <Td>{m.movement_type === 'Production' ? formatQty(m.stock_start) : '—'}</Td>
-                    <Td>{m.cadence_reelle ?? '—'}</Td>
-                    <Td>{m.consommation ?? '—'}</Td>
-                    <Td>{m.movement_type === 'Production' ? formatQty(m.stock_final) : '—'}</Td>
-                    <Td>{m.nb_wagon ?? '—'}</Td>
-                    <Td>{m.nb_paquet ?? '—'}</Td>
-                    <Td>{m.total_wagon ?? '—'}</Td>
-                    <Td>{m.total_paquets ?? '—'}</Td>
-                    <Td>{m.nb_briques ?? '—'}</Td>
-                    <Td>{m.movement_type === 'Production' ? formatQty(m.commercial) : '—'}</Td>
-                    <Td className={m.movement_type === 'Production' ? 'font-display text-ocre' : ''}>
-                      {m.movement_type === 'Production' ? formatQty(m.stocks_fin_journee) : '—'}
-                    </Td>
-                    <Td className={Number(m.quantity) < 0 ? 'text-terracotta' : 'text-green-500'}>
-                      {Number(m.quantity) > 0 ? '+' : ''}
-                      {formatQty(m.quantity)}
-                    </Td>
-                    <Td>{formatQty(m.stock_after)}</Td>
-                    <Td>{m.reference ?? '—'}</Td>
-                    <Td className="max-w-[240px] truncate" title={m.observations ?? ''}>
-                      {m.observations ?? '—'}
-                    </Td>
-                    <Td>{m.entered_by_user ?? '—'}</Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -621,19 +505,6 @@ function StockGauge({ stock, product }) {
   )
 }
 
-function MovementBadge({ type }) {
-  const styles = {
-    Production: 'border-green-500/50 bg-green-500/10 text-green-500',
-    Vente: 'border-terracotta/50 bg-terracotta/10 text-terracotta',
-    Ajustement: 'border-ocre/50 bg-ocre/10 text-ocre',
-  }
-  return (
-    <span className={`inline-block rounded-full border px-2 py-0.5 text-xs whitespace-nowrap ${styles[type] ?? ''}`}>
-      {type}
-    </span>
-  )
-}
-
 function Field({ label, required, children }) {
   return (
     <label className="flex flex-col gap-1.5">
@@ -643,18 +514,6 @@ function Field({ label, required, children }) {
       </span>
       {children}
     </label>
-  )
-}
-
-function Th({ children }) {
-  return <th className="px-3 py-2 font-display font-medium whitespace-nowrap">{children}</th>
-}
-
-function Td({ children, className = '', title }) {
-  return (
-    <td className={`px-3 py-2 whitespace-nowrap ${className}`} title={title}>
-      {children}
-    </td>
   )
 }
 

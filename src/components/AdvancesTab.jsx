@@ -130,7 +130,7 @@ export default function AdvancesTab() {
     const bonsPurchased = Number(draft.bons_purchased)
 
     const payload = {
-      client_name: draft.client_name.trim(),
+      client_name: draft.client_name.trim().toUpperCase(),
       advance_date: draft.advance_date,
       amount_paid: Number(draft.amount_paid),
       bons_purchased: bonsPurchased,
@@ -178,7 +178,7 @@ export default function AdvancesTab() {
     }
     const isCheque = editDraft.payment_mode === 'Chèque'
     const payload = {
-      client_name: editDraft.client_name.trim(),
+      client_name: editDraft.client_name.trim().toUpperCase(),
       advance_date: editDraft.advance_date,
       amount_paid: Number(editDraft.amount_paid),
       bons_purchased: Number(editDraft.bons_purchased),

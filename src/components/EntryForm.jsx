@@ -136,7 +136,7 @@ export default function EntryForm() {
       entry_time: entryTime,
       truck_plate: draft.truck_plate.trim(),
       driver_name: draft.driver_name.trim(),
-      client_name: draft.client_name.trim() || null,
+      client_name: draft.client_name.trim() ? draft.client_name.trim().toUpperCase() : null,
       unloading_type: draft.unloading_type,
       ticket_number: draft.unloading_type === FIXED_WEIGHT_TYPE ? null : draft.ticket_number.trim() || null,
       weight_tons: draft.unloading_type === FIXED_WEIGHT_TYPE ? FIXED_WEIGHT_TONS : Number(draft.weight_tons),

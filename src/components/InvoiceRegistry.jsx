@@ -8,6 +8,7 @@ import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES, isInvoicePaid } from '..
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import PrintHeader from './PrintHeader'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -84,7 +85,9 @@ export default function InvoiceRegistry() {
       if (startDate && e.entry_date < startDate) return false
       if (endDate && e.entry_date > endDate) return false
       if (!q) return true
-      return [e.invoice_number, e.client_name].some((field) => String(field ?? '').toLowerCase().includes(q))
+      return [e.invoice_number, e.client_name, e.truck_plate].some((field) =>
+        String(field ?? '').toLowerCase().includes(q)
+      )
     })
   }, [entries, query, paymentFilter, startDate, endDate])
 
@@ -125,7 +128,7 @@ export default function InvoiceRegistry() {
     const payload = {
       invoice_number: editDraft.invoice_number.trim(),
       entry_date: editDraft.entry_date,
-      client_name: editDraft.client_name.trim(),
+      client_name: editDraft.client_name.trim().toUpperCase(),
       designation: editDraft.designation,
       designation_other: isOther ? (editDraft.designation_other || '').trim() : null,
       bl_number: editDraft.bl_number?.trim() || null,
@@ -268,13 +271,13 @@ export default function InvoiceRegistry() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="no-print flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher : n° facture, client…"
+            placeholder="Rechercher : n° facture, client, matricule…"
             className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta sm:flex-1"
           />
           <select
@@ -304,47 +307,29 @@ export default function InvoiceRegistry() {
             aria-label="Au"
           />
         </div>
-        {!isViewer && (
+        <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => { setExportError(''); setExportModalOpen(true) }}
-            disabled={exportProgress != null}
-            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => window.print()}
+            className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
-            {exportProgress != null ? 'Génération en cours…' : 'Exporter Excel'}
+            Imprimer
           </button>
-        )}
-      </div>
-
-      <div className="flex flex-wrap gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
-        <div>
-          <p className="text-xs text-ink-muted">Factures</p>
-          <p className="font-display text-xl text-ocre">{totals.count}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Montant</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.amount)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Remise</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.discount)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Total</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.total)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Règlement</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.settlement)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-ink-muted">Solde</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.balance)}</p>
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={() => { setExportError(''); setExportModalOpen(true) }}
+              disabled={exportProgress != null}
+              className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {exportProgress != null ? 'Génération en cours…' : 'Exporter Excel'}
+            </button>
+          )}
         </div>
       </div>
 
       {error && (
-        <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
+        <p className="no-print rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
           {error}
         </p>
       )}
@@ -354,89 +339,120 @@ export default function InvoiceRegistry() {
       ) : filtered.length === 0 ? (
         <p className="text-ink-muted">Aucune facture.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[2400px] border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
-                <Th>N° Facture</Th>
-                <Th>Date</Th>
-                <Th>Client</Th>
-                <Th>Désignation</Th>
-                <Th>N° BL</Th>
-                <Th>B8 (T)</Th>
-                <Th>B12 (T)</Th>
-                <Th>Autre (H)</Th>
-                <Th>Prix B8</Th>
-                <Th>Prix B12</Th>
-                <Th>Prix H</Th>
-                <Th>Montant</Th>
-                <Th>Remise</Th>
-                <Th>Total</Th>
-                <Th>Règlement</Th>
-                <Th>Décaissement</Th>
-                <Th>Chauffeur</Th>
-                <Th>Immat</Th>
-                <Th>Type (N/B)</Th>
-                <Th>Solde</Th>
-                <Th>Paiement</Th>
-                <Th>Saisi par</Th>
-                <Th>Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((entry) =>
-                editingId === entry.id ? (
-                  <EditRow
-                    key={entry.id}
-                    draft={editDraft}
-                    onChange={setEditDraft}
-                    onSave={saveEdit}
-                    onCancel={cancelEdit}
-                    bankSuggestions={banks}
-                  />
-                ) : (
-                  <tr key={entry.id} className="border-b border-border last:border-0">
-                    <Td>{entry.invoice_number}</Td>
-                    <Td>{entry.entry_date}</Td>
-                    <Td>{entry.client_name}</Td>
-                    <Td>{designationLabel(entry)}</Td>
-                    <Td>{entry.bl_number ?? '—'}</Td>
-                    <Td>{entry.qty_b8}</Td>
-                    <Td>{entry.qty_b12}</Td>
-                    <Td>{entry.qty_h}</Td>
-                    <Td>{entry.qty_b8 > 0 ? entry.price_b8 : '—'}</Td>
-                    <Td>{entry.qty_b12 > 0 ? entry.price_b12 : '—'}</Td>
-                    <Td>{entry.qty_h > 0 ? entry.price_h : '—'}</Td>
-                    <Td>{formatDA(entry.amount)}</Td>
-                    <Td>{formatDA(entry.discount_amount)}</Td>
-                    <Td>{formatDA(entry.total)}</Td>
-                    <Td>{formatDA(entry.settlement)}</Td>
-                    <Td>{formatDA(entry.disbursement)}</Td>
-                    <Td>{entry.driver_name ?? '—'}</Td>
-                    <Td>{entry.truck_plate ?? '—'}</Td>
-                    <Td>{entry.payment_type}</Td>
-                    <Td>
-                      <span className={Number(entry.balance) > 0 ? 'text-terracotta' : 'text-green-500'}>
-                        {formatDA(entry.balance)}
-                      </span>
-                    </Td>
-                    <Td>
-                      <PaidBadge status={entry.payment_status} />
-                    </Td>
-                    <Td>{entry.entered_by_user ?? '—'}</Td>
-                    <Td>
-                      <RowActions
-                        entry={entry}
-                        onEdit={() => startEdit(entry)}
-                        onDelete={() => handleDelete(entry)}
-                        onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                      />
-                    </Td>
-                  </tr>
-                )
-              )}
-            </tbody>
-          </table>
+        <div className="print-area">
+          <PrintHeader title="Registre factures" />
+
+          <div className="mb-4 flex flex-wrap gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
+            <div>
+              <p className="text-xs text-ink-muted">Factures</p>
+              <p className="font-display text-xl text-ocre">{totals.count}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Montant</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.amount)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Remise</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.discount)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Total</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.total)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Règlement</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.settlement)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Solde</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.balance)}</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[2400px] border-collapse text-[11px] sm:text-sm">
+              <thead>
+                <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                  <Th sticky>N° Facture</Th>
+                  <Th>Date</Th>
+                  <Th>Client</Th>
+                  <Th>Désignation</Th>
+                  <Th>N° BL</Th>
+                  <Th>B8 (T)</Th>
+                  <Th>B12 (T)</Th>
+                  <Th>Autre (H)</Th>
+                  <Th>Prix B8</Th>
+                  <Th>Prix B12</Th>
+                  <Th>Prix H</Th>
+                  <Th>Montant</Th>
+                  <Th>Remise</Th>
+                  <Th>Total</Th>
+                  <Th>Règlement</Th>
+                  <Th>Décaissement</Th>
+                  <Th>Chauffeur</Th>
+                  <Th>Immat</Th>
+                  <Th>Type (N/B)</Th>
+                  <Th>Solde</Th>
+                  <Th>Paiement</Th>
+                  <Th>Saisi par</Th>
+                  <Th className="no-print">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry) =>
+                  editingId === entry.id ? (
+                    <EditRow
+                      key={entry.id}
+                      draft={editDraft}
+                      onChange={setEditDraft}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      bankSuggestions={banks}
+                    />
+                  ) : (
+                    <tr key={entry.id} className="border-b border-border last:border-0">
+                      <Td sticky>{entry.invoice_number}</Td>
+                      <Td>{entry.entry_date}</Td>
+                      <Td>{entry.client_name}</Td>
+                      <Td>{designationLabel(entry)}</Td>
+                      <Td>{entry.bl_number ?? '—'}</Td>
+                      <Td>{entry.qty_b8}</Td>
+                      <Td>{entry.qty_b12}</Td>
+                      <Td>{entry.qty_h}</Td>
+                      <Td>{entry.qty_b8 > 0 ? entry.price_b8 : '—'}</Td>
+                      <Td>{entry.qty_b12 > 0 ? entry.price_b12 : '—'}</Td>
+                      <Td>{entry.qty_h > 0 ? entry.price_h : '—'}</Td>
+                      <Td>{formatDA(entry.amount)}</Td>
+                      <Td>{formatDA(entry.discount_amount)}</Td>
+                      <Td>{formatDA(entry.total)}</Td>
+                      <Td>{formatDA(entry.settlement)}</Td>
+                      <Td>{formatDA(entry.disbursement)}</Td>
+                      <Td>{entry.driver_name ?? '—'}</Td>
+                      <Td>{entry.truck_plate ?? '—'}</Td>
+                      <Td>{entry.payment_type}</Td>
+                      <Td>
+                        <span className={Number(entry.balance) > 0 ? 'text-terracotta' : 'text-green-500'}>
+                          {formatDA(entry.balance)}
+                        </span>
+                      </Td>
+                      <Td>
+                        <PaidBadge status={entry.payment_status} />
+                      </Td>
+                      <Td>{entry.entered_by_user ?? '—'}</Td>
+                      <Td className="no-print">
+                        <RowActions
+                          entry={entry}
+                          onEdit={() => startEdit(entry)}
+                          onDelete={() => handleDelete(entry)}
+                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                        />
+                      </Td>
+                    </tr>
+                  )
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -495,7 +511,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
-      <Td>
+      <Td sticky="bg-bg-soft">
         <input type="text" value={draft.invoice_number} onChange={(e) => set('invoice_number', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
@@ -610,7 +626,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
         </div>
       </Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
-      <Td>
+      <Td className="no-print">
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">
             Enregistrer
@@ -624,13 +640,22 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
   )
 }
 
-function Th({ children }) {
-  return <th className="px-3 py-2 font-display font-medium whitespace-nowrap">{children}</th>
+function Th({ children, sticky, className = '' }) {
+  return (
+    <th
+      className={`px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2 ${
+        sticky ? 'sticky left-0 z-20 bg-bg-soft' : ''
+      } ${className}`}
+    >
+      {children}
+    </th>
+  )
 }
 
-function Td({ children, className = '', title }) {
+function Td({ children, className = '', title, sticky }) {
+  const stickyClass = sticky ? `sticky left-0 z-10 ${sticky === true ? 'bg-bg-card' : sticky}` : ''
   return (
-    <td className={`px-3 py-2 whitespace-nowrap ${className}`} title={title}>
+    <td className={`px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2 ${stickyClass} ${className}`} title={title}>
       {children}
     </td>
   )

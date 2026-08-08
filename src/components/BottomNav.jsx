@@ -81,21 +81,24 @@ const TABS = [
   { id: 'invoices', label: 'Factures', Icon: InvoiceIcon },
 ]
 
-export default function BottomNav({ active, onChange }) {
+export default function BottomNav({ active, onChange, allowedTabs }) {
+  const visibleTabs = allowedTabs ? TABS.filter((t) => allowedTabs.includes(t.id)) : TABS
+  const compact = visibleTabs.length > 5
+
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-bg-card pb-[env(safe-area-inset-bottom)]">
-      <div className="mx-auto flex max-w-4xl">
-        {TABS.map(({ id, label, Icon }) => (
+      <div className="mx-auto flex max-w-4xl overflow-x-auto">
+        {visibleTabs.map(({ id, label, Icon }) => (
           <button
             key={id}
             type="button"
             onClick={() => onChange(id)}
             className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 py-2 text-xs transition-colors ${
-              active === id ? 'text-terracotta' : 'text-ink-muted hover:text-ink'
-            }`}
+              compact ? 'min-w-16 shrink-0' : ''
+            } ${active === id ? 'text-terracotta' : 'text-ink-muted hover:text-ink'}`}
           >
-            <Icon className="h-5 w-5" />
-            {label}
+            <Icon className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
+            <span className={compact ? 'text-[10px]' : ''}>{label}</span>
           </button>
         ))}
       </div>

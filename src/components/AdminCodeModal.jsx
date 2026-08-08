@@ -2,9 +2,9 @@ export default function AdminCodeModal({ prompt, codeValue, onCodeChange, error,
   if (!prompt) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 bg-black/70 sm:flex sm:items-center sm:justify-center sm:p-4" onClick={onCancel}>
       <div
-        className="w-full max-w-sm rounded-xl border border-border bg-bg-card p-5"
+        className="flex h-full w-full flex-col overflow-y-auto bg-bg-card p-5 sm:h-auto sm:w-full sm:max-w-sm sm:rounded-xl sm:border sm:border-border"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-1 font-display text-lg text-ink">Code administrateur requis</h2>
@@ -23,11 +23,11 @@ export default function AdminCodeModal({ prompt, codeValue, onCodeChange, error,
           placeholder="Code administrateur"
         />
         {error && <p className="mb-2 text-sm text-terracotta">{error}</p>}
-        <div className="flex justify-end gap-2">
+        <div className="mt-auto flex justify-end gap-2 pt-4 sm:mt-0 sm:pt-0">
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg border border-border px-3 py-2 text-sm text-ink-muted"
+            className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm text-ink-muted"
           >
             Annuler
           </button>
@@ -35,7 +35,7 @@ export default function AdminCodeModal({ prompt, codeValue, onCodeChange, error,
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="rounded-lg bg-terracotta px-3 py-2 text-sm font-display text-ink hover:bg-terracotta-hover disabled:opacity-50"
+            className="min-h-11 rounded-lg bg-terracotta px-3 py-2 text-sm font-display text-ink hover:bg-terracotta-hover disabled:opacity-50"
           >
             {busy ? 'Vérification…' : 'Confirmer'}
           </button>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import EntryForm from './components/EntryForm'
 import Registry from './components/Registry'
 import MaintenancePage from './components/MaintenancePage'
@@ -8,7 +8,7 @@ import InvoicesPage from './components/InvoicesPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
-import { getSession, clearSession } from './lib/auth'
+import { getSession, clearSession, allowedTabsForRole } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
 
 const TITLES = {
@@ -33,9 +33,21 @@ function formatRemaining(expiresAt, now) {
 
 function App() {
   const [session, setSession] = useState(() => getSession())
-  const [tab, setTab] = useState('form')
+  // Initialisé directement sur la première page autorisée pour ce rôle, pour
+  // éviter tout flash d'une page interdite avant qu'un effet ne redirige.
+  const [tab, setTab] = useState(() => allowedTabsForRole(getSession()?.role)[0] ?? 'form')
   const [pending, setPending] = useState(getQueue().length)
   const [now, setNow] = useState(() => Date.now())
+
+  const allowedTabs = useMemo(() => allowedTabsForRole(session?.role), [session?.role])
+
+  // Filet de sécurité : si le rôle change (nouvelle connexion) ou si `tab`
+  // pointe vers une page non autorisée, revient à la première page accessible.
+  useEffect(() => {
+    if (session && !allowedTabs.includes(tab)) {
+      setTab(allowedTabs[0])
+    }
+  }, [session, allowedTabs, tab])
 
   useEffect(() => {
     if (!session) return
@@ -99,7 +111,7 @@ function App() {
         {tab === 'invoices' && <InvoicesPage />}
       </main>
 
-      <BottomNav active={tab} onChange={setTab} />
+      <BottomNav active={tab} onChange={setTab} allowedTabs={allowedTabs} />
       <InstallPrompt />
     </div>
   )

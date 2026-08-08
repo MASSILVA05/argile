@@ -30,6 +30,7 @@ const emptyDraft = {
   payment_status: 'Non payé',
   cheque_number: '',
   cheque_bank: '',
+  previous_balance: '0',
   observations: '',
 }
 
@@ -45,42 +46,74 @@ export default function InvoiceForm() {
   const [clock, setClock] = useState(() => formatHHMM(new Date()))
   const [clientInfo, setClientInfo] = useState(null)
   const [advanceInfo, setAdvanceInfo] = useState(null)
+  const [clientPlates, setClientPlates] = useState([])
+  const [previousBalanceTouched, setPreviousBalanceTouched] = useState(false)
 
   useEffect(() => {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
     return () => clearInterval(id)
   }, [])
 
-  // Recherche le client dans `clients` (solde historique) et dans
-  // `client_advances` (avance active) à chaque changement du nom saisi,
-  // avec un léger debounce pour ne pas interroger la base à chaque frappe.
+  // Recherche le client dans `clients` (solde historique), dans
+  // `client_advances` (avance active) et ses matricules connues (factures
+  // précédentes du même client) à chaque changement du nom saisi, avec un
+  // léger debounce pour ne pas interroger la base à chaque frappe.
   useEffect(() => {
     const name = draft.client_name.trim()
+    setPreviousBalanceTouched(false)
     if (!name) {
       setClientInfo(null)
       setAdvanceInfo(null)
+      setClientPlates([])
       return
     }
     let cancelled = false
     const id = setTimeout(async () => {
-      const [{ data: client }, { data: advances }] = await Promise.all([
+      const [{ data: client }, { data: advances }, { data: invoiceRows }] = await Promise.all([
         supabase
           .from('clients')
           .select('name, total_invoiced, total_paid, balance')
           .ilike('name', name)
           .maybeSingle(),
         supabase.from('client_advances').select('bons_remaining').ilike('client_name', name).gt('bons_remaining', 0),
+        supabase.from('invoices').select('truck_plate').ilike('client_name', name).not('truck_plate', 'is', null),
       ])
       if (cancelled) return
       setClientInfo(client ? { found: true, ...client } : { found: false })
       const bonsRemaining = (advances ?? []).reduce((sum, a) => sum + (a.bons_remaining || 0), 0)
       setAdvanceInfo(bonsRemaining > 0 ? { bonsRemaining } : null)
+      setClientPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
     }, 400)
     return () => {
       cancelled = true
       clearTimeout(id)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.client_name])
+
+  // Pré-remplit "Solde précédent" depuis le solde client trouvé, sauf si le
+  // gestionnaire l'a déjà modifié à la main (correction manuelle).
+  useEffect(() => {
+    if (previousBalanceTouched) return
+    const value = clientInfo?.found ? clientInfo.balance : 0
+    setDraft((d) => ({ ...d, previous_balance: String(value ?? 0) }))
+  }, [clientInfo, previousBalanceTouched])
+
+  // Si l'immatriculation est saisie avant le client et qu'elle est déjà
+  // connue, propose le nom du client associé (dernière facture avec cette
+  // immatriculation) -- sans écraser un nom déjà saisi.
+  async function handlePlateBlur() {
+    const plate = draft.truck_plate.trim()
+    if (!plate || draft.client_name.trim()) return
+    const { data } = await supabase
+      .from('invoices')
+      .select('client_name')
+      .eq('truck_plate', plate)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (data?.client_name) update('client_name', data.client_name)
+  }
 
   function dedupe(list) {
     return [...new Set((list ?? []).filter(Boolean))]
@@ -128,6 +161,8 @@ export default function InvoiceForm() {
   const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
   const total = amount - discountAmount
   const balance = total - settlement
+  const previousBalance = Number(draft.previous_balance) || 0
+  const newClientBalance = previousBalance + total - settlement
 
   function validate() {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
@@ -180,11 +215,13 @@ export default function InvoiceForm() {
 
     const isCheque = draft.payment_status === 'Chèque'
 
+    const clientName = draft.client_name.trim().toUpperCase()
+
     const payload = {
       invoice_number: invoiceNumber,
       entry_date: draft.entry_date,
       entry_time: formatHHMM(new Date()),
-      client_name: draft.client_name.trim(),
+      client_name: clientName,
       designation: draft.designation,
       designation_other: draft.designation === 'Autre' ? draft.designation_other.trim() : null,
       bl_number: draft.bl_number.trim() || null,
@@ -226,6 +263,33 @@ export default function InvoiceForm() {
 
       notifyInvoiceEntry(data)
       sendInvoiceEmail(data)
+
+      // Le trigger invoices_sync_client_balance vient déjà d'appliquer
+      // l'effet normal de cette facture sur clients.total_invoiced/total_paid
+      // (à partir du VRAI solde précédent). Si le gestionnaire a modifié
+      // manuellement "Solde précédent" (correction), on applique en plus
+      // l'écart entre sa valeur et la valeur réelle trouvée au départ --
+      // sans quoi la correction manuelle n'aurait aucun effet persistant.
+      if (clientInfo?.found && previousBalanceTouched) {
+        const correction = previousBalance - (Number(clientInfo.balance) || 0)
+        if (correction !== 0) {
+          const { data: freshClient } = await supabase
+            .from('clients')
+            .select('id, total_invoiced, balance')
+            .ilike('name', clientName)
+            .maybeSingle()
+          if (freshClient) {
+            await supabase
+              .from('clients')
+              .update({
+                total_invoiced: Number(freshClient.total_invoiced) + correction,
+                balance: Number(freshClient.balance) + correction,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', freshClient.id)
+          }
+        }
+      }
 
       setDrivers((p) => dedupe([payload.driver_name, ...p]))
       setPlates((p) => dedupe([payload.truck_plate, ...p]))
@@ -294,6 +358,31 @@ export default function InvoiceForm() {
           </p>
         )}
       </Field>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Solde précédent (DA)">
+          <input
+            type="number"
+            step="0.01"
+            value={draft.previous_balance}
+            onChange={(e) => {
+              setPreviousBalanceTouched(true)
+              update('previous_balance', e.target.value)
+            }}
+            className={inputClass}
+          />
+          <span className="text-xs text-ink-muted">Pré-rempli depuis le solde client, modifiable (correction manuelle).</span>
+        </Field>
+        <Field label="Nouveau solde (DA)">
+          <input
+            type="text"
+            value={newClientBalance.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+            readOnly
+            disabled
+            className={`${inputClass} cursor-not-allowed font-display ${newClientBalance > 0 ? 'text-terracotta' : 'text-green-500'}`}
+          />
+        </Field>
+      </div>
 
       <Field label="Désignation" required>
         <select value={draft.designation} onChange={(e) => update('designation', e.target.value)} className={inputClass}>
@@ -491,12 +580,13 @@ export default function InvoiceForm() {
           list="invoice-plates-list"
           value={draft.truck_plate}
           onChange={(e) => update('truck_plate', e.target.value)}
+          onBlur={handlePlateBlur}
           className={inputClass}
           autoComplete="off"
           placeholder="optionnel"
         />
         <datalist id="invoice-plates-list">
-          {plates.map((p) => (
+          {(clientPlates.length > 0 ? clientPlates : plates).map((p) => (
             <option key={p} value={p} />
           ))}
         </datalist>
