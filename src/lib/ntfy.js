@@ -109,19 +109,40 @@ export function notifySandEntry(entry) {
 }
 
 export function notifyInvoiceEntry(entry) {
+  const designation = entry.designation === 'Autre' ? entry.designation_other || 'Autre' : entry.designation
   const lines = [
     `Facture n° ${entry.invoice_number}`,
     `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
     `Client : ${entry.client_name}`,
-    `Total HT : ${entry.total_ht} DA`,
+    `Désignation : ${designation}`,
   ]
-  if (entry.discount_percent) lines.push(`Remise : ${entry.discount_percent} %`)
-  lines.push(`TVA : ${entry.total_tva} DA`)
-  lines.push(`TTC : ${entry.total_ttc} DA`)
-  if (entry.stamp_duty) lines.push(`Timbre : ${entry.stamp_duty} DA`)
-  lines.push(`Total Net : ${entry.total_net} DA`)
+  if (entry.bl_number) lines.push(`N° BL : ${entry.bl_number}`)
+  lines.push(`Quantités : B8 ${entry.qty_b8} / B12 ${entry.qty_b12} / H ${entry.qty_h}`)
+  lines.push(`Prix unitaire : ${entry.unit_price} DA`)
+  lines.push(`Montant : ${entry.amount} DA`)
+  if (entry.discount_amount) lines.push(`Remise : ${entry.discount_amount} DA`)
+  lines.push(`Total : ${entry.total} DA`)
+  if (entry.settlement) lines.push(`Règlement : ${entry.settlement} DA`)
+  if (entry.disbursement) lines.push(`Décaissement : ${entry.disbursement} DA`)
+  lines.push(`Solde : ${entry.balance} DA`)
+  lines.push(`Type : ${entry.payment_type}`)
   lines.push(`Paiement : ${entry.payment_status ?? 'Non payé'}`)
+  if (entry.driver_name) lines.push(`Chauffeur : ${entry.driver_name}`)
+  if (entry.truck_plate) lines.push(`Immat : ${entry.truck_plate}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy('Nouvelle facture', lines, 'receipt')
+}
+
+export function notifyClientAdvance(advance) {
+  const lines = [
+    `Client : ${advance.client_name}`,
+    `Date : ${advance.advance_date}`,
+    `Montant payé : ${advance.amount_paid} DA`,
+    `Bons achetés : ${advance.bons_purchased}`,
+  ]
+  if (advance.payment_mode) lines.push(`Mode de paiement : ${advance.payment_mode}`)
+  if (advance.observations) lines.push(`Obs : ${advance.observations}`)
+  if (advance.entered_by_user) lines.push(`Saisi par : ${advance.entered_by_user}`)
+  return sendNtfy('Nouvelle avance client', lines, 'moneybag')
 }

@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import InvoiceForm from './InvoiceForm'
 import InvoiceRegistry from './InvoiceRegistry'
+import AdvancesTab from './AdvancesTab'
 import ClientBalancesModal from './ClientBalancesModal'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
   { id: 'registry', label: 'Registre' },
+  { id: 'advances', label: 'Avances' },
 ]
 
 export default function InvoicesPage() {
@@ -41,7 +43,9 @@ export default function InvoicesPage() {
         </button>
       </div>
 
-      {view === 'form' ? <InvoiceForm /> : <InvoiceRegistry />}
+      {view === 'form' && <InvoiceForm />}
+      {view === 'registry' && <InvoiceRegistry />}
+      {view === 'advances' && <AdvancesTab />}
 
       <ClientBalancesModal open={balancesOpen} onClose={() => setBalancesOpen(false)} />
     </div>

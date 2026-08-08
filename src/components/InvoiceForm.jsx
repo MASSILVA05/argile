@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { notifyInvoiceEntry } from '../lib/ntfy'
 import { sendInvoiceEmail } from '../lib/email'
 import { getSession } from '../lib/auth'
-import { PAYMENT_STATUSES } from '../lib/invoicePayment'
+import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES } from '../lib/invoicePayment'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -12,11 +12,19 @@ const emptyDraft = {
   invoice_number: '',
   entry_date: todayISO(),
   client_name: '',
-  total_ht: '',
-  discount_percent: '0',
-  stamp_duty: '0',
-  ref_commande: '',
-  ref_livraison: '',
+  designation: 'Brique B12',
+  designation_other: '',
+  bl_number: '',
+  qty_b8: '0',
+  qty_b12: '0',
+  qty_h: '0',
+  unit_price: '',
+  discount_amount: '0',
+  settlement: '0',
+  disbursement: '0',
+  driver_name: '',
+  truck_plate: '',
+  payment_type: 'A TERME',
   payment_status: 'Non payé',
   cheque_number: '',
   cheque_bank: '',
@@ -27,34 +35,44 @@ export default function InvoiceForm() {
   const [draft, setDraft] = useState(emptyDraft)
   const [clients, setClients] = useState([])
   const [banks, setBanks] = useState([])
+  const [drivers, setDrivers] = useState([])
+  const [plates, setPlates] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [clock, setClock] = useState(() => formatHHMM(new Date()))
   const [clientInfo, setClientInfo] = useState(null)
+  const [advanceInfo, setAdvanceInfo] = useState(null)
 
   useEffect(() => {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
     return () => clearInterval(id)
   }, [])
 
-  // Recherche le client dans `clients` (référentiel + solde historique) à
-  // chaque changement du nom saisi, avec un léger debounce pour ne pas
-  // interroger la base à chaque frappe.
+  // Recherche le client dans `clients` (solde historique) et dans
+  // `client_advances` (avance active) à chaque changement du nom saisi,
+  // avec un léger debounce pour ne pas interroger la base à chaque frappe.
   useEffect(() => {
     const name = draft.client_name.trim()
     if (!name) {
       setClientInfo(null)
+      setAdvanceInfo(null)
       return
     }
     let cancelled = false
     const id = setTimeout(async () => {
-      const { data } = await supabase
-        .from('clients')
-        .select('name, total_invoiced, total_paid, balance')
-        .ilike('name', name)
-        .maybeSingle()
-      if (!cancelled) setClientInfo(data ? { found: true, ...data } : { found: false })
+      const [{ data: client }, { data: advances }] = await Promise.all([
+        supabase
+          .from('clients')
+          .select('name, total_invoiced, total_paid, balance')
+          .ilike('name', name)
+          .maybeSingle(),
+        supabase.from('client_advances').select('bons_remaining').ilike('client_name', name).gt('bons_remaining', 0),
+      ])
+      if (cancelled) return
+      setClientInfo(client ? { found: true, ...client } : { found: false })
+      const bonsRemaining = (advances ?? []).reduce((sum, a) => sum + (a.bons_remaining || 0), 0)
+      setAdvanceInfo(bonsRemaining > 0 ? { bonsRemaining } : null)
     }, 400)
     return () => {
       cancelled = true
@@ -67,14 +85,25 @@ export default function InvoiceForm() {
   }
 
   async function loadSuggestions() {
-    const { data: rows } = await supabase
-      .from('invoices')
-      .select('client_name, cheque_bank')
-      .order('created_at', { ascending: false })
-      .limit(500)
+    const [{ data: clientRows }, { data: invoiceRows }] = await Promise.all([
+      supabase.from('clients').select('name').order('name'),
+      supabase
+        .from('invoices')
+        .select('invoice_number, cheque_bank, driver_name, truck_plate')
+        .order('created_at', { ascending: false })
+        .limit(500),
+    ])
 
-    setClients(dedupe(rows?.map((r) => r.client_name)))
-    setBanks(dedupe(rows?.map((r) => r.cheque_bank)))
+    setClients(dedupe(clientRows?.map((r) => r.name)))
+    setBanks(dedupe(invoiceRows?.map((r) => r.cheque_bank)))
+    setDrivers(dedupe(invoiceRows?.map((r) => r.driver_name)))
+    setPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
+
+    const maxNumber = (invoiceRows ?? []).reduce((max, r) => {
+      const n = Number(r.invoice_number)
+      return Number.isFinite(n) && n > max ? n : max
+    }, 0)
+    setDraft((d) => ({ ...d, invoice_number: String(maxNumber + 1) }))
   }
 
   useEffect(() => {
@@ -85,18 +114,28 @@ export default function InvoiceForm() {
     setDraft((d) => ({ ...d, [field]: value }))
   }
 
-  const totalHt = Number(draft.total_ht) || 0
-  const discount = Number(draft.discount_percent) || 0
-  const stampDuty = Number(draft.stamp_duty) || 0
-  const totalTva = totalHt * 0.19 * (1 - discount / 100)
-  const totalTtc = totalHt * (1 - discount / 100) + totalTva
-  const totalNet = totalTtc + stampDuty
+  const qtyB8 = Number(draft.qty_b8) || 0
+  const qtyB12 = Number(draft.qty_b12) || 0
+  const qtyH = Number(draft.qty_h) || 0
+  const unitPrice = Number(draft.unit_price) || 0
+  const discountAmount = Number(draft.discount_amount) || 0
+  const settlement = Number(draft.settlement) || 0
+
+  const amount = (qtyB8 + qtyB12 + qtyH) * unitPrice
+  const total = amount - discountAmount
+  const balance = total - settlement
 
   function validate() {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
     if (!draft.entry_date) return 'La date est obligatoire.'
     if (!draft.client_name.trim()) return 'Le client est obligatoire.'
-    if (draft.total_ht === '') return 'Le total HT est obligatoire.'
+    if (draft.designation === 'Autre' && !draft.designation_other.trim()) {
+      return 'La désignation libre est obligatoire.'
+    }
+    if (draft.unit_price === '') return 'Le prix unitaire est obligatoire.'
+    if (qtyB8 === 0 && qtyB12 === 0 && qtyH === 0) {
+      return 'Au moins une quantité (B8, B12 ou H) doit être renseignée.'
+    }
     if (draft.payment_status === 'Chèque' && !draft.cheque_number.trim()) {
       return 'Le n° de chèque est obligatoire.'
     }
@@ -140,11 +179,19 @@ export default function InvoiceForm() {
       entry_date: draft.entry_date,
       entry_time: formatHHMM(new Date()),
       client_name: draft.client_name.trim(),
-      total_ht: totalHt,
-      discount_percent: discount,
-      stamp_duty: stampDuty,
-      ref_commande: draft.ref_commande.trim() || null,
-      ref_livraison: draft.ref_livraison.trim() || null,
+      designation: draft.designation,
+      designation_other: draft.designation === 'Autre' ? draft.designation_other.trim() : null,
+      bl_number: draft.bl_number.trim() || null,
+      qty_b8: qtyB8,
+      qty_b12: qtyB12,
+      qty_h: qtyH,
+      unit_price: unitPrice,
+      discount_amount: discountAmount,
+      settlement: settlement,
+      disbursement: Number(draft.disbursement) || 0,
+      driver_name: draft.driver_name.trim() || null,
+      truck_plate: draft.truck_plate.trim() || null,
+      payment_type: draft.payment_type,
       payment_status: draft.payment_status,
       cheque_number: isCheque ? draft.cheque_number.trim() : null,
       cheque_bank: isCheque ? draft.cheque_bank.trim() || null : null,
@@ -172,10 +219,15 @@ export default function InvoiceForm() {
       notifyInvoiceEntry(data)
       sendInvoiceEmail(data)
 
-      setClients((p) => dedupe([payload.client_name, ...p]))
+      setDrivers((p) => dedupe([payload.driver_name, ...p]))
+      setPlates((p) => dedupe([payload.truck_plate, ...p]))
       setBanks((p) => dedupe([payload.cheque_bank, ...p]))
 
-      setDraft({ ...emptyDraft, entry_date: draft.entry_date })
+      setDraft((d) => ({
+        ...emptyDraft,
+        invoice_number: String((Number(invoiceNumber) || 0) + 1),
+        entry_date: d.entry_date,
+      }))
       setSuccess(`Facture n° ${invoiceNumber} enregistrée.`)
     } catch (err) {
       setError(`Erreur d'enregistrement : ${err.message}`)
@@ -193,7 +245,6 @@ export default function InvoiceForm() {
             value={draft.invoice_number}
             onChange={(e) => update('invoice_number', e.target.value)}
             className={inputClass}
-            placeholder="ex : 2025100253"
             required
           />
         </Field>
@@ -212,7 +263,7 @@ export default function InvoiceForm() {
         <input type="text" value={clock} readOnly disabled className={`${inputClass} cursor-not-allowed opacity-60`} />
       </Field>
 
-      <Field label="Client" required>
+      <Field label="Client (Nom & Prénom / Raison Sociale)" required>
         <input
           type="text"
           list="invoice-clients-list"
@@ -228,49 +279,99 @@ export default function InvoiceForm() {
           ))}
         </datalist>
         <ClientInfoPanel info={clientInfo} />
+        {advanceInfo && (
+          <p className="mt-1.5 rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2 text-sm text-ocre">
+            Avance active : {advanceInfo.bonsRemaining} bon{advanceInfo.bonsRemaining > 1 ? 's' : ''} restant
+            {advanceInfo.bonsRemaining > 1 ? 's' : ''}
+          </p>
+        )}
       </Field>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Total HT (DA)" required>
+      <Field label="Désignation" required>
+        <select value={draft.designation} onChange={(e) => update('designation', e.target.value)} className={inputClass}>
+          {DESIGNATIONS.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {draft.designation === 'Autre' && (
+        <Field label="Désignation (libre)" required>
           <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            min="0"
-            value={draft.total_ht}
-            onChange={(e) => update('total_ht', e.target.value)}
+            type="text"
+            value={draft.designation_other}
+            onChange={(e) => update('designation_other', e.target.value)}
             className={inputClass}
             required
           />
         </Field>
-        <Field label="Remise (%)">
+      )}
+
+      <Field label="N° BL">
+        <input
+          type="text"
+          value={draft.bl_number}
+          onChange={(e) => update('bl_number', e.target.value)}
+          className={inputClass}
+          placeholder="optionnel"
+        />
+      </Field>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Quantité B8 (T)">
           <input
             type="number"
             inputMode="decimal"
             step="0.01"
             min="0"
-            max="100"
-            value={draft.discount_percent}
-            onChange={(e) => update('discount_percent', e.target.value)}
+            value={draft.qty_b8}
+            onChange={(e) => update('qty_b8', e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Quantité B12 (T)">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={draft.qty_b12}
+            onChange={(e) => update('qty_b12', e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="H">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={draft.qty_h}
+            onChange={(e) => update('qty_h', e.target.value)}
             className={inputClass}
           />
         </Field>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Total TVA (DA)">
+        <Field label="Prix unitaire (DA)" required>
           <input
-            type="text"
-            value={totalTva.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-            readOnly
-            disabled
-            className={`${inputClass} cursor-not-allowed opacity-60`}
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={draft.unit_price}
+            onChange={(e) => update('unit_price', e.target.value)}
+            className={inputClass}
+            required
           />
         </Field>
-        <Field label="Total TTC (DA)">
+        <Field label="Montant (DA)">
           <input
             type="text"
-            value={totalTtc.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+            value={amount.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
             readOnly
             disabled
             className={`${inputClass} cursor-not-allowed opacity-60`}
@@ -279,21 +380,21 @@ export default function InvoiceForm() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Timbre (DA)">
+        <Field label="Remise (DA)">
           <input
             type="number"
             inputMode="decimal"
             step="0.01"
             min="0"
-            value={draft.stamp_duty}
-            onChange={(e) => update('stamp_duty', e.target.value)}
+            value={draft.discount_amount}
+            onChange={(e) => update('discount_amount', e.target.value)}
             className={inputClass}
           />
         </Field>
-        <Field label="Total Net (DA)">
+        <Field label="Total (DA)">
           <input
             type="text"
-            value={totalNet.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+            value={total.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
             readOnly
             disabled
             className={`${inputClass} cursor-not-allowed opacity-60 font-display text-ocre`}
@@ -302,27 +403,85 @@ export default function InvoiceForm() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Réf. Commande">
+        <Field label="Règlement (DA)">
           <input
-            type="text"
-            value={draft.ref_commande}
-            onChange={(e) => update('ref_commande', e.target.value)}
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={draft.settlement}
+            onChange={(e) => update('settlement', e.target.value)}
             className={inputClass}
-            placeholder="optionnel"
           />
         </Field>
-        <Field label="Réf. Livraison">
+        <Field label="Décaissement (DA)">
           <input
-            type="text"
-            value={draft.ref_livraison}
-            onChange={(e) => update('ref_livraison', e.target.value)}
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={draft.disbursement}
+            onChange={(e) => update('disbursement', e.target.value)}
             className={inputClass}
-            placeholder="optionnel"
           />
         </Field>
       </div>
 
-      <Field label="Catégorie de paiement">
+      <Field label="Chauffeur">
+        <input
+          type="text"
+          list="invoice-drivers-list"
+          value={draft.driver_name}
+          onChange={(e) => update('driver_name', e.target.value)}
+          className={inputClass}
+          autoComplete="off"
+          placeholder="optionnel"
+        />
+        <datalist id="invoice-drivers-list">
+          {drivers.map((d) => (
+            <option key={d} value={d} />
+          ))}
+        </datalist>
+      </Field>
+
+      <Field label="Immatriculation">
+        <input
+          type="text"
+          list="invoice-plates-list"
+          value={draft.truck_plate}
+          onChange={(e) => update('truck_plate', e.target.value)}
+          className={inputClass}
+          autoComplete="off"
+          placeholder="optionnel"
+        />
+        <datalist id="invoice-plates-list">
+          {plates.map((p) => (
+            <option key={p} value={p} />
+          ))}
+        </datalist>
+      </Field>
+
+      <Field label="Type de paiement (N/B)">
+        <select value={draft.payment_type} onChange={(e) => update('payment_type', e.target.value)} className={inputClass}>
+          {PAYMENT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Solde (DA)">
+        <input
+          type="text"
+          value={balance.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+          readOnly
+          disabled
+          className={`${inputClass} cursor-not-allowed font-display ${balance > 0 ? 'text-terracotta' : 'text-green-500'}`}
+        />
+      </Field>
+
+      <Field label="Mode de paiement">
         <select
           value={draft.payment_status}
           onChange={(e) => update('payment_status', e.target.value)}

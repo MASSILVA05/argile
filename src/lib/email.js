@@ -104,24 +104,46 @@ export function sendSandEmail(entry) {
 }
 
 export function sendInvoiceEmail(entry) {
+  const designation = entry.designation === 'Autre' ? entry.designation_other || 'Autre' : entry.designation
   const lines = [
     `Facture n° ${entry.invoice_number}`,
     `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
     `Client : ${entry.client_name}`,
-    `Total HT : ${entry.total_ht} DA`,
-    `Remise : ${entry.discount_percent ?? 0} %`,
-    `TVA : ${entry.total_tva} DA`,
-    `TTC : ${entry.total_ttc} DA`,
-    `Timbre : ${entry.stamp_duty ?? 0} DA`,
-    `Total Net : ${entry.total_net} DA`,
+    `Désignation : ${designation}`,
+    `N° BL : ${entry.bl_number || 'N/A'}`,
+    `Quantités : B8 ${entry.qty_b8} / B12 ${entry.qty_b12} / H ${entry.qty_h}`,
+    `Prix unitaire : ${entry.unit_price} DA`,
+    `Montant : ${entry.amount} DA`,
+    `Remise : ${entry.discount_amount ?? 0} DA`,
+    `Total : ${entry.total} DA`,
+    `Règlement : ${entry.settlement ?? 0} DA`,
+    `Décaissement : ${entry.disbursement ?? 0} DA`,
+    `Solde : ${entry.balance} DA`,
+    `Type : ${entry.payment_type}`,
     `Paiement : ${entry.payment_status ?? 'Non payé'}`,
-    `Réf. Commande : ${entry.ref_commande || 'N/A'}`,
-    `Réf. Livraison : ${entry.ref_livraison || 'N/A'}`,
+    `Chauffeur : ${entry.driver_name || 'N/A'}`,
+    `Immat : ${entry.truck_plate || 'N/A'}`,
     `Observations : ${entry.observations || 'Aucune'}`,
     `Saisi par : ${entry.entered_by_user || 'N/A'}`,
   ]
   return send({
     subject: 'Nouvelle facture',
+    message: lines.join('\n'),
+  })
+}
+
+export function sendClientAdvanceEmail(advance) {
+  const lines = [
+    `Client : ${advance.client_name}`,
+    `Date : ${advance.advance_date}`,
+    `Montant payé : ${advance.amount_paid} DA`,
+    `Bons achetés : ${advance.bons_purchased}`,
+    `Mode de paiement : ${advance.payment_mode || 'N/A'}`,
+    `Observations : ${advance.observations || 'Aucune'}`,
+    `Saisi par : ${advance.entered_by_user || 'N/A'}`,
+  ]
+  return send({
+    subject: 'Nouvelle avance client',
     message: lines.join('\n'),
   })
 }

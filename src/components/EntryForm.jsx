@@ -17,6 +17,7 @@ const emptyDraft = {
   entry_date: todayISO(),
   truck_plate: '',
   driver_name: '',
+  client_name: '',
   unloading_type: 'Akbou',
   weight_tons: '',
   ticket_number: '',
@@ -28,6 +29,7 @@ export default function EntryForm() {
   const [draft, setDraft] = useState(emptyDraft)
   const [plates, setPlates] = useState([])
   const [drivers, setDrivers] = useState([])
+  const [clients, setClients] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -39,16 +41,18 @@ export default function EntryForm() {
   }, [])
 
   async function loadSuggestions() {
-    const [{ data: bonRow }, { data: plateRows }, { data: driverRows }] = await Promise.all([
+    const [{ data: bonRow }, { data: plateRows }, { data: driverRows }, { data: clientRows }] = await Promise.all([
       supabase.from('entries').select('bon_number').order('bon_number', { ascending: false }).limit(1),
       supabase.from('entries').select('truck_plate').order('created_at', { ascending: false }).limit(500),
       supabase.from('entries').select('driver_name').order('created_at', { ascending: false }).limit(500),
+      supabase.from('clients').select('name').order('name'),
     ])
 
     const nextBon = bonRow?.[0]?.bon_number ? bonRow[0].bon_number + 1 : 1
     setDraft((d) => ({ ...d, bon_number: nextBon }))
     setPlates(dedupe(plateRows?.map((r) => r.truck_plate)))
     setDrivers(dedupe(driverRows?.map((r) => r.driver_name)))
+    setClients(dedupe(clientRows?.map((r) => r.name)))
   }
 
   useEffect(() => {
@@ -132,6 +136,7 @@ export default function EntryForm() {
       entry_time: entryTime,
       truck_plate: draft.truck_plate.trim(),
       driver_name: draft.driver_name.trim(),
+      client_name: draft.client_name.trim() || null,
       unloading_type: draft.unloading_type,
       ticket_number: draft.unloading_type === FIXED_WEIGHT_TYPE ? null : draft.ticket_number.trim() || null,
       weight_tons: draft.unloading_type === FIXED_WEIGHT_TYPE ? FIXED_WEIGHT_TONS : Number(draft.weight_tons),
@@ -260,6 +265,23 @@ export default function EntryForm() {
         <datalist id="drivers-list">
           {drivers.map((d) => (
             <option key={d} value={d} />
+          ))}
+        </datalist>
+      </Field>
+
+      <Field label="Client">
+        <input
+          type="text"
+          list="entry-clients-list"
+          value={draft.client_name}
+          onChange={(e) => update('client_name', e.target.value)}
+          className={inputClass}
+          placeholder="optionnel — pour décompte d'avance"
+          autoComplete="off"
+        />
+        <datalist id="entry-clients-list">
+          {clients.map((c) => (
+            <option key={c} value={c} />
           ))}
         </datalist>
       </Field>

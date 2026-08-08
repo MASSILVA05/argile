@@ -1391,3 +1391,382 @@ drop trigger if exists invoices_sync_client_balance on invoices;
 create trigger invoices_sync_client_balance
   after insert or update or delete on invoices
   for each row execute function sync_client_balance_from_invoice();
+
+-- ============================================================
+-- FACTURES : refonte du schéma pour coller au format réel du bon de
+-- livraison (brique B8/B12/H, prix unitaire, remise en montant fixe,
+-- règlement/décaissement, chauffeur/immat, type A TERME/COMPTANT/AVANCE)
+-- au lieu du schéma HT/TVA/TTC/Timbre initial.
+-- ============================================================
+
+-- 1) Colonnes générées existantes : à supprimer avant de toucher aux
+--    colonnes dont elles dépendent (total_ht, discount_percent, stamp_duty).
+alter table invoices drop column if exists total_tva;
+alter table invoices drop column if exists total_ttc;
+alter table invoices drop column if exists total_net;
+
+-- 2) Colonnes obsolètes.
+alter table invoices drop column if exists total_ht;
+alter table invoices drop column if exists discount_percent;
+alter table invoices drop column if exists stamp_duty;
+
+-- 3) Désignation du produit + n° de bon de livraison.
+alter table invoices add column if not exists designation text not null default 'Brique B12';
+alter table invoices add column if not exists designation_other text;
+alter table invoices add column if not exists bl_number text;
+
+comment on column invoices.designation is 'Brique B12 / Brique B8 / Autre (voir designation_other si Autre)';
+
+-- 4) Quantités (T) par type de produit.
+alter table invoices add column if not exists qty_b8 numeric(8, 2) not null default 0;
+alter table invoices add column if not exists qty_b12 numeric(8, 2) not null default 0;
+alter table invoices add column if not exists qty_h numeric(8, 2) not null default 0;
+
+-- 5) Prix unitaire : nullable puis NOT NULL après backfill, au cas où des
+--    lignes existent déjà sans valeur (même précaution que sand_entries.unit_price).
+alter table invoices add column if not exists unit_price numeric(10, 2);
+update invoices set unit_price = 0 where unit_price is null;
+alter table invoices alter column unit_price set not null;
+
+-- 6) Montant = (qty_b8 + qty_b12 + qty_h) * unit_price, calculé automatiquement.
+alter table invoices add column if not exists amount numeric(12, 2)
+  generated always as ((qty_b8 + qty_b12 + qty_h) * unit_price) stored;
+
+-- 7) Remise en montant fixe (pas en %), puis Total = Montant - Remise.
+alter table invoices add column if not exists discount_amount numeric(10, 2) not null default 0;
+alter table invoices add column if not exists total numeric(12, 2)
+  generated always as ((qty_b8 + qty_b12 + qty_h) * unit_price - discount_amount) stored;
+
+-- 8) Règlement / décaissement, puis Solde = Total - Règlement.
+alter table invoices add column if not exists settlement numeric(12, 2) not null default 0;
+alter table invoices add column if not exists disbursement numeric(12, 2) not null default 0;
+alter table invoices add column if not exists balance numeric(12, 2)
+  generated always as ((qty_b8 + qty_b12 + qty_h) * unit_price - discount_amount - settlement) stored;
+
+comment on column invoices.balance is 'Total - Règlement ; positif = client débiteur sur cette facture';
+
+-- 9) Chauffeur / immatriculation / type de paiement (N/B).
+alter table invoices add column if not exists driver_name text;
+alter table invoices add column if not exists truck_plate text;
+alter table invoices add column if not exists payment_type text not null default 'A TERME'
+  check (payment_type in ('A TERME', 'COMPTANT', 'AVANCE'));
+
+-- 10) 'Mode de paiement' (payment_status) : 'Virement' devient 'Versement'
+--     pour rester cohérent avec le vocabulaire déjà utilisé sur la page Sable.
+update invoices set payment_status = 'Versement' where payment_status = 'Virement';
+alter table invoices drop constraint if exists invoices_payment_status_check;
+alter table invoices add constraint invoices_payment_status_check
+  check (payment_status in ('Espèces', 'Versement', 'Chèque', 'Non payé'));
+
+-- 11) admin_update_invoice : nouvelle signature complète (l'ancienne est
+--     supprimée explicitement car la liste de paramètres change entièrement).
+drop function if exists admin_update_invoice(uuid, text, text, date, text, numeric, numeric, numeric, text, text, text, text, text, text);
+
+create or replace function admin_update_invoice(
+  p_id uuid,
+  p_admin_code text,
+  p_invoice_number text,
+  p_entry_date date,
+  p_client_name text,
+  p_designation text,
+  p_designation_other text,
+  p_bl_number text,
+  p_qty_b8 numeric,
+  p_qty_b12 numeric,
+  p_qty_h numeric,
+  p_unit_price numeric,
+  p_discount_amount numeric,
+  p_settlement numeric,
+  p_disbursement numeric,
+  p_driver_name text,
+  p_truck_plate text,
+  p_payment_type text,
+  p_payment_status text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_ref_commande text,
+  p_ref_livraison text,
+  p_observations text
+)
+returns invoices
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result invoices;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update invoices set
+    invoice_number = p_invoice_number,
+    entry_date = p_entry_date,
+    client_name = p_client_name,
+    designation = p_designation,
+    designation_other = p_designation_other,
+    bl_number = p_bl_number,
+    qty_b8 = p_qty_b8,
+    qty_b12 = p_qty_b12,
+    qty_h = p_qty_h,
+    unit_price = p_unit_price,
+    discount_amount = p_discount_amount,
+    settlement = p_settlement,
+    disbursement = p_disbursement,
+    driver_name = p_driver_name,
+    truck_plate = p_truck_plate,
+    payment_type = p_payment_type,
+    payment_status = p_payment_status,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    ref_commande = p_ref_commande,
+    ref_livraison = p_ref_livraison,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Facture introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text) from public;
+grant execute on function admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text) to anon, authenticated;
+
+-- 12) Trigger de solde client : utilise désormais `total` (Montant - Remise)
+--     au lieu de `total_net` (supprimé ci-dessus).
+create or replace function sync_client_balance_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_client_id uuid;
+  v_new_client_id uuid;
+begin
+  if TG_OP = 'UPDATE' or TG_OP = 'DELETE' then
+    select id into v_old_client_id from clients where lower(name) = lower(OLD.client_name) limit 1;
+    if v_old_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced - OLD.total,
+        total_paid = total_paid - case when OLD.payment_status is distinct from 'Non payé' then OLD.total else 0 end,
+        updated_at = now()
+      where id = v_old_client_id;
+    end if;
+  end if;
+
+  if TG_OP = 'INSERT' or TG_OP = 'UPDATE' then
+    select id into v_new_client_id from clients where lower(name) = lower(NEW.client_name) limit 1;
+    if v_new_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced + NEW.total,
+        total_paid = total_paid + case when NEW.payment_status is distinct from 'Non payé' then NEW.total else 0 end,
+        updated_at = now()
+      where id = v_new_client_id;
+    end if;
+  end if;
+
+  update clients set balance = total_invoiced - total_paid
+  where id = v_old_client_id or id = v_new_client_id;
+
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+-- ============================================================
+-- AVANCES CLIENTS : paiement anticipé d'un lot de bons, décompté
+-- automatiquement à chaque chargement (`entries`) rattaché au client.
+-- ============================================================
+
+create table if not exists client_advances (
+  id uuid primary key default gen_random_uuid(),
+  client_name text not null,
+  advance_date date not null default current_date,
+  amount_paid numeric(12, 2) not null,
+  bons_purchased integer not null,
+  bons_remaining integer not null,
+  payment_mode text check (payment_mode in ('Espèces', 'Versement', 'Chèque')),
+  cheque_number text,
+  cheque_bank text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table client_advances is 'Avances clients : paiement anticipé d''un lot de bons, décompté à chaque chargement (entries) du client concerné';
+
+create index if not exists client_advances_client_name_idx on client_advances (lower(client_name));
+create index if not exists client_advances_created_at_idx on client_advances (created_at desc);
+
+alter table client_advances enable row level security;
+
+create policy "Lecture publique avances"
+  on client_advances for select
+  using (true);
+
+create policy "Ajout avances"
+  on client_advances for insert
+  with check (true);
+
+create policy "Modification avances"
+  on client_advances for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression avances"
+  on client_advances for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table client_advances;
+
+create or replace function admin_update_client_advance(
+  p_id uuid,
+  p_admin_code text,
+  p_client_name text,
+  p_advance_date date,
+  p_amount_paid numeric,
+  p_bons_purchased integer,
+  p_bons_remaining integer,
+  p_payment_mode text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_observations text
+)
+returns client_advances
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result client_advances;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update client_advances set
+    client_name = p_client_name,
+    advance_date = p_advance_date,
+    amount_paid = p_amount_paid,
+    bons_purchased = p_bons_purchased,
+    bons_remaining = p_bons_remaining,
+    payment_mode = p_payment_mode,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Avance introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_client_advance(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from client_advances where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_client_advance(uuid, text, text, date, numeric, integer, integer, text, text, text, text) from public;
+revoke all on function admin_delete_client_advance(uuid, text) from public;
+grant execute on function admin_update_client_advance(uuid, text, text, date, numeric, integer, integer, text, text, text, text) to anon, authenticated;
+grant execute on function admin_delete_client_advance(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- Décompte automatique des avances depuis le chargement (entries) : un
+-- champ Client optionnel avec autocomplétion (EntryForm.jsx) permet de
+-- rattacher un bon de chargement à un client ayant une avance active.
+-- ============================================================
+
+alter table entries add column if not exists client_name text;
+create index if not exists entries_client_name_idx on entries (lower(client_name));
+
+-- Réutilise le même topic ntfy que le reste de l'app (VITE_NTFY_TOPIC) pour
+-- la notification serveur "avance épuisée", déclenchée depuis un trigger SQL
+-- (comme ntfy_auth_topic pour le code de connexion hebdomadaire). À mettre à
+-- jour pour correspondre exactement à VITE_NTFY_TOPIC (.env + Vercel) :
+--   update app_settings set value = 'VOTRE_TOPIC_NTFY' where key = 'ntfy_topic';
+insert into app_settings (key, value)
+values ('ntfy_topic', 'dpr-axxam-chargement-xxxx')
+on conflict (key) do nothing;
+
+create or replace function decrement_client_advance_on_entry()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_advance_id uuid;
+  v_remaining integer;
+  v_topic text;
+begin
+  if NEW.client_name is null or trim(NEW.client_name) = '' then
+    return NEW;
+  end if;
+
+  select id into v_advance_id
+  from client_advances
+  where lower(client_name) = lower(NEW.client_name) and bons_remaining > 0
+  order by advance_date desc, created_at desc
+  limit 1;
+
+  if v_advance_id is null then
+    return NEW;
+  end if;
+
+  update client_advances
+  set bons_remaining = bons_remaining - 1
+  where id = v_advance_id
+  returning bons_remaining into v_remaining;
+
+  if v_remaining = 0 then
+    select value into v_topic from app_settings where key = 'ntfy_topic';
+    if v_topic is not null then
+      perform net.http_post(
+        url := 'https://ntfy.sh',
+        body := jsonb_build_object(
+          'topic', v_topic,
+          'title', 'Avance épuisée',
+          'message', 'Avance épuisée pour le client ' || NEW.client_name,
+          'tags', jsonb_build_array('warning'),
+          'priority', 4
+        )
+      );
+    end if;
+  end if;
+
+  return NEW;
+end;
+$$;
+
+drop trigger if exists entries_decrement_client_advance on entries;
+
+create trigger entries_decrement_client_advance
+  after insert on entries
+  for each row execute function decrement_client_advance_on_entry();

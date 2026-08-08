@@ -4,17 +4,17 @@ import { downloadInvoicesExcel } from '../lib/invoicesExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
-import { PAYMENT_STATUSES, isInvoicePaid } from '../lib/invoicePayment'
+import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES, isInvoicePaid } from '../lib/invoicePayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 
-function formatTime(value) {
-  return value ? value.slice(0, 5) : '—'
-}
-
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
+}
+
+function designationLabel(entry) {
+  return entry.designation === 'Autre' ? entry.designation_other || 'Autre' : entry.designation
 }
 
 export default function InvoiceRegistry() {
@@ -92,13 +92,13 @@ export default function InvoiceRegistry() {
     return filtered.reduce(
       (acc, e) => ({
         count: acc.count + 1,
-        totalHt: acc.totalHt + Number(e.total_ht || 0),
-        totalTva: acc.totalTva + Number(e.total_tva || 0),
-        totalTtc: acc.totalTtc + Number(e.total_ttc || 0),
-        stampDuty: acc.stampDuty + Number(e.stamp_duty || 0),
-        totalNet: acc.totalNet + Number(e.total_net || 0),
+        amount: acc.amount + Number(e.amount || 0),
+        discount: acc.discount + Number(e.discount_amount || 0),
+        total: acc.total + Number(e.total || 0),
+        settlement: acc.settlement + Number(e.settlement || 0),
+        balance: acc.balance + Number(e.balance || 0),
       }),
-      { count: 0, totalHt: 0, totalTva: 0, totalTtc: 0, stampDuty: 0, totalNet: 0 }
+      { count: 0, amount: 0, discount: 0, total: 0, settlement: 0, balance: 0 }
     )
   }, [filtered])
 
@@ -121,13 +121,24 @@ export default function InvoiceRegistry() {
       return
     }
     const isCheque = editDraft.payment_status === 'Chèque'
+    const isOther = editDraft.designation === 'Autre'
     const payload = {
       invoice_number: editDraft.invoice_number.trim(),
       entry_date: editDraft.entry_date,
       client_name: editDraft.client_name.trim(),
-      total_ht: Number(editDraft.total_ht),
-      discount_percent: Number(editDraft.discount_percent) || 0,
-      stamp_duty: Number(editDraft.stamp_duty) || 0,
+      designation: editDraft.designation,
+      designation_other: isOther ? (editDraft.designation_other || '').trim() : null,
+      bl_number: editDraft.bl_number?.trim() || null,
+      qty_b8: Number(editDraft.qty_b8) || 0,
+      qty_b12: Number(editDraft.qty_b12) || 0,
+      qty_h: Number(editDraft.qty_h) || 0,
+      unit_price: Number(editDraft.unit_price) || 0,
+      discount_amount: Number(editDraft.discount_amount) || 0,
+      settlement: Number(editDraft.settlement) || 0,
+      disbursement: Number(editDraft.disbursement) || 0,
+      driver_name: editDraft.driver_name?.trim() || null,
+      truck_plate: editDraft.truck_plate?.trim() || null,
+      payment_type: editDraft.payment_type,
       payment_status: editDraft.payment_status,
       cheque_number: isCheque ? (editDraft.cheque_number || '').trim() : null,
       cheque_bank: isCheque ? (editDraft.cheque_bank || '').trim() || null : null,
@@ -143,9 +154,19 @@ export default function InvoiceRegistry() {
           p_invoice_number: payload.invoice_number,
           p_entry_date: payload.entry_date,
           p_client_name: payload.client_name,
-          p_total_ht: payload.total_ht,
-          p_discount_percent: payload.discount_percent,
-          p_stamp_duty: payload.stamp_duty,
+          p_designation: payload.designation,
+          p_designation_other: payload.designation_other,
+          p_bl_number: payload.bl_number,
+          p_qty_b8: payload.qty_b8,
+          p_qty_b12: payload.qty_b12,
+          p_qty_h: payload.qty_h,
+          p_unit_price: payload.unit_price,
+          p_discount_amount: payload.discount_amount,
+          p_settlement: payload.settlement,
+          p_disbursement: payload.disbursement,
+          p_driver_name: payload.driver_name,
+          p_truck_plate: payload.truck_plate,
+          p_payment_type: payload.payment_type,
           p_payment_status: payload.payment_status,
           p_cheque_number: payload.cheque_number,
           p_cheque_bank: payload.cheque_bank,
@@ -297,24 +318,24 @@ export default function InvoiceRegistry() {
           <p className="font-display text-xl text-ocre">{totals.count}</p>
         </div>
         <div>
-          <p className="text-xs text-ink-muted">Total HT</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.totalHt)}</p>
+          <p className="text-xs text-ink-muted">Montant</p>
+          <p className="font-display text-xl text-ocre">{formatDA(totals.amount)}</p>
         </div>
         <div>
-          <p className="text-xs text-ink-muted">TVA</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.totalTva)}</p>
+          <p className="text-xs text-ink-muted">Remise</p>
+          <p className="font-display text-xl text-ocre">{formatDA(totals.discount)}</p>
         </div>
         <div>
-          <p className="text-xs text-ink-muted">TTC</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.totalTtc)}</p>
+          <p className="text-xs text-ink-muted">Total</p>
+          <p className="font-display text-xl text-ocre">{formatDA(totals.total)}</p>
         </div>
         <div>
-          <p className="text-xs text-ink-muted">Timbre</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.stampDuty)}</p>
+          <p className="text-xs text-ink-muted">Règlement</p>
+          <p className="font-display text-xl text-ocre">{formatDA(totals.settlement)}</p>
         </div>
         <div>
-          <p className="text-xs text-ink-muted">Total Net</p>
-          <p className="font-display text-xl text-ocre">{formatDA(totals.totalNet)}</p>
+          <p className="text-xs text-ink-muted">Solde</p>
+          <p className="font-display text-xl text-ocre">{formatDA(totals.balance)}</p>
         </div>
       </div>
 
@@ -330,24 +351,29 @@ export default function InvoiceRegistry() {
         <p className="text-ink-muted">Aucune facture.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1700px] border-collapse text-sm">
+          <table className="w-full min-w-[2200px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>N° Facture</Th>
                 <Th>Date</Th>
-                <Th>Heure</Th>
                 <Th>Client</Th>
-                <Th>Total HT</Th>
-                <Th>Remise (%)</Th>
-                <Th>TVA</Th>
-                <Th>TTC</Th>
-                <Th>Timbre</Th>
-                <Th>Total Net</Th>
+                <Th>Désignation</Th>
+                <Th>N° BL</Th>
+                <Th>B8 (T)</Th>
+                <Th>B12 (T)</Th>
+                <Th>H</Th>
+                <Th>Prix</Th>
+                <Th>Montant</Th>
+                <Th>Remise</Th>
+                <Th>Total</Th>
+                <Th>Règlement</Th>
+                <Th>Décaissement</Th>
+                <Th>Chauffeur</Th>
+                <Th>Immat</Th>
+                <Th>Type (N/B)</Th>
+                <Th>Solde</Th>
                 <Th>Paiement</Th>
-                <Th>Réf. Commande</Th>
-                <Th>Réf. Livraison</Th>
                 <Th>Saisi par</Th>
-                <Th>Observations</Th>
                 <Th>Actions</Th>
               </tr>
             </thead>
@@ -366,23 +392,30 @@ export default function InvoiceRegistry() {
                   <tr key={entry.id} className="border-b border-border last:border-0">
                     <Td>{entry.invoice_number}</Td>
                     <Td>{entry.entry_date}</Td>
-                    <Td>{formatTime(entry.entry_time)}</Td>
                     <Td>{entry.client_name}</Td>
-                    <Td>{formatDA(entry.total_ht)}</Td>
-                    <Td>{entry.discount_percent ?? 0}</Td>
-                    <Td>{formatDA(entry.total_tva)}</Td>
-                    <Td>{formatDA(entry.total_ttc)}</Td>
-                    <Td>{formatDA(entry.stamp_duty)}</Td>
-                    <Td>{formatDA(entry.total_net)}</Td>
+                    <Td>{designationLabel(entry)}</Td>
+                    <Td>{entry.bl_number ?? '—'}</Td>
+                    <Td>{entry.qty_b8}</Td>
+                    <Td>{entry.qty_b12}</Td>
+                    <Td>{entry.qty_h}</Td>
+                    <Td>{entry.unit_price}</Td>
+                    <Td>{formatDA(entry.amount)}</Td>
+                    <Td>{formatDA(entry.discount_amount)}</Td>
+                    <Td>{formatDA(entry.total)}</Td>
+                    <Td>{formatDA(entry.settlement)}</Td>
+                    <Td>{formatDA(entry.disbursement)}</Td>
+                    <Td>{entry.driver_name ?? '—'}</Td>
+                    <Td>{entry.truck_plate ?? '—'}</Td>
+                    <Td>{entry.payment_type}</Td>
+                    <Td>
+                      <span className={Number(entry.balance) > 0 ? 'text-terracotta' : 'text-green-500'}>
+                        {formatDA(entry.balance)}
+                      </span>
+                    </Td>
                     <Td>
                       <PaidBadge status={entry.payment_status} />
                     </Td>
-                    <Td>{entry.ref_commande ?? '—'}</Td>
-                    <Td>{entry.ref_livraison ?? '—'}</Td>
                     <Td>{entry.entered_by_user ?? '—'}</Td>
-                    <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
-                      {entry.observations ?? '—'}
-                    </Td>
                     <Td>
                       <RowActions
                         entry={entry}
@@ -440,12 +473,15 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
     onChange({ ...draft, [field]: value })
   }
 
-  const totalHt = Number(draft.total_ht) || 0
-  const discount = Number(draft.discount_percent) || 0
-  const stampDuty = Number(draft.stamp_duty) || 0
-  const totalTva = totalHt * 0.19 * (1 - discount / 100)
-  const totalTtc = totalHt * (1 - discount / 100) + totalTva
-  const totalNet = totalTtc + stampDuty
+  const qtyB8 = Number(draft.qty_b8) || 0
+  const qtyB12 = Number(draft.qty_b12) || 0
+  const qtyH = Number(draft.qty_h) || 0
+  const unitPrice = Number(draft.unit_price) || 0
+  const discountAmount = Number(draft.discount_amount) || 0
+  const settlement = Number(draft.settlement) || 0
+  const amount = (qtyB8 + qtyB12 + qtyH) * unitPrice
+  const total = amount - discountAmount
+  const balance = total - settlement
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
@@ -455,22 +491,73 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
         <input type="text" value={draft.client_name} onChange={(e) => set('client_name', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="number" step="0.01" value={draft.total_ht} onChange={(e) => set('total_ht', e.target.value)} className={editInputClass} />
+        <div className="flex min-w-32 flex-col gap-1">
+          <select value={draft.designation} onChange={(e) => set('designation', e.target.value)} className={editInputClass}>
+            {DESIGNATIONS.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+          {draft.designation === 'Autre' && (
+            <input
+              type="text"
+              placeholder="Désignation libre"
+              value={draft.designation_other ?? ''}
+              onChange={(e) => set('designation_other', e.target.value)}
+              className={editInputClass}
+            />
+          )}
+        </div>
       </Td>
       <Td>
-        <input type="number" step="0.01" value={draft.discount_percent ?? 0} onChange={(e) => set('discount_percent', e.target.value)} className={editInputClass} />
+        <input type="text" value={draft.bl_number ?? ''} onChange={(e) => set('bl_number', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>{formatDA(totalTva)}</Td>
-      <Td>{formatDA(totalTtc)}</Td>
       <Td>
-        <input type="number" step="0.01" value={draft.stamp_duty ?? 0} onChange={(e) => set('stamp_duty', e.target.value)} className={editInputClass} />
+        <input type="number" step="0.01" value={draft.qty_b8} onChange={(e) => set('qty_b8', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>{formatDA(totalNet)}</Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.qty_b12} onChange={(e) => set('qty_b12', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.qty_h} onChange={(e) => set('qty_h', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.unit_price} onChange={(e) => set('unit_price', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>{formatDA(amount)}</Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.discount_amount} onChange={(e) => set('discount_amount', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>{formatDA(total)}</Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.settlement} onChange={(e) => set('settlement', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.disbursement} onChange={(e) => set('disbursement', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="text" value={draft.driver_name ?? ''} onChange={(e) => set('driver_name', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="text" value={draft.truck_plate ?? ''} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <select value={draft.payment_type} onChange={(e) => set('payment_type', e.target.value)} className={editInputClass}>
+          {PAYMENT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </Td>
+      <Td>
+        <span className={balance > 0 ? 'text-terracotta' : 'text-green-500'}>{formatDA(balance)}</span>
+      </Td>
       <Td>
         <div className="flex min-w-36 flex-col gap-1">
           <select value={draft.payment_status ?? 'Non payé'} onChange={(e) => set('payment_status', e.target.value)} className={editInputClass}>
@@ -506,16 +593,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
           )}
         </div>
       </Td>
-      <Td>
-        <input type="text" value={draft.ref_commande ?? ''} onChange={(e) => set('ref_commande', e.target.value)} className={editInputClass} />
-      </Td>
-      <Td>
-        <input type="text" value={draft.ref_livraison ?? ''} onChange={(e) => set('ref_livraison', e.target.value)} className={editInputClass} />
-      </Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
-      <Td>
-        <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
-      </Td>
       <Td>
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">
