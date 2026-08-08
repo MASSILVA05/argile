@@ -17,8 +17,10 @@ dist-ssr
 .env.local
 
 # Fichiers sources d'import ponctuel (données clients réelles, ne doivent
-# jamais être commitées) : voir scripts/import-situations.js
+# jamais être commitées) : voir scripts/import-situations.js et
+# scripts/import-situation-2026.js
 Situation_*.xlsx
+SITUATION JOURNALIERE*.xlsx
 
 # Editor directories and files
 .vscode/*
