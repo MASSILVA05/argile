@@ -132,7 +132,9 @@ export default function InvoiceRegistry() {
       qty_b8: Number(editDraft.qty_b8) || 0,
       qty_b12: Number(editDraft.qty_b12) || 0,
       qty_h: Number(editDraft.qty_h) || 0,
-      unit_price: Number(editDraft.unit_price) || 0,
+      price_b8: Number(editDraft.price_b8) || 0,
+      price_b12: Number(editDraft.price_b12) || 0,
+      price_h: Number(editDraft.price_h) || 0,
       discount_amount: Number(editDraft.discount_amount) || 0,
       settlement: Number(editDraft.settlement) || 0,
       disbursement: Number(editDraft.disbursement) || 0,
@@ -160,7 +162,9 @@ export default function InvoiceRegistry() {
           p_qty_b8: payload.qty_b8,
           p_qty_b12: payload.qty_b12,
           p_qty_h: payload.qty_h,
-          p_unit_price: payload.unit_price,
+          p_price_b8: payload.price_b8,
+          p_price_b12: payload.price_b12,
+          p_price_h: payload.price_h,
           p_discount_amount: payload.discount_amount,
           p_settlement: payload.settlement,
           p_disbursement: payload.disbursement,
@@ -351,7 +355,7 @@ export default function InvoiceRegistry() {
         <p className="text-ink-muted">Aucune facture.</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[2200px] border-collapse text-sm">
+          <table className="w-full min-w-[2400px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <Th>N° Facture</Th>
@@ -361,8 +365,10 @@ export default function InvoiceRegistry() {
                 <Th>N° BL</Th>
                 <Th>B8 (T)</Th>
                 <Th>B12 (T)</Th>
-                <Th>H</Th>
-                <Th>Prix</Th>
+                <Th>Autre (H)</Th>
+                <Th>Prix B8</Th>
+                <Th>Prix B12</Th>
+                <Th>Prix H</Th>
                 <Th>Montant</Th>
                 <Th>Remise</Th>
                 <Th>Total</Th>
@@ -398,7 +404,9 @@ export default function InvoiceRegistry() {
                     <Td>{entry.qty_b8}</Td>
                     <Td>{entry.qty_b12}</Td>
                     <Td>{entry.qty_h}</Td>
-                    <Td>{entry.unit_price}</Td>
+                    <Td>{entry.qty_b8 > 0 ? entry.price_b8 : '—'}</Td>
+                    <Td>{entry.qty_b12 > 0 ? entry.price_b12 : '—'}</Td>
+                    <Td>{entry.qty_h > 0 ? entry.price_h : '—'}</Td>
                     <Td>{formatDA(entry.amount)}</Td>
                     <Td>{formatDA(entry.discount_amount)}</Td>
                     <Td>{formatDA(entry.total)}</Td>
@@ -476,10 +484,12 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
   const qtyB8 = Number(draft.qty_b8) || 0
   const qtyB12 = Number(draft.qty_b12) || 0
   const qtyH = Number(draft.qty_h) || 0
-  const unitPrice = Number(draft.unit_price) || 0
+  const priceB8 = Number(draft.price_b8) || 0
+  const priceB12 = Number(draft.price_b12) || 0
+  const priceH = Number(draft.price_h) || 0
   const discountAmount = Number(draft.discount_amount) || 0
   const settlement = Number(draft.settlement) || 0
-  const amount = (qtyB8 + qtyB12 + qtyH) * unitPrice
+  const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
   const total = amount - discountAmount
   const balance = total - settlement
 
@@ -527,7 +537,13 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
         <input type="number" step="0.01" value={draft.qty_h} onChange={(e) => set('qty_h', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="number" step="0.01" value={draft.unit_price} onChange={(e) => set('unit_price', e.target.value)} className={editInputClass} />
+        <input type="number" step="0.01" value={draft.price_b8} onChange={(e) => set('price_b8', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.price_b12} onChange={(e) => set('price_b12', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.price_h} onChange={(e) => set('price_h', e.target.value)} className={editInputClass} />
       </Td>
       <Td>{formatDA(amount)}</Td>
       <Td>

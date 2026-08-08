@@ -1770,3 +1770,331 @@ drop trigger if exists entries_decrement_client_advance on entries;
 create trigger entries_decrement_client_advance
   after insert on entries
   for each row execute function decrement_client_advance_on_entry();
+
+-- ============================================================
+-- FACTURES : prix unitaires séparés par produit (B8 / B12 / Autre-H) au
+-- lieu d'un seul prix unitaire partagé entre les trois.
+-- ============================================================
+
+-- 1) Colonnes générées à supprimer avant de toucher aux colonnes dont
+--    elles dépendent (ordre inverse de dépendance : balance -> total -> amount).
+alter table invoices drop column if exists balance;
+alter table invoices drop column if exists total;
+alter table invoices drop column if exists amount;
+
+-- 2) unit_price devient price_b12 (prix unitaire des briques B12).
+alter table invoices rename column unit_price to price_b12;
+
+-- 3) Prix unitaires B8 et Autre (H), même précaution que les autres
+--    colonnes numériques ajoutées sur cette table (NOT NULL DEFAULT 0 pour
+--    ne jamais faire planter l'arithmétique des colonnes générées avec NULL).
+alter table invoices add column if not exists price_b8 numeric(10, 2) not null default 0;
+alter table invoices add column if not exists price_h numeric(10, 2) not null default 0;
+
+-- 4) Recalcul des colonnes générées avec un prix par produit.
+alter table invoices add column if not exists amount numeric(12, 2)
+  generated always as (qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h) stored;
+
+alter table invoices add column if not exists total numeric(12, 2)
+  generated always as (qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h - discount_amount) stored;
+
+alter table invoices add column if not exists balance numeric(12, 2)
+  generated always as (qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h - discount_amount - settlement) stored;
+
+-- 5) admin_update_invoice : nouvelle signature (p_unit_price -> p_price_b8 /
+--    p_price_b12 / p_price_h). L'ancienne fonction est supprimée explicitement
+--    car la liste de paramètres change.
+drop function if exists admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text);
+
+create or replace function admin_update_invoice(
+  p_id uuid,
+  p_admin_code text,
+  p_invoice_number text,
+  p_entry_date date,
+  p_client_name text,
+  p_designation text,
+  p_designation_other text,
+  p_bl_number text,
+  p_qty_b8 numeric,
+  p_qty_b12 numeric,
+  p_qty_h numeric,
+  p_price_b8 numeric,
+  p_price_b12 numeric,
+  p_price_h numeric,
+  p_discount_amount numeric,
+  p_settlement numeric,
+  p_disbursement numeric,
+  p_driver_name text,
+  p_truck_plate text,
+  p_payment_type text,
+  p_payment_status text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_ref_commande text,
+  p_ref_livraison text,
+  p_observations text
+)
+returns invoices
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result invoices;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update invoices set
+    invoice_number = p_invoice_number,
+    entry_date = p_entry_date,
+    client_name = p_client_name,
+    designation = p_designation,
+    designation_other = p_designation_other,
+    bl_number = p_bl_number,
+    qty_b8 = p_qty_b8,
+    qty_b12 = p_qty_b12,
+    qty_h = p_qty_h,
+    price_b8 = p_price_b8,
+    price_b12 = p_price_b12,
+    price_h = p_price_h,
+    discount_amount = p_discount_amount,
+    settlement = p_settlement,
+    disbursement = p_disbursement,
+    driver_name = p_driver_name,
+    truck_plate = p_truck_plate,
+    payment_type = p_payment_type,
+    payment_status = p_payment_status,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    ref_commande = p_ref_commande,
+    ref_livraison = p_ref_livraison,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Facture introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text) from public;
+grant execute on function admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text) to anon, authenticated;
+
+-- Note : le trigger invoices_sync_client_balance (sync_client_balance_from_invoice)
+-- n'a pas besoin d'être modifié : il ne lit que NEW/OLD.total et .payment_status,
+-- pas les colonnes de prix -- la nouvelle formule de `total` lui est transparente.
+
+-- ============================================================
+-- STOCK PRODUITS FINIS (B8 / B12) : la production augmente le stock, les
+-- ventes (factures) le diminuent automatiquement.
+-- ============================================================
+
+create table if not exists product_stock (
+  id serial primary key,
+  product_name text unique not null,
+  current_stock numeric(12, 2) not null default 0,
+  -- max_capacity n'était pas dans la liste de colonnes demandée, mais est
+  -- nécessaire pour la notification "stock bas (< 10% du max)" explicitement
+  -- demandée plus bas -- mêmes valeurs par défaut à ajuster à la vraie
+  -- capacité de stockage :
+  --   update product_stock set max_capacity = 50000 where product_name = 'B8';
+  max_capacity numeric(12, 2) not null default 100000,
+  updated_at timestamptz default now()
+);
+
+comment on table product_stock is 'Stock courant des produits finis (une ligne par produit, comme fuel_tank)';
+
+insert into product_stock (product_name, current_stock)
+values ('B8', 0), ('B12', 0)
+on conflict (product_name) do nothing;
+
+alter table product_stock enable row level security;
+
+create policy "Lecture publique stock produits"
+  on product_stock for select
+  using (true);
+
+create policy "Mise à jour stock produits"
+  on product_stock for update
+  using (true)
+  with check (true);
+-- Pas de policy insert/delete : les 2 lignes (B8/B12) sont créées une seule
+-- fois ci-dessus, comme fuel_tank.
+
+alter publication supabase_realtime add table product_stock;
+
+create table if not exists stock_movements (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  product_name text not null check (product_name in ('B8', 'B12')),
+  movement_type text not null check (movement_type in ('Production', 'Vente', 'Ajustement')),
+  quantity numeric(12, 2) not null,
+  stock_after numeric(12, 2) not null,
+  reference text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table stock_movements is 'Journal des mouvements de stock produits finis : Production/Ajustement saisis manuellement, Vente générée automatiquement depuis invoices';
+comment on column stock_movements.quantity is 'Signé : positif = entrée en stock (production, retour), négatif = sortie (vente)';
+
+create index if not exists stock_movements_created_at_idx on stock_movements (created_at desc);
+create index if not exists stock_movements_product_name_idx on stock_movements (product_name);
+create index if not exists stock_movements_entry_date_idx on stock_movements (entry_date);
+
+alter table stock_movements enable row level security;
+
+create policy "Lecture publique mouvements stock"
+  on stock_movements for select
+  using (true);
+
+create policy "Ajout mouvements stock"
+  on stock_movements for insert
+  with check (true);
+-- Pas de policy update/delete volontairement : c'est un journal immuable.
+-- Une correction se fait via un nouveau mouvement de type 'Ajustement'
+-- (positif ou négatif), jamais en modifiant l'historique.
+
+alter publication supabase_realtime add table stock_movements;
+
+-- Seuil de notification "stock bas", configurable sans redéployer de code :
+--   update app_settings set value = '15' where key = 'stock_low_threshold_percent';
+insert into app_settings (key, value)
+values ('stock_low_threshold_percent', '10')
+on conflict (key) do nothing;
+
+-- Applique atomiquement tout INSERT dans stock_movements à product_stock.current_stock
+-- (calcule stock_after avant écriture), quelle que soit l'origine de la ligne
+-- (saisie manuelle Production/Ajustement, ou Vente générée depuis invoices) --
+-- même principe que fuel_apply_delta pour fuel_entries/fuel_tank. Envoie aussi
+-- une notification ntfy au passage sous le seuil bas (pas à chaque écriture
+-- tant qu'on reste sous le seuil, pour éviter le spam).
+create or replace function stock_movements_apply()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_before numeric(12, 2);
+  v_after numeric(12, 2);
+  v_max numeric(12, 2);
+  v_threshold_pct numeric;
+  v_topic text;
+begin
+  select current_stock, max_capacity into v_before, v_max
+  from product_stock
+  where product_name = NEW.product_name
+  for update;
+
+  if v_before is null then
+    raise exception 'Produit inconnu dans product_stock : %', NEW.product_name;
+  end if;
+
+  v_after := v_before + NEW.quantity;
+
+  update product_stock
+  set current_stock = v_after, updated_at = now()
+  where product_name = NEW.product_name;
+
+  NEW.stock_after := v_after;
+
+  select value::numeric into v_threshold_pct from app_settings where key = 'stock_low_threshold_percent';
+  v_threshold_pct := coalesce(v_threshold_pct, 10);
+
+  if v_max is not null and v_max > 0
+     and v_after < v_max * (v_threshold_pct / 100)
+     and v_before >= v_max * (v_threshold_pct / 100)
+  then
+    select value into v_topic from app_settings where key = 'ntfy_topic';
+    if v_topic is not null then
+      perform net.http_post(
+        url := 'https://ntfy.sh',
+        body := jsonb_build_object(
+          'topic', v_topic,
+          'title', 'Stock bas',
+          'message', 'Stock ' || NEW.product_name || ' bas : ' || v_after || ' (seuil ' || v_threshold_pct || '% de ' || v_max || ')',
+          'tags', jsonb_build_array('warning'),
+          'priority', 4
+        )
+      );
+    end if;
+  end if;
+
+  return NEW;
+end;
+$$;
+
+drop trigger if exists stock_movements_before_insert on stock_movements;
+
+create trigger stock_movements_before_insert
+  before insert on stock_movements
+  for each row execute function stock_movements_apply();
+
+-- Génère les mouvements 'Vente' depuis invoices : à l'insertion, à la
+-- modification (seulement sur la variation de quantité vendue -- pas de
+-- mouvement si la facture est modifiée sans toucher qty_b8/qty_b12) et à la
+-- suppression (reversion complète), comme le trigger carburant.
+create or replace function sync_stock_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_b8 numeric(12, 2) := 0;
+  v_old_b12 numeric(12, 2) := 0;
+  v_new_b8 numeric(12, 2) := 0;
+  v_new_b12 numeric(12, 2) := 0;
+  v_ref text;
+  v_date date;
+  v_time time;
+begin
+  if TG_OP = 'UPDATE' or TG_OP = 'DELETE' then
+    v_old_b8 := OLD.qty_b8;
+    v_old_b12 := OLD.qty_b12;
+  end if;
+
+  if TG_OP = 'INSERT' or TG_OP = 'UPDATE' then
+    v_new_b8 := NEW.qty_b8;
+    v_new_b12 := NEW.qty_b12;
+    v_ref := NEW.invoice_number;
+    v_date := NEW.entry_date;
+    v_time := NEW.entry_time;
+  else
+    v_ref := OLD.invoice_number;
+    v_date := OLD.entry_date;
+    v_time := OLD.entry_time;
+  end if;
+
+  -- quantité en stock = ancienne quantité vendue - nouvelle quantité vendue
+  -- (positif si on vend moins qu'avant ou si la facture est supprimée/annulée,
+  -- négatif si on vend plus qu'avant ou lors d'une nouvelle facture).
+  if v_old_b8 <> v_new_b8 then
+    insert into stock_movements (entry_date, entry_time, product_name, movement_type, quantity, stock_after, reference)
+    values (v_date, v_time, 'B8', 'Vente', v_old_b8 - v_new_b8, 0, v_ref);
+  end if;
+
+  if v_old_b12 <> v_new_b12 then
+    insert into stock_movements (entry_date, entry_time, product_name, movement_type, quantity, stock_after, reference)
+    values (v_date, v_time, 'B12', 'Vente', v_old_b12 - v_new_b12, 0, v_ref);
+  end if;
+
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+drop trigger if exists invoices_sync_stock on invoices;
+
+create trigger invoices_sync_stock
+  after insert or update or delete on invoices
+  for each row execute function sync_stock_from_invoice();

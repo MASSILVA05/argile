@@ -117,8 +117,9 @@ export function notifyInvoiceEntry(entry) {
     `Désignation : ${designation}`,
   ]
   if (entry.bl_number) lines.push(`N° BL : ${entry.bl_number}`)
-  lines.push(`Quantités : B8 ${entry.qty_b8} / B12 ${entry.qty_b12} / H ${entry.qty_h}`)
-  lines.push(`Prix unitaire : ${entry.unit_price} DA`)
+  if (entry.qty_b8) lines.push(`B8 : ${entry.qty_b8} × ${entry.price_b8} DA`)
+  if (entry.qty_b12) lines.push(`B12 : ${entry.qty_b12} × ${entry.price_b12} DA`)
+  if (entry.qty_h) lines.push(`Autre (H) : ${entry.qty_h} × ${entry.price_h} DA`)
   lines.push(`Montant : ${entry.amount} DA`)
   if (entry.discount_amount) lines.push(`Remise : ${entry.discount_amount} DA`)
   lines.push(`Total : ${entry.total} DA`)

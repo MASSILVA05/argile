@@ -18,7 +18,9 @@ const emptyDraft = {
   qty_b8: '0',
   qty_b12: '0',
   qty_h: '0',
-  unit_price: '',
+  price_b8: '',
+  price_b12: '',
+  price_h: '',
   discount_amount: '0',
   settlement: '0',
   disbursement: '0',
@@ -117,11 +119,13 @@ export default function InvoiceForm() {
   const qtyB8 = Number(draft.qty_b8) || 0
   const qtyB12 = Number(draft.qty_b12) || 0
   const qtyH = Number(draft.qty_h) || 0
-  const unitPrice = Number(draft.unit_price) || 0
+  const priceB8 = Number(draft.price_b8) || 0
+  const priceB12 = Number(draft.price_b12) || 0
+  const priceH = Number(draft.price_h) || 0
   const discountAmount = Number(draft.discount_amount) || 0
   const settlement = Number(draft.settlement) || 0
 
-  const amount = (qtyB8 + qtyB12 + qtyH) * unitPrice
+  const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
   const total = amount - discountAmount
   const balance = total - settlement
 
@@ -132,10 +136,12 @@ export default function InvoiceForm() {
     if (draft.designation === 'Autre' && !draft.designation_other.trim()) {
       return 'La désignation libre est obligatoire.'
     }
-    if (draft.unit_price === '') return 'Le prix unitaire est obligatoire.'
     if (qtyB8 === 0 && qtyB12 === 0 && qtyH === 0) {
-      return 'Au moins une quantité (B8, B12 ou H) doit être renseignée.'
+      return 'Au moins une quantité (B8, B12 ou Autre) doit être renseignée.'
     }
+    if (qtyB8 > 0 && draft.price_b8 === '') return 'Le prix unitaire B8 est obligatoire.'
+    if (qtyB12 > 0 && draft.price_b12 === '') return 'Le prix unitaire B12 est obligatoire.'
+    if (qtyH > 0 && draft.price_h === '') return 'Le prix unitaire Autre (H) est obligatoire.'
     if (draft.payment_status === 'Chèque' && !draft.cheque_number.trim()) {
       return 'Le n° de chèque est obligatoire.'
     }
@@ -185,7 +191,9 @@ export default function InvoiceForm() {
       qty_b8: qtyB8,
       qty_b12: qtyB12,
       qty_h: qtyH,
-      unit_price: unitPrice,
+      price_b8: qtyB8 > 0 ? priceB8 : 0,
+      price_b12: qtyB12 > 0 ? priceB12 : 0,
+      price_h: qtyH > 0 ? priceH : 0,
       discount_amount: discountAmount,
       settlement: settlement,
       disbursement: Number(draft.disbursement) || 0,
@@ -342,7 +350,7 @@ export default function InvoiceForm() {
             className={inputClass}
           />
         </Field>
-        <Field label="H">
+        <Field label="Autre (H)">
           <input
             type="number"
             inputMode="decimal"
@@ -355,29 +363,62 @@ export default function InvoiceForm() {
         </Field>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Prix unitaire (DA)" required>
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            min="0"
-            value={draft.unit_price}
-            onChange={(e) => update('unit_price', e.target.value)}
-            className={inputClass}
-            required
-          />
-        </Field>
-        <Field label="Montant (DA)">
-          <input
-            type="text"
-            value={amount.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-            readOnly
-            disabled
-            className={`${inputClass} cursor-not-allowed opacity-60`}
-          />
-        </Field>
-      </div>
+      {(qtyB8 > 0 || qtyB12 > 0 || qtyH > 0) && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {qtyB8 > 0 && (
+            <Field label="Prix unitaire B8 (DA)" required>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={draft.price_b8}
+                onChange={(e) => update('price_b8', e.target.value)}
+                className={inputClass}
+                required
+              />
+            </Field>
+          )}
+          {qtyB12 > 0 && (
+            <Field label="Prix unitaire B12 (DA)" required>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={draft.price_b12}
+                onChange={(e) => update('price_b12', e.target.value)}
+                className={inputClass}
+                required
+              />
+            </Field>
+          )}
+          {qtyH > 0 && (
+            <Field label="Prix unitaire Autre (H) (DA)" required>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={draft.price_h}
+                onChange={(e) => update('price_h', e.target.value)}
+                className={inputClass}
+                required
+              />
+            </Field>
+          )}
+        </div>
+      )}
+
+      <Field label="Montant (DA)">
+        <input
+          type="text"
+          value={amount.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+          readOnly
+          disabled
+          className={`${inputClass} cursor-not-allowed opacity-60`}
+        />
+      </Field>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Remise (DA)">
