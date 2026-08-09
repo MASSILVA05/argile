@@ -5,7 +5,12 @@
       "Bash(./node_modules/.bin/oxlint src/components/SandForm.jsx src/components/SandRegistry.jsx src/lib/sandExcel.js src/lib/sandPayment.js src/lib/ntfy.js src/lib/email.js)",
       "Bash(./node_modules/.bin/oxlint src *)",
       "Bash(python3 -c \"import xlrd; print\\(xlrd.__version__\\)\")",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(SUPABASE_URL=\"https://invalid.supabase.co\" SUPABASE_SERVICE_ROLE_KEY=\"dummy\" node scripts/import-situation-2026.js)",
+      "Bash(pkill -f \"import-situation-2026\")",
+      "Bash(ps -o pid,ppid,etime,time,command -p 24919)",
+      "Bash(echo \"started pid $!\")",
+      "Bash(kill -0 30282)"
     ]
   }
 }
