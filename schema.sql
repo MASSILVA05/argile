@@ -2485,3 +2485,13 @@ end;
 $$;
 -- Le trigger invoices_sync_client_balance existant reste valide (create or
 -- replace ne modifie pas le trigger déjà rattaché à la fonction).
+
+-- ============================================================
+-- FACTURES : "Type de paiement (N/B)" (payment_type) devient un champ
+-- libre avec autocomplétion côté interface (au lieu d'un select limité à
+-- 'A TERME' / 'COMPTANT' / 'AVANCE') -- la contrainte CHECK qui limitait
+-- les valeurs possibles en base est donc supprimée. La colonne reste NOT
+-- NULL DEFAULT 'A TERME'.
+-- ============================================================
+
+alter table invoices drop constraint if exists invoices_payment_type_check;

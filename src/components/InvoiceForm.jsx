@@ -41,6 +41,7 @@ export default function InvoiceForm() {
   const [banks, setBanks] = useState([])
   const [drivers, setDrivers] = useState([])
   const [plates, setPlates] = useState([])
+  const [paymentTypes, setPaymentTypes] = useState(PAYMENT_TYPES)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -125,7 +126,7 @@ export default function InvoiceForm() {
       supabase.from('clients').select('name').order('name'),
       supabase
         .from('invoices')
-        .select('invoice_number, cheque_bank, driver_name, truck_plate')
+        .select('invoice_number, cheque_bank, driver_name, truck_plate, payment_type')
         .order('created_at', { ascending: false })
         .limit(500),
     ])
@@ -134,6 +135,7 @@ export default function InvoiceForm() {
     setBanks(dedupe(invoiceRows?.map((r) => r.cheque_bank)))
     setDrivers(dedupe(invoiceRows?.map((r) => r.driver_name)))
     setPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
+    setPaymentTypes(dedupe([...PAYMENT_TYPES, ...(invoiceRows?.map((r) => r.payment_type) ?? [])]))
 
     const maxNumber = (invoiceRows ?? []).reduce((max, r) => {
       const n = Number(r.invoice_number)
@@ -242,7 +244,7 @@ export default function InvoiceForm() {
       stamp_duty: stampDuty,
       driver_name: draft.driver_name.trim() || null,
       truck_plate: draft.truck_plate.trim() || null,
-      payment_type: draft.payment_type,
+      payment_type: draft.payment_type.trim() || 'A TERME',
       payment_status: draft.payment_status,
       cheque_number: isCheque ? draft.cheque_number.trim() : null,
       cheque_bank: isCheque ? draft.cheque_bank.trim() || null : null,
@@ -300,6 +302,7 @@ export default function InvoiceForm() {
       setDrivers((p) => dedupe([payload.driver_name, ...p]))
       setPlates((p) => dedupe([payload.truck_plate, ...p]))
       setBanks((p) => dedupe([payload.cheque_bank, ...p]))
+      setPaymentTypes((p) => dedupe([payload.payment_type, ...p]))
 
       setDraft((d) => ({
         ...emptyDraft,
@@ -643,13 +646,19 @@ export default function InvoiceForm() {
       </Field>
 
       <Field label="Type de paiement (N/B)">
-        <select value={draft.payment_type} onChange={(e) => update('payment_type', e.target.value)} className={inputClass}>
-          {PAYMENT_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
+        <input
+          type="text"
+          list="invoice-payment-types-list"
+          value={draft.payment_type}
+          onChange={(e) => update('payment_type', e.target.value)}
+          className={inputClass}
+          autoComplete="off"
+        />
+        <datalist id="invoice-payment-types-list">
+          {paymentTypes.map((t) => (
+            <option key={t} value={t} />
           ))}
-        </select>
+        </datalist>
       </Field>
 
       <Field label="Solde (DA)">

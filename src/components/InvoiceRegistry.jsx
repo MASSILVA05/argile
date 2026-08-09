@@ -78,6 +78,11 @@ export default function InvoiceRegistry() {
     [entries]
   )
 
+  const paymentTypes = useMemo(
+    () => [...new Set([...PAYMENT_TYPES, ...entries.map((e) => e.payment_type).filter(Boolean)])],
+    [entries]
+  )
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return entries.filter((e) => {
@@ -149,7 +154,7 @@ export default function InvoiceRegistry() {
       amount_override: editDraft.amount_override === '' || editDraft.amount_override == null ? null : Number(editDraft.amount_override),
       driver_name: editDraft.driver_name?.trim() || null,
       truck_plate: editDraft.truck_plate?.trim() || null,
-      payment_type: editDraft.payment_type,
+      payment_type: (editDraft.payment_type || '').trim() || 'A TERME',
       payment_status: editDraft.payment_status,
       cheque_number: isCheque ? (editDraft.cheque_number || '').trim() : null,
       cheque_bank: isCheque ? (editDraft.cheque_bank || '').trim() || null : null,
@@ -422,6 +427,7 @@ export default function InvoiceRegistry() {
                   <Th>Timbre</Th>
                   <Th>Total Net</Th>
                   <Th>Paiement</Th>
+                  <Th>Observations</Th>
                   <Th>Saisi par</Th>
                   <Th className="no-print">Actions</Th>
                 </tr>
@@ -436,6 +442,7 @@ export default function InvoiceRegistry() {
                       onSave={saveEdit}
                       onCancel={cancelEdit}
                       bankSuggestions={banks}
+                      paymentTypeSuggestions={paymentTypes}
                     />
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
@@ -469,6 +476,9 @@ export default function InvoiceRegistry() {
                       <Td>{formatDA(entry.total_net)}</Td>
                       <Td>
                         <PaidBadge status={entry.payment_status} />
+                      </Td>
+                      <Td className="max-w-[220px] truncate" title={entry.observations ?? ''}>
+                        {entry.observations ?? '—'}
                       </Td>
                       <Td>{entry.entered_by_user ?? '—'}</Td>
                       <Td className="no-print">
@@ -524,7 +534,7 @@ function PaidBadge({ status }) {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
+function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTypeSuggestions }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
@@ -616,13 +626,18 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
         <input type="text" value={draft.truck_plate ?? ''} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <select value={draft.payment_type} onChange={(e) => set('payment_type', e.target.value)} className={editInputClass}>
-          {PAYMENT_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
+        <input
+          type="text"
+          list="invoice-edit-payment-types-list"
+          value={draft.payment_type ?? ''}
+          onChange={(e) => set('payment_type', e.target.value)}
+          className={editInputClass}
+        />
+        <datalist id="invoice-edit-payment-types-list">
+          {paymentTypeSuggestions.map((t) => (
+            <option key={t} value={t} />
           ))}
-        </select>
+        </datalist>
       </Td>
       <Td>
         <span className={balance > 0 ? 'text-terracotta' : 'text-green-500'}>{formatDA(balance)}</span>
@@ -669,6 +684,14 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
             </>
           )}
         </div>
+      </Td>
+      <Td>
+        <input
+          type="text"
+          value={draft.observations ?? ''}
+          onChange={(e) => set('observations', e.target.value)}
+          className={`${editInputClass} min-w-40`}
+        />
       </Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td className="no-print">

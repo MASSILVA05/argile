@@ -28,6 +28,7 @@ const COLUMNS = [
   { header: 'Timbre (DA)', key: 'stamp_duty', width: 12 },
   { header: 'Total Net (DA)', key: 'total_net', width: 16 },
   { header: 'Paiement', key: 'payment_status', width: 14 },
+  { header: 'Observations', key: 'observations', width: 28 },
   { header: 'Saisi par', key: 'entered_by_user', width: 18 },
 ]
 
@@ -71,6 +72,7 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
       stamp_duty: entry.stamp_duty ?? 0,
       total_net: entry.total_net ?? 0,
       payment_status: entry.payment_status ?? 'Non payé',
+      observations: entry.observations ?? '',
       entered_by_user: entry.entered_by_user ?? '',
     })
     styleDataRow(row)
