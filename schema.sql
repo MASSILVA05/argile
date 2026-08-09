@@ -2220,3 +2220,63 @@ create trigger client_advances_normalize_name
 -- Les triggers BEFORE ci-dessus s'exécutent avant invoices_sync_client_balance,
 -- invoices_sync_stock et entries_decrement_client_advance (tous des triggers
 -- AFTER) : ces derniers voient donc toujours un client_name déjà normalisé.
+
+-- ============================================================
+-- sync_stock_from_invoice : copie désormais entered_by_user de la facture
+-- (NEW pour insert/update, OLD pour delete) vers le mouvement de stock
+-- généré, pour savoir qui est à l'origine de la vente dans le registre
+-- des mouvements de stock (jusqu'ici toujours vide sur les lignes 'Vente').
+-- ============================================================
+create or replace function sync_stock_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_b8 numeric(12, 2) := 0;
+  v_old_b12 numeric(12, 2) := 0;
+  v_new_b8 numeric(12, 2) := 0;
+  v_new_b12 numeric(12, 2) := 0;
+  v_ref text;
+  v_date date;
+  v_time time;
+  v_user text;
+begin
+  if TG_OP = 'UPDATE' or TG_OP = 'DELETE' then
+    v_old_b8 := OLD.qty_b8;
+    v_old_b12 := OLD.qty_b12;
+  end if;
+
+  if TG_OP = 'INSERT' or TG_OP = 'UPDATE' then
+    v_new_b8 := NEW.qty_b8;
+    v_new_b12 := NEW.qty_b12;
+    v_ref := NEW.invoice_number;
+    v_date := NEW.entry_date;
+    v_time := NEW.entry_time;
+    v_user := NEW.entered_by_user;
+  else
+    v_ref := OLD.invoice_number;
+    v_date := OLD.entry_date;
+    v_time := OLD.entry_time;
+    v_user := OLD.entered_by_user;
+  end if;
+
+  -- quantité en stock = ancienne quantité vendue - nouvelle quantité vendue
+  -- (positif si on vend moins qu'avant ou si la facture est supprimée/annulée,
+  -- négatif si on vend plus qu'avant ou lors d'une nouvelle facture).
+  if v_old_b8 <> v_new_b8 then
+    insert into stock_movements (entry_date, entry_time, product_name, movement_type, quantity, stock_after, reference, entered_by_user)
+    values (v_date, v_time, 'B8', 'Vente', v_old_b8 - v_new_b8, 0, v_ref, v_user);
+  end if;
+
+  if v_old_b12 <> v_new_b12 then
+    insert into stock_movements (entry_date, entry_time, product_name, movement_type, quantity, stock_after, reference, entered_by_user)
+    values (v_date, v_time, 'B12', 'Vente', v_old_b12 - v_new_b12, 0, v_ref, v_user);
+  end if;
+
+  return coalesce(NEW, OLD);
+end;
+$$;
+-- Le trigger invoices_sync_stock existant reste valide (create or replace
+-- ne modifie pas le trigger déjà rattaché à la fonction).
