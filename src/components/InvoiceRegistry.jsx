@@ -100,8 +100,12 @@ export default function InvoiceRegistry() {
         total: acc.total + Number(e.total || 0),
         settlement: acc.settlement + Number(e.settlement || 0),
         balance: acc.balance + Number(e.balance || 0),
+        totalTva: acc.totalTva + Number(e.total_tva || 0),
+        totalTtc: acc.totalTtc + Number(e.total_ttc || 0),
+        stampDuty: acc.stampDuty + Number(e.stamp_duty || 0),
+        totalNet: acc.totalNet + Number(e.total_net || 0),
       }),
-      { count: 0, amount: 0, discount: 0, total: 0, settlement: 0, balance: 0 }
+      { count: 0, amount: 0, discount: 0, total: 0, settlement: 0, balance: 0, totalTva: 0, totalTtc: 0, stampDuty: 0, totalNet: 0 }
     )
   }, [filtered])
 
@@ -141,6 +145,8 @@ export default function InvoiceRegistry() {
       discount_amount: Number(editDraft.discount_amount) || 0,
       settlement: Number(editDraft.settlement) || 0,
       disbursement: Number(editDraft.disbursement) || 0,
+      stamp_duty: Number(editDraft.stamp_duty) || 0,
+      amount_override: editDraft.amount_override === '' || editDraft.amount_override == null ? null : Number(editDraft.amount_override),
       driver_name: editDraft.driver_name?.trim() || null,
       truck_plate: editDraft.truck_plate?.trim() || null,
       payment_type: editDraft.payment_type,
@@ -168,9 +174,11 @@ export default function InvoiceRegistry() {
           p_price_b8: payload.price_b8,
           p_price_b12: payload.price_b12,
           p_price_h: payload.price_h,
+          p_amount_override: payload.amount_override,
           p_discount_amount: payload.discount_amount,
           p_settlement: payload.settlement,
           p_disbursement: payload.disbursement,
+          p_stamp_duty: payload.stamp_duty,
           p_driver_name: payload.driver_name,
           p_truck_plate: payload.truck_plate,
           p_payment_type: payload.payment_type,
@@ -367,6 +375,22 @@ export default function InvoiceRegistry() {
               <p className="text-xs text-ink-muted">Solde</p>
               <p className="font-display text-xl text-ocre">{formatDA(totals.balance)}</p>
             </div>
+            <div>
+              <p className="text-xs text-ink-muted">TVA</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.totalTva)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">TTC</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.totalTtc)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Timbre</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.stampDuty)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Total Net</p>
+              <p className="font-display text-xl text-ocre">{formatDA(totals.totalNet)}</p>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
@@ -393,6 +417,10 @@ export default function InvoiceRegistry() {
                   <Th>Immat</Th>
                   <Th>Type (N/B)</Th>
                   <Th>Solde</Th>
+                  <Th>TVA</Th>
+                  <Th>TTC</Th>
+                  <Th>Timbre</Th>
+                  <Th>Total Net</Th>
                   <Th>Paiement</Th>
                   <Th>Saisi par</Th>
                   <Th className="no-print">Actions</Th>
@@ -435,6 +463,10 @@ export default function InvoiceRegistry() {
                           {formatDA(entry.balance)}
                         </span>
                       </Td>
+                      <Td>{formatDA(entry.total_tva)}</Td>
+                      <Td>{formatDA(entry.total_ttc)}</Td>
+                      <Td>{formatDA(entry.stamp_duty)}</Td>
+                      <Td>{formatDA(entry.total_net)}</Td>
                       <Td>
                         <PaidBadge status={entry.payment_status} />
                       </Td>
@@ -505,9 +537,14 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
   const priceH = Number(draft.price_h) || 0
   const discountAmount = Number(draft.discount_amount) || 0
   const settlement = Number(draft.settlement) || 0
-  const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
+  const amountOverride = draft.amount_override === '' || draft.amount_override == null ? null : Number(draft.amount_override)
+  const amount = amountOverride ?? (qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH)
   const total = amount - discountAmount
   const balance = total - settlement
+  const stampDuty = Number(draft.stamp_duty) || 0
+  const totalTva = total * 0.19
+  const totalTtc = total * 1.19
+  const totalNet = totalTtc + stampDuty
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
@@ -589,6 +626,14 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       </Td>
       <Td>
         <span className={balance > 0 ? 'text-terracotta' : 'text-green-500'}>{formatDA(balance)}</span>
+      </Td>
+      <Td>{formatDA(totalTva)}</Td>
+      <Td>{formatDA(totalTtc)}</Td>
+      <Td>
+        <input type="number" step="0.01" value={draft.stamp_duty} onChange={(e) => set('stamp_duty', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        <span className="font-display text-ocre">{formatDA(totalNet)}</span>
       </Td>
       <Td>
         <div className="flex min-w-36 flex-col gap-1">

@@ -5,6 +5,7 @@ import AdvancesTab from './AdvancesTab'
 import StockTab from './StockTab'
 import StockMovementsTab from './StockMovementsTab'
 import ClientBalancesModal from './ClientBalancesModal'
+import ImportG50Tab from './ImportG50Tab'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
@@ -12,6 +13,7 @@ const TABS = [
   { id: 'advances', label: 'Avances' },
   { id: 'stock', label: 'Stock' },
   { id: 'movements', label: 'Mouvements' },
+  { id: 'import-g50', label: 'Import G50' },
 ]
 
 export default function InvoicesPage() {
@@ -52,6 +54,7 @@ export default function InvoicesPage() {
       {view === 'advances' && <AdvancesTab />}
       {view === 'stock' && <StockTab />}
       {view === 'movements' && <StockMovementsTab />}
+      {view === 'import-g50' && <ImportG50Tab />}
 
       <ClientBalancesModal open={balancesOpen} onClose={() => setBalancesOpen(false)} />
     </div>

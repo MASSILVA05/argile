@@ -2280,3 +2280,208 @@ end;
 $$;
 -- Le trigger invoices_sync_stock existant reste valide (create or replace
 -- ne modifie pas le trigger déjà rattaché à la fonction).
+
+-- ============================================================
+-- FACTURES : colonnes fiscales (TVA/TTC/Timbre/Total net), nécessaires à
+-- la déclaration G50 et à l'onglet d'import G50 (import du relevé mensuel
+-- des factures + rapprochement des règlements BANQUE/ESPECE).
+--
+-- `amount_override` : les factures importées depuis G50 n'ont pas de
+-- détail par produit (juste un Total HT global), donc qty_b8/qty_b12/qty_h
+-- restent à 0 pour ne pas fausser le stock physique (trigger
+-- sync_stock_from_invoice, qui ne réagit qu'aux variations de qty_b8/qty_b12).
+-- `amount_override`, quand renseigné, remplace le calcul qty*price pour
+-- `amount`/`total`/`balance`/`total_tva`/`total_ttc`/`total_net` -- NULL
+-- pour la saisie normale (produit détaillé), qui garde le calcul qty*price
+-- inchangé.
+-- ============================================================
+
+alter table invoices add column if not exists amount_override numeric(12, 2);
+comment on column invoices.amount_override is 'Montant HT explicite (ex: import G50, sans détail produit) ; remplace qty*price pour amount/total/balance/total_tva/total_ttc/total_net quand renseigné. NULL pour la saisie normale.';
+
+-- 1) Colonnes générées à supprimer avant de toucher à leur formule, dans
+--    l'ordre inverse de dépendance (une colonne générée ne peut pas
+--    référencer une autre colonne générée en Postgres -- la formule
+--    complète qty*price est donc dupliquée dans chacune, comme déjà fait
+--    plus haut pour amount/total/balance).
+alter table invoices drop column if exists balance;
+alter table invoices drop column if exists total;
+alter table invoices drop column if exists amount;
+
+alter table invoices add column if not exists amount numeric(12, 2)
+  generated always as (
+    coalesce(amount_override, qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h)
+  ) stored;
+
+alter table invoices add column if not exists total numeric(12, 2)
+  generated always as (
+    coalesce(amount_override, qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h) - discount_amount
+  ) stored;
+
+alter table invoices add column if not exists balance numeric(12, 2)
+  generated always as (
+    coalesce(amount_override, qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h) - discount_amount - settlement
+  ) stored;
+
+comment on column invoices.balance is 'Total - Règlement ; positif = client débiteur sur cette facture';
+
+-- 2) Timbre (saisissable, 0 par défaut) puis TVA/TTC/Total net (calculés).
+alter table invoices add column if not exists stamp_duty numeric(10, 2) not null default 0;
+
+alter table invoices add column if not exists total_tva numeric(12, 2)
+  generated always as (
+    (coalesce(amount_override, qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h) - discount_amount) * 0.19
+  ) stored;
+
+alter table invoices add column if not exists total_ttc numeric(12, 2)
+  generated always as (
+    (coalesce(amount_override, qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h) - discount_amount) * 1.19
+  ) stored;
+
+alter table invoices add column if not exists total_net numeric(12, 2)
+  generated always as (
+    (coalesce(amount_override, qty_b8 * price_b8 + qty_b12 * price_b12 + qty_h * price_h) - discount_amount) * 1.19
+    + stamp_duty
+  ) stored;
+
+comment on column invoices.total_tva is 'TVA = (Total HT - Remise) * 0.19, calculée automatiquement (Total HT = amount_override si renseigné, sinon qty*price)';
+comment on column invoices.total_ttc is 'TTC = (Total HT - Remise) * 1.19, calculé automatiquement';
+comment on column invoices.total_net is 'Net à payer = TTC + Timbre, calculé automatiquement';
+
+-- 3) admin_update_invoice : nouvelle signature (+ p_stamp_duty, +
+--    p_amount_override). L'ancienne fonction est supprimée explicitement
+--    car la liste de paramètres change.
+drop function if exists admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text);
+
+create or replace function admin_update_invoice(
+  p_id uuid,
+  p_admin_code text,
+  p_invoice_number text,
+  p_entry_date date,
+  p_client_name text,
+  p_designation text,
+  p_designation_other text,
+  p_bl_number text,
+  p_qty_b8 numeric,
+  p_qty_b12 numeric,
+  p_qty_h numeric,
+  p_price_b8 numeric,
+  p_price_b12 numeric,
+  p_price_h numeric,
+  p_amount_override numeric,
+  p_discount_amount numeric,
+  p_settlement numeric,
+  p_disbursement numeric,
+  p_stamp_duty numeric,
+  p_driver_name text,
+  p_truck_plate text,
+  p_payment_type text,
+  p_payment_status text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_ref_commande text,
+  p_ref_livraison text,
+  p_observations text
+)
+returns invoices
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result invoices;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update invoices set
+    invoice_number = p_invoice_number,
+    entry_date = p_entry_date,
+    client_name = p_client_name,
+    designation = p_designation,
+    designation_other = p_designation_other,
+    bl_number = p_bl_number,
+    qty_b8 = p_qty_b8,
+    qty_b12 = p_qty_b12,
+    qty_h = p_qty_h,
+    price_b8 = p_price_b8,
+    price_b12 = p_price_b12,
+    price_h = p_price_h,
+    amount_override = p_amount_override,
+    discount_amount = p_discount_amount,
+    settlement = p_settlement,
+    disbursement = p_disbursement,
+    stamp_duty = p_stamp_duty,
+    driver_name = p_driver_name,
+    truck_plate = p_truck_plate,
+    payment_type = p_payment_type,
+    payment_status = p_payment_status,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    ref_commande = p_ref_commande,
+    ref_livraison = p_ref_livraison,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Facture introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text) from public;
+grant execute on function admin_update_invoice(uuid, text, text, date, text, text, text, text, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text, text, text, text, text) to anon, authenticated;
+
+-- 4) sync_client_balance_from_invoice : utilise désormais `total_net`
+--    (TTC + Timbre) au lieu de `total` (HT - Remise, sans taxe) -- les
+--    règlements réels (BANQUE/ESPECE du G50) correspondent exactement au
+--    total_net de la facture, pas au total hors-taxe. Ce changement ne
+--    s'applique qu'aux écritures FUTURES (insert/update/delete sur
+--    invoices) : les soldes déjà accumulés avant cette migration ne sont
+--    pas recalculés rétroactivement.
+create or replace function sync_client_balance_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_client_id uuid;
+  v_new_client_id uuid;
+begin
+  if TG_OP = 'UPDATE' or TG_OP = 'DELETE' then
+    select id into v_old_client_id from clients where lower(name) = lower(OLD.client_name) limit 1;
+    if v_old_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced - OLD.total_net,
+        total_paid = total_paid - case when OLD.payment_status is distinct from 'Non payé' then OLD.total_net else 0 end,
+        updated_at = now()
+      where id = v_old_client_id;
+    end if;
+  end if;
+
+  if TG_OP = 'INSERT' or TG_OP = 'UPDATE' then
+    select id into v_new_client_id from clients where lower(name) = lower(NEW.client_name) limit 1;
+    if v_new_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced + NEW.total_net,
+        total_paid = total_paid + case when NEW.payment_status is distinct from 'Non payé' then NEW.total_net else 0 end,
+        updated_at = now()
+      where id = v_new_client_id;
+    end if;
+  end if;
+
+  update clients set balance = total_invoiced - total_paid
+  where id = v_old_client_id or id = v_new_client_id;
+
+  return coalesce(NEW, OLD);
+end;
+$$;
+-- Le trigger invoices_sync_client_balance existant reste valide (create or
+-- replace ne modifie pas le trigger déjà rattaché à la fonction).

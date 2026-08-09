@@ -24,6 +24,7 @@ const emptyDraft = {
   discount_amount: '0',
   settlement: '0',
   disbursement: '0',
+  stamp_duty: '0',
   driver_name: '',
   truck_plate: '',
   payment_type: 'A TERME',
@@ -161,8 +162,12 @@ export default function InvoiceForm() {
   const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
   const total = amount - discountAmount
   const balance = total - settlement
+  const stampDuty = Number(draft.stamp_duty) || 0
+  const totalTva = total * 0.19
+  const totalTtc = total * 1.19
+  const totalNet = totalTtc + stampDuty
   const previousBalance = Number(draft.previous_balance) || 0
-  const newClientBalance = previousBalance + total - settlement
+  const newClientBalance = previousBalance + totalNet - settlement
 
   function validate() {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
@@ -234,6 +239,7 @@ export default function InvoiceForm() {
       discount_amount: discountAmount,
       settlement: settlement,
       disbursement: Number(draft.disbursement) || 0,
+      stamp_duty: stampDuty,
       driver_name: draft.driver_name.trim() || null,
       truck_plate: draft.truck_plate.trim() || null,
       payment_type: draft.payment_type,
@@ -528,6 +534,50 @@ export default function InvoiceForm() {
             readOnly
             disabled
             className={`${inputClass} cursor-not-allowed opacity-60 font-display text-ocre`}
+          />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="TVA (DA)">
+          <input
+            type="text"
+            value={totalTva.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+            readOnly
+            disabled
+            className={`${inputClass} cursor-not-allowed opacity-60`}
+          />
+        </Field>
+        <Field label="TTC (DA)">
+          <input
+            type="text"
+            value={totalTtc.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+            readOnly
+            disabled
+            className={`${inputClass} cursor-not-allowed opacity-60`}
+          />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Timbre (DA)">
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={draft.stamp_duty}
+            onChange={(e) => update('stamp_duty', e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Total Net (DA)">
+          <input
+            type="text"
+            value={totalNet.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+            readOnly
+            disabled
+            className={`${inputClass} cursor-not-allowed font-display text-ocre`}
           />
         </Field>
       </div>
