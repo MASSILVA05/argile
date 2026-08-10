@@ -20,7 +20,7 @@ export default function ClientBalancesModal({ open, onClose }) {
     setQuery('')
     supabase
       .from('clients')
-      .select('id, name, total_invoiced, total_paid, balance, source')
+      .select('id, name, client_code, total_invoiced, total_paid, balance, source')
       .order('balance', { ascending: false })
       .then(({ data, error: fetchError }) => {
         if (!active) return
@@ -40,7 +40,9 @@ export default function ClientBalancesModal({ open, onClose }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return clients
-    return clients.filter((c) => c.name.toLowerCase().includes(q))
+    return clients.filter(
+      (c) => c.name.toLowerCase().includes(q) || (c.client_code ?? '').toLowerCase().includes(q)
+    )
   }, [clients, query])
 
   async function handleExport() {
@@ -99,6 +101,7 @@ export default function ClientBalancesModal({ open, onClose }) {
               <thead className="sticky top-0 bg-bg-soft">
                 <tr className="border-b border-border text-left text-ink-muted">
                   <th className="px-1 py-1 font-display font-medium sm:px-3 sm:py-2">Client</th>
+                  <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Code</th>
                   <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Total facturé</th>
                   <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Total réglé</th>
                   <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">Solde dû</th>
@@ -108,6 +111,7 @@ export default function ClientBalancesModal({ open, onClose }) {
                 {filtered.map((c) => (
                   <tr key={c.id} className="border-b border-border last:border-0">
                     <td className="px-1 py-1 sm:px-3 sm:py-2">{c.name}</td>
+                    <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">{c.client_code ?? '—'}</td>
                     <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">{formatDA(c.total_invoiced)}</td>
                     <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">{formatDA(c.total_paid)}</td>
                     <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">

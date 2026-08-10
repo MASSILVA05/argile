@@ -38,6 +38,7 @@ const emptyDraft = {
 export default function InvoiceForm() {
   const [draft, setDraft] = useState(emptyDraft)
   const [clients, setClients] = useState([])
+  const [clientCodes, setClientCodes] = useState([])
   const [banks, setBanks] = useState([])
   const [drivers, setDrivers] = useState([])
   const [plates, setPlates] = useState([])
@@ -71,17 +72,29 @@ export default function InvoiceForm() {
     }
     let cancelled = false
     const id = setTimeout(async () => {
-      const [{ data: client }, { data: advances }, { data: invoiceRows }] = await Promise.all([
+      const [{ data: clientByName }, { data: clientByCode }, { data: advances }, { data: invoiceRows }] = await Promise.all([
         supabase
           .from('clients')
-          .select('name, total_invoiced, total_paid, balance')
+          .select('name, client_code, total_invoiced, total_paid, balance')
           .ilike('name', name)
+          .maybeSingle(),
+        supabase
+          .from('clients')
+          .select('name, client_code, total_invoiced, total_paid, balance')
+          .ilike('client_code', name)
           .maybeSingle(),
         supabase.from('client_advances').select('bons_remaining').ilike('client_name', name).gt('bons_remaining', 0),
         supabase.from('invoices').select('truck_plate').ilike('client_name', name).not('truck_plate', 'is', null),
       ])
       if (cancelled) return
+      const client = clientByName ?? clientByCode
       setClientInfo(client ? { found: true, ...client } : { found: false })
+      // Trouvé par code (pas par nom exact) : corrige le champ avec le vrai
+      // nom du client, pour que la suite (solde, matricules, enregistrement)
+      // utilise systématiquement le nom, jamais le code.
+      if (!clientByName && clientByCode) {
+        update('client_name', clientByCode.name)
+      }
       const bonsRemaining = (advances ?? []).reduce((sum, a) => sum + (a.bons_remaining || 0), 0)
       setAdvanceInfo(bonsRemaining > 0 ? { bonsRemaining } : null)
       setClientPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
@@ -123,7 +136,7 @@ export default function InvoiceForm() {
 
   async function loadSuggestions() {
     const [{ data: clientRows }, { data: invoiceRows }] = await Promise.all([
-      supabase.from('clients').select('name').order('name'),
+      supabase.from('clients').select('name, client_code').order('name'),
       supabase
         .from('invoices')
         .select('invoice_number, cheque_bank, driver_name, truck_plate, payment_type')
@@ -132,6 +145,7 @@ export default function InvoiceForm() {
     ])
 
     setClients(dedupe(clientRows?.map((r) => r.name)))
+    setClientCodes(dedupe(clientRows?.map((r) => r.client_code)))
     setBanks(dedupe(invoiceRows?.map((r) => r.cheque_bank)))
     setDrivers(dedupe(invoiceRows?.map((r) => r.driver_name)))
     setPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
@@ -356,6 +370,9 @@ export default function InvoiceForm() {
         />
         <datalist id="invoice-clients-list">
           {clients.map((c) => (
+            <option key={c} value={c} />
+          ))}
+          {clientCodes.map((c) => (
             <option key={c} value={c} />
           ))}
         </datalist>
@@ -772,6 +789,7 @@ function ClientInfoPanel({ info }) {
     <div className="rounded-lg border border-border bg-bg-soft px-3 py-2 text-sm">
       <p className={`font-display ${balancePositive ? 'text-terracotta' : 'text-green-500'}`}>
         Dernier solde : {formatDA(info.balance)} DA
+        {info.client_code && <span className="ml-2 font-mono text-xs text-ink-muted">Code : {info.client_code}</span>}
       </p>
       <p className="text-xs text-ink-muted">
         Total facturé : {formatDA(info.total_invoiced)} DA | Total réglé : {formatDA(info.total_paid)} DA

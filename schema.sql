@@ -2495,3 +2495,221 @@ $$;
 -- ============================================================
 
 alter table invoices drop constraint if exists invoices_payment_type_check;
+
+-- ============================================================
+-- CLIENTS : coordonnées + code client, importés depuis "fiche client.xls"
+-- (onglet "A", 735 clients) via scripts/import-fiche-clients.js.
+-- `client_code` est le code historique du client (ex: "470001"), unique,
+-- utilisé pour la recherche client dans l'app en plus du nom.
+-- ============================================================
+
+alter table clients add column if not exists client_code text unique;
+alter table clients add column if not exists phone text;
+alter table clients add column if not exists fax text;
+alter table clients add column if not exists mobile text;
+alter table clients add column if not exists email text;
+alter table clients add column if not exists city text;
+
+comment on column clients.client_code is 'Code client historique (ex: "470001"), unique, importé depuis fiche client.xls';
+
+-- ============================================================
+-- RÉCUPÉRATION TVA : registre des factures fournisseurs/achats servant à la
+-- récupération de TVA (déclaration G50), onglet "TVA" (Saisie / Registre /
+-- Import). Reprend le format du fichier "TABLEAU DE RECUPERATION TVA
+-- 2026.xlsx" (N° FACT, DATE, FOURNISSEUR, ADRESSE, NIF, NIS, ARTICLE, RC,
+-- TEL, TOTAL HT, REMISE, HT NET, TVA, DD, TOTAL TTC, TIMBRE, TOTAL NET,
+-- MODE DE PAIEMENT, PIECE DE REGLEMENT, PHOTO).
+--
+-- `tva_amount` n'est PAS une colonne générée : elle est pré-calculée côté
+-- client (HT Net * 0.19) mais reste saisissable/modifiable (cas des
+-- quittances douane, où la TVA ne suit pas ce taux). `total_ttc` et
+-- `total_net` référencent directement total_ht/discount_amount/tva_amount/
+-- stamp_duty (jamais une autre colonne générée), ce qui reste valide en
+-- Postgres (seule la référence à une AUTRE colonne générée est interdite) :
+-- elles se recalculent donc correctement dès que tva_amount est modifié à
+-- la main. `dd_amount` (droits de douane) est purement informatif, exclu
+-- du calcul du TTC.
+-- ============================================================
+
+create table if not exists tva_entries (
+  id uuid primary key default gen_random_uuid(),
+  invoice_number text not null unique,
+  piece_number text,
+  entry_date date not null default current_date,
+  entry_time time,
+  recovery_month integer not null check (recovery_month between 1 and 12),
+  recovery_year integer not null,
+  supplier_name text not null,
+  supplier_address text,
+  nif text,
+  nis text,
+  article text,
+  rc_number text,
+  phone text,
+  total_ht numeric(12, 2) not null,
+  discount_amount numeric(10, 2) not null default 0,
+  ht_net numeric(12, 2) generated always as (total_ht - discount_amount) stored,
+  tva_amount numeric(12, 2) not null default 0,
+  dd_amount numeric(10, 2) not null default 0,
+  total_ttc numeric(12, 2) generated always as (total_ht - discount_amount + tva_amount) stored,
+  stamp_duty numeric(10, 2) not null default 0,
+  total_net numeric(12, 2) generated always as (total_ht - discount_amount + tva_amount + stamp_duty) stored,
+  payment_mode text not null default 'Non payé'
+    check (payment_mode in ('Espèces', 'Chèque', 'Versement', 'Virement', 'Non payé')),
+  cheque_number text,
+  cheque_bank text,
+  payment_piece text,
+  photo_url text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table tva_entries is 'Registre des factures fournisseurs pour la récupération de TVA (déclaration G50)';
+comment on column tva_entries.dd_amount is 'Droits de douane, informatif, exclu du calcul du TTC';
+comment on column tva_entries.tva_amount is 'Pré-calculé côté client (HT Net * 0.19), mais librement modifiable (ex: quittances douane)';
+comment on column tva_entries.recovery_month is 'Mois de récupération TVA (déclaration G50), 1-12';
+
+create index if not exists tva_entries_created_at_idx on tva_entries (created_at desc);
+create index if not exists tva_entries_supplier_name_idx on tva_entries (supplier_name);
+create index if not exists tva_entries_invoice_number_idx on tva_entries (invoice_number);
+create index if not exists tva_entries_entry_date_idx on tva_entries (entry_date desc);
+create index if not exists tva_entries_recovery_period_idx on tva_entries (recovery_year, recovery_month);
+
+alter table tva_entries enable row level security;
+
+create policy "Lecture publique TVA"
+  on tva_entries for select
+  using (true);
+
+create policy "Ajout TVA"
+  on tva_entries for insert
+  with check (true);
+
+create policy "Modification TVA"
+  on tva_entries for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression TVA"
+  on tva_entries for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table tva_entries;
+
+-- Storage : bucket public pour les photos de factures TVA
+insert into storage.buckets (id, name, public)
+values ('tva-photos', 'tva-photos', true)
+on conflict (id) do nothing;
+
+create policy "Lecture publique photos TVA"
+  on storage.objects for select
+  using (bucket_id = 'tva-photos');
+
+create policy "Ajout photos TVA"
+  on storage.objects for insert
+  with check (bucket_id = 'tva-photos');
+
+create policy "Suppression photos TVA"
+  on storage.objects for delete
+  using (bucket_id = 'tva-photos');
+
+-- Code admin (même principe que admin_update_invoice/admin_delete_invoice
+-- plus haut) : permet de modifier/supprimer une entrée TVA après le
+-- verrou de 72h.
+create or replace function admin_update_tva(
+  p_id uuid,
+  p_admin_code text,
+  p_invoice_number text,
+  p_piece_number text,
+  p_entry_date date,
+  p_recovery_month integer,
+  p_recovery_year integer,
+  p_supplier_name text,
+  p_supplier_address text,
+  p_nif text,
+  p_nis text,
+  p_article text,
+  p_rc_number text,
+  p_phone text,
+  p_total_ht numeric,
+  p_discount_amount numeric,
+  p_tva_amount numeric,
+  p_dd_amount numeric,
+  p_stamp_duty numeric,
+  p_payment_mode text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_payment_piece text,
+  p_observations text
+)
+returns tva_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result tva_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update tva_entries set
+    invoice_number = p_invoice_number,
+    piece_number = p_piece_number,
+    entry_date = p_entry_date,
+    recovery_month = p_recovery_month,
+    recovery_year = p_recovery_year,
+    supplier_name = p_supplier_name,
+    supplier_address = p_supplier_address,
+    nif = p_nif,
+    nis = p_nis,
+    article = p_article,
+    rc_number = p_rc_number,
+    phone = p_phone,
+    total_ht = p_total_ht,
+    discount_amount = p_discount_amount,
+    tva_amount = p_tva_amount,
+    dd_amount = p_dd_amount,
+    stamp_duty = p_stamp_duty,
+    payment_mode = p_payment_mode,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    payment_piece = p_payment_piece,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Entrée TVA introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_tva(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from tva_entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_tva(uuid, text, text, text, date, integer, integer, text, text, text, text, text, text, text, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text) from public;
+revoke all on function admin_delete_tva(uuid, text) from public;
+grant execute on function admin_update_tva(uuid, text, text, text, date, integer, integer, text, text, text, text, text, text, text, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text) to anon, authenticated;
+grant execute on function admin_delete_tva(uuid, text) to anon, authenticated;

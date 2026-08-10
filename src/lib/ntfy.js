@@ -135,6 +135,28 @@ export function notifyInvoiceEntry(entry) {
   return sendNtfy('Nouvelle facture', lines, 'receipt')
 }
 
+export function notifyTvaEntry(entry) {
+  const lines = [
+    `Facture n° ${entry.invoice_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Mois de récupération : ${entry.recovery_month}/${entry.recovery_year}`,
+    `Fournisseur : ${entry.supplier_name}`,
+  ]
+  if (entry.piece_number) lines.push(`N° Pièce : ${entry.piece_number}`)
+  lines.push(`Total HT : ${entry.total_ht} DA`)
+  if (entry.discount_amount) lines.push(`Remise : ${entry.discount_amount} DA`)
+  lines.push(`HT Net : ${entry.ht_net} DA`)
+  lines.push(`TVA : ${entry.tva_amount} DA`)
+  if (entry.dd_amount) lines.push(`DD : ${entry.dd_amount} DA`)
+  lines.push(`TTC : ${entry.total_ttc} DA`)
+  if (entry.stamp_duty) lines.push(`Timbre : ${entry.stamp_duty} DA`)
+  lines.push(`Total Net : ${entry.total_net} DA`)
+  lines.push(`Paiement : ${entry.payment_mode ?? 'Non payé'}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy('Nouvelle facture TVA', lines, 'receipt')
+}
+
 export function notifyClientAdvance(advance) {
   const lines = [
     `Client : ${advance.client_name}`,

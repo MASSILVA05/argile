@@ -37,6 +37,16 @@ export default function InvoiceRegistry() {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  const [clientCodeByName, setClientCodeByName] = useState(new Map())
+
+  useEffect(() => {
+    supabase
+      .from('clients')
+      .select('name, client_code')
+      .then(({ data }) => {
+        setClientCodeByName(new Map((data ?? []).map((c) => [c.name, c.client_code])))
+      })
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -405,6 +415,7 @@ export default function InvoiceRegistry() {
                   <Th sticky>N° Facture</Th>
                   <Th>Date</Th>
                   <Th>Client</Th>
+                  <Th>Code</Th>
                   <Th>Désignation</Th>
                   <Th>N° BL</Th>
                   <Th>B8 (T)</Th>
@@ -443,12 +454,14 @@ export default function InvoiceRegistry() {
                       onCancel={cancelEdit}
                       bankSuggestions={banks}
                       paymentTypeSuggestions={paymentTypes}
+                      clientCode={clientCodeByName.get(entry.client_name)}
                     />
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.invoice_number}</Td>
                       <Td>{entry.entry_date}</Td>
                       <Td>{entry.client_name}</Td>
+                      <Td>{clientCodeByName.get(entry.client_name) ?? '—'}</Td>
                       <Td>{designationLabel(entry)}</Td>
                       <Td>{entry.bl_number ?? '—'}</Td>
                       <Td>{entry.qty_b8}</Td>
@@ -534,7 +547,7 @@ function PaidBadge({ status }) {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTypeSuggestions }) {
+function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTypeSuggestions, clientCode }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
@@ -567,6 +580,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       <Td>
         <input type="text" value={draft.client_name} onChange={(e) => set('client_name', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{clientCode ?? '—'}</Td>
       <Td>
         <div className="flex min-w-32 flex-col gap-1">
           <select value={draft.designation} onChange={(e) => set('designation', e.target.value)} className={editInputClass}>

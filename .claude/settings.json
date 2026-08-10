@@ -10,7 +10,13 @@
       "Bash(pkill -f \"import-situation-2026\")",
       "Bash(ps -o pid,ppid,etime,time,command -p 24919)",
       "Bash(echo \"started pid $!\")",
-      "Bash(kill -0 30282)"
+      "Bash(kill -0 30282)",
+      "Bash(kill 36234)",
+      "Bash(python3 -c \"import openpyxl; print\\('ok'\\)\")",
+      "Bash(psql --version)",
+      "Bash(awk '/<thead>/,/<\\\\/thead>/' src/components/InvoiceRegistry.jsx)",
+      "Bash(awk '/\\\\\\) : \\\\\\(/,/RowActions/' src/components/InvoiceRegistry.jsx)",
+      "Bash(awk '/^function EditRow/,/^}/' src/components/InvoiceRegistry.jsx)"
     ]
   }
 }

@@ -26,3 +26,7 @@ export function uploadMaintenancePhoto(file, ficheNumber, kind) {
 export function uploadSandPhoto(file, bonNumber) {
   return uploadPhoto(file, 'sable-photos', String(bonNumber))
 }
+
+export function uploadTvaPhoto(file, invoiceNumber) {
+  return uploadPhoto(file, 'tva-photos', String(invoiceNumber))
+}
