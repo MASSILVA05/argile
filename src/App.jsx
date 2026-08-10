@@ -5,6 +5,7 @@ import MaintenancePage from './components/MaintenancePage'
 import FuelPage from './components/FuelPage'
 import SandPage from './components/SandPage'
 import InvoicesPage from './components/InvoicesPage'
+import TVAPage from './components/TVAPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
@@ -18,6 +19,7 @@ const TITLES = {
   fuel: 'Carburant',
   sand: 'Sable',
   invoices: 'Factures',
+  tva: 'Récupération TVA',
 }
 
 const SESSION_CHECK_MS = 60_000
@@ -109,6 +111,7 @@ function App() {
         {tab === 'fuel' && <FuelPage />}
         {tab === 'sand' && <SandPage />}
         {tab === 'invoices' && <InvoicesPage />}
+        {tab === 'tva' && <TVAPage />}
       </main>
 
       <BottomNav active={tab} onChange={setTab} allowedTabs={allowedTabs} />

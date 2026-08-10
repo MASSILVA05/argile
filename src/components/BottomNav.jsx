@@ -72,6 +72,16 @@ function InvoiceIcon(props) {
   )
 }
 
+function PercentIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <circle cx="7" cy="7" r="2.5" />
+      <circle cx="17" cy="17" r="2.5" />
+      <path d="M18 6L6 18" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
@@ -79,6 +89,7 @@ const TABS = [
   { id: 'fuel', label: 'Carburant', Icon: FuelIcon },
   { id: 'sand', label: 'Sable', Icon: SandIcon },
   { id: 'invoices', label: 'Factures', Icon: InvoiceIcon },
+  { id: 'tva', label: 'TVA', Icon: PercentIcon },
 ]
 
 export default function BottomNav({ active, onChange, allowedTabs }) {

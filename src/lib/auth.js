@@ -103,8 +103,8 @@ export function clearSession() {
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices'],
-  editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices'],
+  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva'],
+  editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva'],
   viewer: ['form', 'maintenance'],
   maintenance_only: ['maintenance'],
 }
