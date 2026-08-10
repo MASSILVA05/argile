@@ -21,7 +21,9 @@
       "Bash(NODE_PATH=/Users/massilva/Desktop/Argile/node_modules node /private/tmp/claude-501/-Users-massilva-Desktop-Argile/fbfe6954-7909-4746-9128-2a9f5813dc5b/scratchpad/test-tva-import.mjs)",
       "Bash(git check-ignore *)",
       "Bash(git -C /Users/massilva/Desktop/Argile log --oneline -3)",
-      "Bash(git -C /Users/massilva/Desktop/Argile diff HEAD -- schema.sql)"
+      "Bash(git -C /Users/massilva/Desktop/Argile diff HEAD -- schema.sql)",
+      "Bash(sed -n '/^-- RÉCUPÉRATION TVA : registre des factures/,/^update tva_entries set entry_date = entry_date;/p' /Users/massilva/Desktop/Argile/schema.sql)",
+      "Bash(python3 -)"
     ]
   }
 }

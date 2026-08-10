@@ -8,6 +8,10 @@ function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
 }
 
+function formatDANullable(value) {
+  return value == null ? '—' : formatDA(value)
+}
+
 export default function TVAImportTab() {
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState([])
@@ -115,8 +119,8 @@ export default function TVAImportTab() {
         {fileName && <p className="text-sm text-ink-muted">Fichier : {fileName}</p>}
         <p className="text-xs text-ink-muted">
           Colonnes détectées automatiquement par en-tête (N° FACT, DATE, NOM DE FOURNISSEUR, ADRESSE, TOTAL HT, TVA…).
-          N° Pièce et Mois de récupération, absents du fichier, restent à compléter dans le registre (le mois de
-          récupération est pré-rempli avec le mois de la date de facture).
+          N° Pièce et Mois de récupération, absents du fichier, restent vides — à compléter plus tard dans le
+          registre. Total HT reste vide pour les lignes sans montant HT (quittances douane).
         </p>
       </div>
 
@@ -172,7 +176,7 @@ export default function TVAImportTab() {
                     <Td>{recoveryLabel(row.recovery_month, row.recovery_year)}</Td>
                     <Td>{row.supplier_name}</Td>
                     <Td>{row.supplier_address ?? '—'}</Td>
-                    <Td>{formatDA(row.total_ht)}</Td>
+                    <Td>{formatDANullable(row.total_ht)}</Td>
                     <Td>{formatDA(row.discount_amount)}</Td>
                     <Td>{formatDA(row.tva_amount)}</Td>
                     <Td>{formatDA(row.dd_amount)}</Td>

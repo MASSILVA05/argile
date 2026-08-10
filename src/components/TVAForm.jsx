@@ -11,16 +11,15 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
 const round2 = (n) => Math.round(n * 100) / 100
 
-const now = new Date()
-const CURRENT_YEAR = now.getFullYear()
+const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1]
 
 const emptyDraft = {
   invoice_number: '',
   piece_number: '',
   entry_date: todayISO(),
-  recovery_month: String(now.getMonth() + 1),
-  recovery_year: String(CURRENT_YEAR),
+  recovery_month: '',
+  recovery_year: '',
   supplier_name: '',
   supplier_address: '',
   nif: '',
@@ -127,7 +126,6 @@ export default function TVAForm() {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
     if (!draft.entry_date) return 'La date est obligatoire.'
     if (!draft.supplier_name.trim()) return 'Le nom du fournisseur est obligatoire.'
-    if (draft.total_ht === '') return 'Le total HT est obligatoire.'
     if (draft.payment_mode === 'Chèque' && !draft.cheque_number.trim()) {
       return 'Le n° de chèque est obligatoire.'
     }
@@ -178,8 +176,8 @@ export default function TVAForm() {
         piece_number: draft.piece_number.trim() || null,
         entry_date: draft.entry_date,
         entry_time: formatHHMM(new Date()),
-        recovery_month: Number(draft.recovery_month),
-        recovery_year: Number(draft.recovery_year),
+        recovery_month: draft.recovery_month === '' ? null : Number(draft.recovery_month),
+        recovery_year: draft.recovery_year === '' ? null : Number(draft.recovery_year),
         supplier_name: draft.supplier_name.trim(),
         supplier_address: draft.supplier_address.trim() || null,
         nif: draft.nif.trim() || null,
@@ -187,7 +185,7 @@ export default function TVAForm() {
         article: draft.article.trim() || null,
         rc_number: draft.rc_number.trim() || null,
         phone: draft.phone.trim() || null,
-        total_ht: totalHt,
+        total_ht: draft.total_ht === '' ? null : totalHt,
         discount_amount: discountAmount,
         tva_amount: tvaAmount,
         dd_amount: ddAmount,
@@ -272,13 +270,14 @@ export default function TVAForm() {
         </Field>
       </div>
 
-      <Field label="Mois de récupération TVA" required>
+      <Field label="Mois de récupération TVA">
         <div className="grid grid-cols-2 gap-3">
           <select
             value={draft.recovery_month}
             onChange={(e) => update('recovery_month', e.target.value)}
             className={inputClass}
           >
+            <option value="">—</option>
             {MONTHS.map((m, i) => (
               <option key={m} value={i + 1}>
                 {m}
@@ -290,6 +289,7 @@ export default function TVAForm() {
             onChange={(e) => update('recovery_year', e.target.value)}
             className={inputClass}
           >
+            <option value="">—</option>
             {YEARS.map((y) => (
               <option key={y} value={y}>
                 {y}
@@ -297,6 +297,7 @@ export default function TVAForm() {
             ))}
           </select>
         </div>
+        <span className="text-xs text-ink-muted">Optionnel, à compléter plus tard depuis le registre si besoin.</span>
       </Field>
 
       <Field label="Nom du fournisseur" required>
@@ -387,7 +388,7 @@ export default function TVAForm() {
       </Field>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Total HT (DA)" required>
+        <Field label="Total HT (DA)">
           <input
             type="number"
             inputMode="decimal"
@@ -396,7 +397,7 @@ export default function TVAForm() {
             value={draft.total_ht}
             onChange={(e) => update('total_ht', e.target.value)}
             className={inputClass}
-            required
+            placeholder="vide pour une quittance douane"
           />
         </Field>
         <Field label="Remise (DA)">

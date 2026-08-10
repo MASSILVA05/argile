@@ -106,10 +106,18 @@ function findSheetWithHeader(workbook) {
   return null
 }
 
+function parseNullableNumber(value) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
 // Lit un fichier .xls/.xlsx (ArrayBuffer) et renvoie la liste des factures
-// détectées, prêtes à l'aperçu/import dans TVAImportTab. `entry_date` sert
-// de valeur par défaut pour le mois de récupération TVA (absent du fichier
-// source) : l'utilisateur pourra le corriger ensuite depuis le registre.
+// détectées, prêtes à l'aperçu/import dans TVAImportTab. Le mois de
+// récupération TVA (absent du fichier source) reste vide -- à compléter
+// plus tard depuis le registre. Total HT reste vide si absent (cas des
+// quittances douane, qui n'ont pas de montant HT, seule la TVA douanière
+// étant saisie).
 export function parseTvaImportFile(arrayBuffer) {
   const workbook = read(arrayBuffer, { type: 'array' })
   const found = findSheetWithHeader(workbook)
@@ -134,7 +142,6 @@ export function parseTvaImportFile(arrayBuffer) {
     if (/^TOTAL\b/i.test(invoiceNumber)) continue
 
     const entryDate = parseDateCell(get('entry_date')) ?? new Date().toISOString().slice(0, 10)
-    const [year, month] = entryDate.split('-')
 
     const supplierName = String(get('supplier_name') ?? '').trim()
     if (!supplierName) continue
@@ -143,8 +150,8 @@ export function parseTvaImportFile(arrayBuffer) {
       invoice_number: invoiceNumber,
       piece_number: String(get('piece_number') ?? '').trim() || null,
       entry_date: entryDate,
-      recovery_month: Number(month),
-      recovery_year: Number(year),
+      recovery_month: null,
+      recovery_year: null,
       supplier_name: supplierName,
       supplier_address: String(get('supplier_address') ?? '').trim() || null,
       nif: String(get('nif') ?? '').trim() || null,
@@ -152,7 +159,7 @@ export function parseTvaImportFile(arrayBuffer) {
       article: String(get('article') ?? '').trim() || null,
       rc_number: String(get('rc_number') ?? '').trim() || null,
       phone: String(get('phone') ?? '').trim() || null,
-      total_ht: Number(get('total_ht')) || 0,
+      total_ht: parseNullableNumber(get('total_ht')),
       discount_amount: Number(get('discount_amount')) || 0,
       tva_amount: Number(get('tva_amount')) || 0,
       dd_amount: Number(get('dd_amount')) || 0,

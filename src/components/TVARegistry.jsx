@@ -14,6 +14,10 @@ function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
 }
 
+function formatDANullable(value) {
+  return value == null ? '—' : formatDA(value)
+}
+
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1]
 
@@ -122,8 +126,8 @@ export default function TVARegistry() {
       invoice_number: editDraft.invoice_number.trim(),
       piece_number: editDraft.piece_number?.trim() || null,
       entry_date: editDraft.entry_date,
-      recovery_month: Number(editDraft.recovery_month),
-      recovery_year: Number(editDraft.recovery_year),
+      recovery_month: editDraft.recovery_month === '' || editDraft.recovery_month == null ? null : Number(editDraft.recovery_month),
+      recovery_year: editDraft.recovery_year === '' || editDraft.recovery_year == null ? null : Number(editDraft.recovery_year),
       supplier_name: editDraft.supplier_name.trim(),
       supplier_address: editDraft.supplier_address?.trim() || null,
       nif: editDraft.nif?.trim() || null,
@@ -131,7 +135,7 @@ export default function TVARegistry() {
       article: editDraft.article?.trim() || null,
       rc_number: editDraft.rc_number?.trim() || null,
       phone: editDraft.phone?.trim() || null,
-      total_ht: Number(editDraft.total_ht) || 0,
+      total_ht: editDraft.total_ht === '' || editDraft.total_ht == null ? null : Number(editDraft.total_ht),
       discount_amount: Number(editDraft.discount_amount) || 0,
       tva_amount: Number(editDraft.tva_amount) || 0,
       dd_amount: Number(editDraft.dd_amount) || 0,
@@ -380,7 +384,7 @@ export default function TVARegistry() {
                   <Th>Mois récup.</Th>
                   <Th>Fournisseur</Th>
                   <Th>Adresse</Th>
-                  <Th>Total HT</Th>
+                  <Th>HT</Th>
                   <Th>Remise</Th>
                   <Th>HT Net</Th>
                   <Th>TVA</Th>
@@ -413,7 +417,7 @@ export default function TVARegistry() {
                       <Td>{recoveryLabel(entry.recovery_month, entry.recovery_year)}</Td>
                       <Td>{entry.supplier_name}</Td>
                       <Td>{entry.supplier_address ?? '—'}</Td>
-                      <Td>{formatDA(entry.total_ht)}</Td>
+                      <Td>{formatDANullable(entry.total_ht)}</Td>
                       <Td>{formatDA(entry.discount_amount)}</Td>
                       <Td>{formatDA(entry.ht_net)}</Td>
                       <Td>{formatDA(entry.tva_amount)}</Td>
@@ -527,14 +531,16 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       </Td>
       <Td>
         <div className="flex min-w-32 flex-col gap-1">
-          <select value={draft.recovery_month} onChange={(e) => set('recovery_month', e.target.value)} className={editInputClass}>
+          <select value={draft.recovery_month ?? ''} onChange={(e) => set('recovery_month', e.target.value)} className={editInputClass}>
+            <option value="">—</option>
             {MONTHS.map((m, i) => (
               <option key={m} value={i + 1}>
                 {m}
               </option>
             ))}
           </select>
-          <select value={draft.recovery_year} onChange={(e) => set('recovery_year', e.target.value)} className={editInputClass}>
+          <select value={draft.recovery_year ?? ''} onChange={(e) => set('recovery_year', e.target.value)} className={editInputClass}>
+            <option value="">—</option>
             {YEARS.map((y) => (
               <option key={y} value={y}>
                 {y}
@@ -550,7 +556,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
         <input type="text" value={draft.supplier_address ?? ''} onChange={(e) => set('supplier_address', e.target.value)} className={editInputClass} />
       </Td>
       <Td>
-        <input type="number" step="0.01" value={draft.total_ht} onChange={(e) => set('total_ht', e.target.value)} className={editInputClass} />
+        <input type="number" step="0.01" value={draft.total_ht ?? ''} onChange={(e) => set('total_ht', e.target.value)} className={editInputClass} placeholder="vide = quittance douane" />
       </Td>
       <Td>
         <input type="number" step="0.01" value={draft.discount_amount} onChange={(e) => set('discount_amount', e.target.value)} className={editInputClass} />

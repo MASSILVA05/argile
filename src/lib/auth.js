@@ -96,8 +96,8 @@ export function clearSession() {
 
 // admin            : tout accès, seul rôle pouvant utiliser le code admin (déblocage 72h)
 // editor           : saisie + consultation + export, pas de code admin
-// viewer (Bilal)   : Chargement (saisie uniquement, pas de registre) + Maintenance
-//                    (saisie + registre), aucune autre page, pas d'export Excel
+// viewer (Bilal)   : Chargement (saisie + registre) + Maintenance (saisie +
+//                    registre), aucune autre page, pas d'export Excel
 // maintenance_only (Karim) : uniquement Maintenance (saisie + registre)
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
@@ -105,7 +105,7 @@ export function clearSession() {
 export const ROLE_TABS = {
   admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva'],
   editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva'],
-  viewer: ['form', 'maintenance'],
+  viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance'],
 }
 

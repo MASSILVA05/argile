@@ -20,5 +20,6 @@ export function monthLabel(month) {
 }
 
 export function recoveryLabel(month, year) {
+  if (!month || !year) return '—'
   return `${monthLabel(month)} ${year}`
 }

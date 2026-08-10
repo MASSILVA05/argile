@@ -2713,3 +2713,61 @@ revoke all on function admin_update_tva(uuid, text, text, text, date, integer, i
 revoke all on function admin_delete_tva(uuid, text) from public;
 grant execute on function admin_update_tva(uuid, text, text, text, date, integer, integer, text, text, text, text, text, text, text, numeric, numeric, numeric, numeric, numeric, text, text, text, text, text) to anon, authenticated;
 grant execute on function admin_delete_tva(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- RÉCUPÉRATION TVA : retour terrain -- Total HT et mois de récupération
+-- peuvent rester vides (quittances douane sans montant HT ; saisie sans
+-- déclaration G50 encore assignée, à compléter plus tard depuis le
+-- registre). `ht_net`/`total_ttc`/`total_net` ne peuvent alors plus être
+-- des colonnes GENERATED (leur formule doit traiter total_ht NULL comme 0
+-- via COALESCE, ce qu'une expression générée ne fait pas naturellement
+-- mieux qu'un trigger) : elles deviennent des colonnes normales, tenues à
+-- jour par un trigger BEFORE INSERT/UPDATE (même principe que
+-- fuel_apply_delta plus haut).
+-- ============================================================
+
+alter table tva_entries alter column recovery_month drop not null;
+alter table tva_entries alter column recovery_year drop not null;
+alter table tva_entries alter column total_ht drop not null;
+
+alter table tva_entries drop column if exists ht_net;
+alter table tva_entries drop column if exists total_ttc;
+alter table tva_entries drop column if exists total_net;
+
+alter table tva_entries add column if not exists ht_net numeric(12, 2);
+alter table tva_entries add column if not exists total_ttc numeric(12, 2);
+alter table tva_entries add column if not exists total_net numeric(12, 2);
+
+comment on column tva_entries.total_ht is 'Total HT, NULL pour les quittances douane (pas de montant HT, seule la TVA douanière est saisie)';
+comment on column tva_entries.recovery_month is 'Mois de récupération TVA (déclaration G50), optionnel -- peut être complété plus tard depuis le registre';
+comment on column tva_entries.recovery_year is 'Année de récupération TVA, optionnel -- voir recovery_month';
+comment on column tva_entries.ht_net is 'HT Net = COALESCE(Total HT, 0) - Remise, tenu à jour par le trigger tva_apply_calculations';
+comment on column tva_entries.total_ttc is 'TTC = HT Net + TVA, tenu à jour par le trigger tva_apply_calculations';
+comment on column tva_entries.total_net is 'Total Net = TTC + Timbre, tenu à jour par le trigger tva_apply_calculations';
+
+create or replace function tva_apply_calculations()
+returns trigger
+language plpgsql
+as $$
+begin
+  NEW.ht_net := coalesce(NEW.total_ht, 0) - coalesce(NEW.discount_amount, 0);
+  NEW.total_ttc := NEW.ht_net + coalesce(NEW.tva_amount, 0);
+  NEW.total_net := NEW.total_ttc + coalesce(NEW.stamp_duty, 0);
+  return NEW;
+end;
+$$;
+
+drop trigger if exists tva_entries_before_insert on tva_entries;
+create trigger tva_entries_before_insert
+  before insert on tva_entries
+  for each row execute function tva_apply_calculations();
+
+drop trigger if exists tva_entries_before_update on tva_entries;
+create trigger tva_entries_before_update
+  before update on tva_entries
+  for each row execute function tva_apply_calculations();
+
+-- Recalcule ht_net/total_ttc/total_net pour les lignes déjà saisies avant
+-- cette migration (déclenche le trigger BEFORE UPDATE ci-dessus via une
+-- modification sans effet sur entry_date).
+update tva_entries set entry_date = entry_date;
