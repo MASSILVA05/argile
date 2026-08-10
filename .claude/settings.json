@@ -23,7 +23,14 @@
       "Bash(git -C /Users/massilva/Desktop/Argile log --oneline -3)",
       "Bash(git -C /Users/massilva/Desktop/Argile diff HEAD -- schema.sql)",
       "Bash(sed -n '/^-- RÉCUPÉRATION TVA : registre des factures/,/^update tva_entries set entry_date = entry_date;/p' /Users/massilva/Desktop/Argile/schema.sql)",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(sed -i '' \"s/import { saveAs } from 'file-saver'//\" invoiceStatementExcel.mjs)",
+      "Bash(sed -i '' \"s/  saveAs\\(blob, \\\\`Etat_Releve_Facture_Vente_\\\\${MONTHS_FR\\\\[Number\\(month\\) - 1\\\\]}_\\\\${year}.xlsx\\\\`\\)/  const fs = await import\\('fs'\\); fs.writeFileSync\\('\\\\/tmp\\\\/statement_test.xlsx', Buffer.from\\(await blob.arrayBuffer\\(\\)\\)\\)/\" invoiceStatementExcel.mjs)",
+      "Bash(cat)",
+      "Bash(echo \"EXIT CODE: $?\")",
+      "Bash(echo \"DONE exit=$?\")",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git -C /Users/massilva/Desktop/Argile status --short)"
     ]
   }
 }

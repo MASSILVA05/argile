@@ -7,6 +7,7 @@ import StockMovementsTab from './StockMovementsTab'
 import ClientBalancesModal from './ClientBalancesModal'
 import ImportG50Tab from './ImportG50Tab'
 import GenerateG50Tab from './GenerateG50Tab'
+import InvoiceStatementTab from './InvoiceStatementTab'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
@@ -16,6 +17,7 @@ const TABS = [
   { id: 'movements', label: 'Mouvements' },
   { id: 'import-g50', label: 'Import G50' },
   { id: 'generate-g50', label: 'Générer G50' },
+  { id: 'statement', label: 'Relevé Factures' },
 ]
 
 export default function InvoicesPage() {
@@ -58,6 +60,7 @@ export default function InvoicesPage() {
       {view === 'movements' && <StockMovementsTab />}
       {view === 'import-g50' && <ImportG50Tab />}
       {view === 'generate-g50' && <GenerateG50Tab />}
+      {view === 'statement' && <InvoiceStatementTab />}
 
       <ClientBalancesModal open={balancesOpen} onClose={() => setBalancesOpen(false)} />
     </div>
