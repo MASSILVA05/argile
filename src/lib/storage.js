@@ -1,18 +1,20 @@
-import { supabase } from './supabase'
+const PHOTO_SERVER_URL = import.meta.env.VITE_PHOTO_SERVER_URL
 
-export async function uploadPhoto(file, bucket, prefix) {
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  const path = `${prefix}-${Date.now()}.${ext}`
-
-  const { error } = await supabase.storage.from(bucket).upload(path, file, {
-    cacheControl: '3600',
-    upsert: false,
-    contentType: file.type || 'image/jpeg',
+// Le serveur assigne lui-même le nom de fichier et renvoie l'URL complète
+// (http://.../photos/{bucket}/{filename}.jpg) : `prefix` n'est donc plus
+// utilisé pour construire un chemin, mais reste accepté pour ne rien changer
+// aux appels existants (uploadBonPhoto, uploadMaintenancePhoto, etc.).
+export async function uploadPhoto(file, bucket, _prefix) {
+  const resp = await fetch(`${PHOTO_SERVER_URL}/upload/${bucket}/`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'image/jpeg' },
+    body: file,
   })
-  if (error) throw error
-
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-  return data.publicUrl
+  if (!resp.ok) {
+    throw new Error(`Erreur d'upload de la photo (${bucket}) : HTTP ${resp.status}`)
+  }
+  const data = await resp.json()
+  return data.url
 }
 
 export function uploadBonPhoto(file, bonNumber) {
