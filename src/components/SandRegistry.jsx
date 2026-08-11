@@ -4,6 +4,7 @@ import { downloadSandExcel } from '../lib/sandExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import { PAYMENT_MODES, PAID_OPTIONS, buildPaymentPayload } from '../lib/sandPayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
@@ -341,6 +342,7 @@ export default function SandRegistry() {
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Bon</Th>
                   <Th>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Heure</Th>
                   <Th>Fournisseur</Th>
                   <Th>Transporteur</Th>
@@ -374,6 +376,7 @@ export default function SandRegistry() {
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.bon_number}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{entry.supplier_name}</Td>
                       <Td>{entry.transporter_name ?? '—'}</Td>
@@ -565,6 +568,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
         <input type="text" value={draft.supplier_name} onChange={(e) => set('supplier_name', e.target.value)} className={editInputClass} />

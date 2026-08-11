@@ -10,10 +10,12 @@ import {
   styleHeaderRow,
   styleDataRow,
 } from './excelHelpers'
+import { formatDateTime } from './dateFormat'
 
 const COLUMNS = [
   { header: 'N° Fiche', key: 'fiche_number', width: 12 },
   { header: 'Date', key: 'entry_date', width: 14 },
+  { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Heure', key: 'entry_time', width: 10 },
   { header: 'Machine', key: 'machine_name', width: 22 },
   { header: 'Problème', key: 'problem_description', width: 30 },
@@ -65,6 +67,7 @@ export async function downloadMaintenanceExcel(entries, { onProgress, includePho
     const row = sheet.addRow({
       fiche_number: entry.fiche_number,
       entry_date: entry.entry_date,
+      created_at: formatDateTime(entry.created_at),
       entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : '',
       machine_name: entry.machine_name,
       problem_description: entry.problem_description,

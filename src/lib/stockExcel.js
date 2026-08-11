@@ -1,9 +1,11 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import { DATA_ROW_HEIGHT, todayISO, styleHeaderRow, styleDataRow } from './excelHelpers'
+import { formatDateTime } from './dateFormat'
 
 const COLUMNS = [
   { header: 'Date', key: 'entry_date', width: 14 },
+  { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Heure', key: 'entry_time', width: 10 },
   { header: 'Produit', key: 'product_name', width: 10 },
   { header: 'Type', key: 'movement_type', width: 14 },
@@ -40,6 +42,7 @@ export async function downloadStockExcel(movements, { filename } = {}) {
     const isProduction = m.movement_type === 'Production'
     const row = sheet.addRow({
       entry_date: m.entry_date,
+      created_at: formatDateTime(m.created_at),
       entry_time: m.entry_time ? m.entry_time.slice(0, 5) : '',
       product_name: m.product_name,
       movement_type: m.movement_type,

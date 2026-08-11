@@ -1,12 +1,14 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import { DATA_ROW_HEIGHT, todayISO, styleHeaderRow, styleDataRow, styleTotalsRow } from './excelHelpers'
+import { formatDateTime } from './dateFormat'
 import { recoveryLabel } from './tvaPayment'
 
 const COLUMNS = [
   { header: 'N° Facture', key: 'invoice_number', width: 16 },
   { header: 'N° Pièce', key: 'piece_number', width: 14 },
   { header: 'Date', key: 'entry_date', width: 14 },
+  { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Mois récup.', key: 'recovery', width: 16 },
   { header: 'Fournisseur', key: 'supplier_name', width: 26 },
   { header: 'Adresse', key: 'supplier_address', width: 22 },
@@ -44,6 +46,7 @@ export async function downloadTvaExcel(entries, { filename } = {}) {
       invoice_number: entry.invoice_number,
       piece_number: entry.piece_number ?? '',
       entry_date: entry.entry_date,
+      created_at: formatDateTime(entry.created_at),
       recovery: recoveryLabel(entry.recovery_month, entry.recovery_year),
       supplier_name: entry.supplier_name,
       supplier_address: entry.supplier_address ?? '',

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { downloadStockExcel } from '../lib/stockExcel'
+import { formatDateTime } from '../lib/dateFormat'
 import PrintHeader from './PrintHeader'
 
 const PRODUCTS = ['B8', 'B12']
@@ -172,6 +173,7 @@ export default function StockMovementsTab() {
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Heure</Th>
                   <Th>Produit</Th>
                   <Th>Type</Th>
@@ -199,6 +201,7 @@ export default function StockMovementsTab() {
                 {filtered.map((m) => (
                   <tr key={m.id} className="border-b border-border last:border-0">
                     <Td sticky>{m.entry_date}</Td>
+                    <Td>{formatDateTime(m.created_at)}</Td>
                     <Td>{m.entry_time ? m.entry_time.slice(0, 5) : '—'}</Td>
                     <Td>{m.product_name}</Td>
                     <Td>

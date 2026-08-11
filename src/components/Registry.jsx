@@ -5,6 +5,7 @@ import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/un
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -300,6 +301,7 @@ export default function Registry() {
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Bon</Th>
                   <Th>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Heure</Th>
                   <Th>Matricule</Th>
                   <Th>Chauffeur</Th>
@@ -326,6 +328,7 @@ export default function Registry() {
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.bon_number}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{entry.truck_plate}</Td>
                       <Td>{entry.driver_name}</Td>
@@ -427,6 +430,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
         <input type="text" value={draft.truck_plate} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />

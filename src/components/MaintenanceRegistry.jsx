@@ -4,6 +4,7 @@ import { downloadMaintenanceExcel } from '../lib/maintenanceExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -285,6 +286,7 @@ export default function MaintenanceRegistry() {
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Fiche</Th>
                   <Th>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Heure</Th>
                   <Th>Machine</Th>
                   <Th>Problème</Th>
@@ -315,6 +317,7 @@ export default function MaintenanceRegistry() {
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.fiche_number}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{entry.machine_name}</Td>
                       <Td className="max-w-[200px] truncate" title={entry.problem_description}>
@@ -411,6 +414,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
         <input type="text" value={draft.machine_name} onChange={(e) => set('machine_name', e.target.value)} className={editInputClass} />

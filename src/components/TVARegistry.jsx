@@ -4,6 +4,7 @@ import { downloadTvaExcel } from '../lib/tvaExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import { PAYMENT_MODES, MONTHS, recoveryLabel } from '../lib/tvaPayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
@@ -381,6 +382,7 @@ export default function TVARegistry() {
                   <Th sticky>N° Fact</Th>
                   <Th>N° Pièce</Th>
                   <Th>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Mois récup.</Th>
                   <Th>Fournisseur</Th>
                   <Th>Adresse</Th>
@@ -414,6 +416,7 @@ export default function TVARegistry() {
                       <Td sticky>{entry.invoice_number}</Td>
                       <Td>{entry.piece_number ?? '—'}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{recoveryLabel(entry.recovery_month, entry.recovery_year)}</Td>
                       <Td>{entry.supplier_name}</Td>
                       <Td>{entry.supplier_address ?? '—'}</Td>
@@ -529,6 +532,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>
         <div className="flex min-w-32 flex-col gap-1">
           <select value={draft.recovery_month ?? ''} onChange={(e) => set('recovery_month', e.target.value)} className={editInputClass}>

@@ -1,10 +1,12 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import { DATA_ROW_HEIGHT, todayISO, styleHeaderRow, styleDataRow } from './excelHelpers'
+import { formatDateTime } from './dateFormat'
 
 const COLUMNS = [
   { header: 'N° Bon', key: 'bon_number', width: 12 },
   { header: 'Date', key: 'entry_date', width: 14 },
+  { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Heure', key: 'entry_time', width: 10 },
   { header: "Type d'opération", key: 'operation_type', width: 22 },
   { header: 'Matricule', key: 'truck_plate', width: 18 },
@@ -29,6 +31,7 @@ export async function downloadFuelExcel(entries, { filename } = {}) {
     const row = sheet.addRow({
       bon_number: entry.bon_number,
       entry_date: entry.entry_date,
+      created_at: formatDateTime(entry.created_at),
       entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : '',
       operation_type: entry.operation_type,
       truck_plate: entry.truck_plate ?? '',

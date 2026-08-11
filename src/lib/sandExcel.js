@@ -12,10 +12,12 @@ import {
   styleDataRow,
   styleTotalsRow,
 } from './excelHelpers'
+import { formatDateTime } from './dateFormat'
 
 const COLUMNS = [
   { header: 'N° Bon', key: 'bon_number', width: 12 },
   { header: 'Date', key: 'entry_date', width: 14 },
+  { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Heure', key: 'entry_time', width: 10 },
   { header: 'Fournisseur', key: 'supplier_name', width: 22 },
   { header: 'Transporteur', key: 'transporter_name', width: 20 },
@@ -66,6 +68,7 @@ export async function downloadSandExcel(entries, { onProgress, includePhotos = t
     const row = sheet.addRow({
       bon_number: entry.bon_number,
       entry_date: entry.entry_date,
+      created_at: formatDateTime(entry.created_at),
       entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : '',
       supplier_name: entry.supplier_name,
       transporter_name: entry.transporter_name ?? '',

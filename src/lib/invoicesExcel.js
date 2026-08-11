@@ -1,10 +1,12 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import { DATA_ROW_HEIGHT, AMOUNT_ROW_FILL, todayISO, styleHeaderRow, styleDataRow, styleTotalsRow } from './excelHelpers'
+import { formatDateTime } from './dateFormat'
 
 const COLUMNS = [
   { header: 'N° Facture', key: 'invoice_number', width: 16 },
   { header: 'Date', key: 'entry_date', width: 14 },
+  { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Client', key: 'client_name', width: 28 },
   { header: 'Désignation', key: 'designation', width: 16 },
   { header: 'N° BL', key: 'bl_number', width: 14 },
@@ -49,6 +51,7 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
     const row = sheet.addRow({
       invoice_number: entry.invoice_number,
       entry_date: entry.entry_date,
+      created_at: formatDateTime(entry.created_at),
       client_name: entry.client_name,
       designation: designationLabel(entry),
       bl_number: entry.bl_number ?? '',

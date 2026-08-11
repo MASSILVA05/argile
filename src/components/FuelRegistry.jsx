@@ -4,6 +4,7 @@ import { downloadFuelExcel } from '../lib/fuelExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -273,6 +274,7 @@ export default function FuelRegistry() {
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Bon</Th>
                   <Th>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Heure</Th>
                   <Th>Type</Th>
                   <Th>Matricule</Th>
@@ -299,6 +301,7 @@ export default function FuelRegistry() {
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.bon_number}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{entry.operation_type}</Td>
                       <Td>{entry.truck_plate ?? '—'}</Td>
@@ -368,6 +371,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>{formatTime(draft.entry_time)}</Td>
       <Td>
         <select value={draft.operation_type} onChange={(e) => set('operation_type', e.target.value)} className={editInputClass}>

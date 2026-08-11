@@ -2,13 +2,24 @@ import { computeAmount, formatDA, rateFor } from './unloadingTypes'
 
 const NTFY_TOPIC = import.meta.env.VITE_NTFY_TOPIC
 
-export async function sendNtfy(title, lines, tags = 'truck') {
-  if (!NTFY_TOPIC) {
-    console.warn('VITE_NTFY_TOPIC non défini')
+// Chaque module a son propre topic ntfy (moins encombré qu'un seul topic
+// partagé), avec repli sur VITE_NTFY_TOPIC si la variable spécifique n'est
+// pas définie -- garde la rétrocompatibilité pour les déploiements qui
+// n'ont pas encore les nouvelles variables.
+const TOPIC_CHARGEMENT = import.meta.env.VITE_NTFY_TOPIC_CHARGEMENT || NTFY_TOPIC
+const TOPIC_MAINTENANCE = import.meta.env.VITE_NTFY_TOPIC_MAINTENANCE || NTFY_TOPIC
+const TOPIC_CARBURANT = import.meta.env.VITE_NTFY_TOPIC_CARBURANT || NTFY_TOPIC
+const TOPIC_SABLE = import.meta.env.VITE_NTFY_TOPIC_SABLE || NTFY_TOPIC
+const TOPIC_FACTURES = import.meta.env.VITE_NTFY_TOPIC_FACTURES || NTFY_TOPIC
+const TOPIC_TVA = import.meta.env.VITE_NTFY_TOPIC_TVA || NTFY_TOPIC
+
+export async function sendNtfy(topic, title, lines, tags = 'truck') {
+  if (!topic) {
+    console.warn('Aucun topic ntfy défini (VITE_NTFY_TOPIC ou variable spécifique au module)')
     return
   }
   try {
-    const resp = await fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+    const resp = await fetch(`https://ntfy.sh/${topic}`, {
       method: 'POST',
       body: lines.join('\n'),
       headers: {
@@ -48,7 +59,7 @@ export function notifyNewEntry(entry) {
   if (entry.entered_by_user) {
     lines.push(`Saisi par : ${entry.entered_by_user}`)
   }
-  return sendNtfy('Nouveau chargement', lines)
+  return sendNtfy(TOPIC_CHARGEMENT, 'Nouveau chargement', lines)
 }
 
 export function notifyMaintenanceEntry(entry) {
@@ -66,7 +77,7 @@ export function notifyMaintenanceEntry(entry) {
   if (entry.is_paid) lines.push(`Payé : ${entry.is_paid}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy('Nouvelle fiche maintenance', lines, 'wrench')
+  return sendNtfy(TOPIC_MAINTENANCE, 'Nouvelle fiche maintenance', lines, 'wrench')
 }
 
 export function notifyFuelEntry(entry) {
@@ -83,7 +94,7 @@ export function notifyFuelEntry(entry) {
   lines.push(`Réserve restante : ${entry.tank_volume_after} L`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy(`Carburant — ${isRefill ? 'Approvisionnement' : 'Remplissage'}`, lines, 'fuelpump')
+  return sendNtfy(TOPIC_CARBURANT, `Carburant — ${isRefill ? 'Approvisionnement' : 'Remplissage'}`, lines, 'fuelpump')
 }
 
 export function notifySandEntry(entry) {
@@ -105,7 +116,7 @@ export function notifySandEntry(entry) {
   lines.push(`Paiement transporteur : ${entry.transporter_paid ?? 'Non payé'}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy('Nouvelle livraison sable', lines, 'mountain')
+  return sendNtfy(TOPIC_SABLE, 'Nouvelle livraison sable', lines, 'mountain')
 }
 
 export function notifyInvoiceEntry(entry) {
@@ -132,7 +143,7 @@ export function notifyInvoiceEntry(entry) {
   if (entry.truck_plate) lines.push(`Immat : ${entry.truck_plate}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy('Nouvelle facture', lines, 'receipt')
+  return sendNtfy(TOPIC_FACTURES, 'Nouvelle facture', lines, 'receipt')
 }
 
 export function notifyTvaEntry(entry) {
@@ -154,7 +165,7 @@ export function notifyTvaEntry(entry) {
   lines.push(`Paiement : ${entry.payment_mode ?? 'Non payé'}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy('Nouvelle facture TVA', lines, 'receipt')
+  return sendNtfy(TOPIC_TVA, 'Nouvelle facture TVA', lines, 'receipt')
 }
 
 export function notifyTvaPayerEntry(entry) {
@@ -174,7 +185,7 @@ export function notifyTvaPayerEntry(entry) {
   lines.push(`Paiement : ${entry.payment_mode ?? 'Non payé'}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy('Nouvelle facture TVA à payer', lines, 'receipt')
+  return sendNtfy(TOPIC_TVA, 'Nouvelle facture TVA à payer', lines, 'receipt')
 }
 
 export function notifyClientAdvance(advance) {
@@ -187,5 +198,5 @@ export function notifyClientAdvance(advance) {
   if (advance.payment_mode) lines.push(`Mode de paiement : ${advance.payment_mode}`)
   if (advance.observations) lines.push(`Obs : ${advance.observations}`)
   if (advance.entered_by_user) lines.push(`Saisi par : ${advance.entered_by_user}`)
-  return sendNtfy('Nouvelle avance client', lines, 'moneybag')
+  return sendNtfy(TOPIC_FACTURES, 'Nouvelle avance client', lines, 'moneybag')
 }

@@ -4,6 +4,7 @@ import { downloadInvoicesExcel } from '../lib/invoicesExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES, isInvoicePaid } from '../lib/invoicePayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
@@ -414,6 +415,7 @@ export default function InvoiceRegistry() {
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>N° Facture</Th>
                   <Th>Date</Th>
+                  <Th>Saisie le</Th>
                   <Th>Client</Th>
                   <Th>Code</Th>
                   <Th>Désignation</Th>
@@ -460,6 +462,7 @@ export default function InvoiceRegistry() {
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.invoice_number}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{entry.client_name}</Td>
                       <Td>{clientCodeByName.get(entry.client_name) ?? '—'}</Td>
                       <Td>{designationLabel(entry)}</Td>
@@ -577,6 +580,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>
         <input type="text" value={draft.client_name} onChange={(e) => set('client_name', e.target.value)} className={editInputClass} />
       </Td>

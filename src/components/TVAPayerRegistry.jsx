@@ -4,6 +4,7 @@ import { downloadTvaPayerExcel } from '../lib/tvaPayerExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
+import { formatDateTime } from '../lib/dateFormat'
 import { PAYMENT_MODES } from '../lib/tvaPayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
@@ -367,6 +368,7 @@ export default function TVAPayerRegistry() {
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Numéro</Th>
                   <Th>Du</Th>
+                  <Th>Saisie le</Th>
                   <Th>Client</Th>
                   <Th>Total HT</Th>
                   <Th>Remise</Th>
@@ -399,6 +401,7 @@ export default function TVAPayerRegistry() {
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.invoice_number}</Td>
                       <Td>{entry.entry_date}</Td>
+                      <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{entry.client_name}</Td>
                       <Td>{formatDA(entry.total_ht)}</Td>
                       <Td>{formatDA(entry.discount_amount)}</Td>
@@ -512,6 +515,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>
         <input type="text" value={draft.client_name} onChange={(e) => set('client_name', e.target.value)} className={editInputClass} />
       </Td>
