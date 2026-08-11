@@ -158,6 +158,29 @@ export function sendTvaEmail(entry) {
   })
 }
 
+export function sendTvaPayerEmail(entry) {
+  const lines = [
+    `Facture n° ${entry.invoice_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Client : ${entry.client_name}`,
+    `Total HT : ${entry.total_ht} DA`,
+    `Remise : ${entry.discount_amount ?? 0} DA`,
+    `TVA : ${entry.total_tva} DA`,
+    `TTC : ${entry.total_ttc} DA`,
+    `Timbre : ${entry.stamp_duty ?? 0} DA`,
+    `Total Net : ${entry.total_net} DA`,
+    `Réf. Commande : ${entry.ref_commande || 'N/A'}`,
+    `Réf. Livraison : ${entry.ref_livraison || 'N/A'}`,
+    `Paiement : ${entry.payment_mode ?? 'Non payé'}`,
+    `Observations : ${entry.observations || 'Aucune'}`,
+    `Saisi par : ${entry.entered_by_user || 'N/A'}`,
+  ]
+  return send({
+    subject: 'Nouvelle facture TVA à payer',
+    message: lines.join('\n'),
+  })
+}
+
 export function sendClientAdvanceEmail(advance) {
   const lines = [
     `Client : ${advance.client_name}`,

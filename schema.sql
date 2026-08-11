@@ -2771,3 +2771,170 @@ create trigger tva_entries_before_update
 -- cette migration (déclenche le trigger BEFORE UPDATE ci-dessus via une
 -- modification sans effet sur entry_date).
 update tva_entries set entry_date = entry_date;
+
+-- ============================================================
+-- TVA À PAYER : registre des factures de VENTES pour le suivi de la TVA à
+-- payer (déclaration G50, coté ventes) -- onglet "TVA à payer" (Saisie /
+-- Registre / Import). À distinguer de `tva_entries` (TVA à récupérer, coté
+-- achats/fournisseurs). Reprend le format du fichier "Etat Relevé Facture
+-- de Ventes" (Numéro, Du, Client, Total HT, Remise, Total TVA, Total TTC,
+-- Timbre, Total net, Réf. Commande, Réf. Livraison), + mode de paiement,
+-- photo et observations.
+--
+-- Contrairement à `tva_entries.tva_amount` (TVA achats, modifiable pour les
+-- quittances douane), la TVA ventes suit toujours exactement la formule
+-- (Total HT - Remise) * 0.19 -- total_tva/total_ttc/total_net peuvent donc
+-- rester des colonnes GENERATED (pas de trigger nécessaire ici).
+-- ============================================================
+
+create table if not exists tva_payer_entries (
+  id uuid primary key default gen_random_uuid(),
+  invoice_number text not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  client_name text not null,
+  total_ht numeric(12, 2) not null,
+  discount_amount numeric(10, 2) not null default 0,
+  total_tva numeric(12, 2) generated always as ((total_ht - discount_amount) * 0.19) stored,
+  total_ttc numeric(12, 2) generated always as ((total_ht - discount_amount) * 1.19) stored,
+  stamp_duty numeric(10, 2) not null default 0,
+  total_net numeric(12, 2) generated always as ((total_ht - discount_amount) * 1.19 + stamp_duty) stored,
+  ref_commande text,
+  ref_livraison text,
+  payment_mode text not null default 'Non payé'
+    check (payment_mode in ('Espèces', 'Chèque', 'Versement', 'Virement', 'Non payé')),
+  cheque_number text,
+  cheque_bank text,
+  photo_url text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table tva_payer_entries is 'Registre des factures de ventes pour le suivi de la TVA à payer (déclaration G50, côté ventes)';
+comment on column tva_payer_entries.total_tva is 'TVA = (Total HT - Remise) * 0.19, calculée automatiquement';
+comment on column tva_payer_entries.total_ttc is 'TTC = (Total HT - Remise) * 1.19, calculé automatiquement';
+comment on column tva_payer_entries.total_net is 'Net = TTC + Timbre, calculé automatiquement';
+comment on column tva_payer_entries.payment_mode is 'Sert aussi de statut : "Non payé" = impayé (badge rouge), toute autre valeur = payé (badge vert), même principe que invoices.payment_status';
+
+create index if not exists tva_payer_entries_created_at_idx on tva_payer_entries (created_at desc);
+create index if not exists tva_payer_entries_client_name_idx on tva_payer_entries (client_name);
+create index if not exists tva_payer_entries_invoice_number_idx on tva_payer_entries (invoice_number);
+create index if not exists tva_payer_entries_entry_date_idx on tva_payer_entries (entry_date desc);
+create index if not exists tva_payer_entries_payment_mode_idx on tva_payer_entries (payment_mode);
+
+alter table tva_payer_entries enable row level security;
+
+create policy "Lecture publique TVA à payer"
+  on tva_payer_entries for select
+  using (true);
+
+create policy "Ajout TVA à payer"
+  on tva_payer_entries for insert
+  with check (true);
+
+create policy "Modification TVA à payer"
+  on tva_payer_entries for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression TVA à payer"
+  on tva_payer_entries for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table tva_payer_entries;
+
+-- Storage : bucket public pour les photos de factures TVA à payer
+insert into storage.buckets (id, name, public)
+values ('tva-payer-photos', 'tva-payer-photos', true)
+on conflict (id) do nothing;
+
+create policy "Lecture publique photos TVA à payer"
+  on storage.objects for select
+  using (bucket_id = 'tva-payer-photos');
+
+create policy "Ajout photos TVA à payer"
+  on storage.objects for insert
+  with check (bucket_id = 'tva-payer-photos');
+
+create policy "Suppression photos TVA à payer"
+  on storage.objects for delete
+  using (bucket_id = 'tva-payer-photos');
+
+-- Code admin (même principe que admin_update_tva/admin_delete_tva plus haut)
+create or replace function admin_update_tva_payer(
+  p_id uuid,
+  p_admin_code text,
+  p_invoice_number text,
+  p_entry_date date,
+  p_client_name text,
+  p_total_ht numeric,
+  p_discount_amount numeric,
+  p_stamp_duty numeric,
+  p_ref_commande text,
+  p_ref_livraison text,
+  p_payment_mode text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_observations text
+)
+returns tva_payer_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result tva_payer_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update tva_payer_entries set
+    invoice_number = p_invoice_number,
+    entry_date = p_entry_date,
+    client_name = p_client_name,
+    total_ht = p_total_ht,
+    discount_amount = p_discount_amount,
+    stamp_duty = p_stamp_duty,
+    ref_commande = p_ref_commande,
+    ref_livraison = p_ref_livraison,
+    payment_mode = p_payment_mode,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Facture introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_tva_payer(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from tva_payer_entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_tva_payer(uuid, text, text, date, text, numeric, numeric, numeric, text, text, text, text, text, text) from public;
+revoke all on function admin_delete_tva_payer(uuid, text) from public;
+grant execute on function admin_update_tva_payer(uuid, text, text, date, text, numeric, numeric, numeric, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function admin_delete_tva_payer(uuid, text) to anon, authenticated;

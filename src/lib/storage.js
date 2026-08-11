@@ -30,3 +30,7 @@ export function uploadSandPhoto(file, bonNumber) {
 export function uploadTvaPhoto(file, invoiceNumber) {
   return uploadPhoto(file, 'tva-photos', String(invoiceNumber))
 }
+
+export function uploadTvaPayerPhoto(file, invoiceNumber) {
+  return uploadPhoto(file, 'tva-payer-photos', String(invoiceNumber))
+}

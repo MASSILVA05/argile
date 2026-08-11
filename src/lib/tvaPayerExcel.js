@@ -25,11 +25,14 @@ function formatDateFR(iso) {
   return `${d}/${m}/${y}`
 }
 
+// Reproduit exactement le format du fichier source "Etat Relevé Facture de
+// Ventes" : mêmes 11 colonnes, même bloc titre/période, même ligne de
+// totaux "Nombre de lignes :".
 const COLUMNS = [
   { header: 'Numéro', key: 'invoice_number', width: 16 },
   { header: 'Du', key: 'entry_date', width: 12 },
   { header: 'Client', key: 'client_name', width: 34 },
-  { header: 'Total HT', key: 'amount', width: 16 },
+  { header: 'Total HT', key: 'total_ht', width: 16 },
   { header: 'Remise', key: 'discount_amount', width: 12 },
   { header: 'Total TVA', key: 'total_tva', width: 16 },
   { header: 'Total TTC', key: 'total_ttc', width: 16 },
@@ -39,16 +42,13 @@ const COLUMNS = [
   { header: 'Réf. Livraison', key: 'ref_livraison', width: 22 },
 ]
 
-const NUMERIC_KEYS = ['amount', 'discount_amount', 'total_tva', 'total_ttc', 'stamp_duty', 'total_net']
+const NUMERIC_KEYS = ['total_ht', 'discount_amount', 'total_tva', 'total_ttc', 'stamp_duty', 'total_net']
 
-export async function downloadInvoiceStatementExcel(entries, { startDate, endDate } = {}) {
+export async function downloadTvaPayerExcel(entries, { startDate, endDate } = {}) {
   const workbook = new ExcelJS.Workbook()
-  const sheet = workbook.addWorksheet('Relevé Factures')
+  const sheet = workbook.addWorksheet('TVA à payer')
   const colCount = COLUMNS.length
 
-  // Pas de `header` dans les défs de colonnes : ExcelJS écrirait sinon
-  // automatiquement la ligne 1 avec les en-têtes, alors que les lignes 1-3
-  // doivent contenir le bloc titre/sous-titre/période.
   sheet.columns = COLUMNS.map(({ key, width }) => ({ key, width }))
 
   sheet.mergeCells(1, 1, 1, colCount)
@@ -84,7 +84,7 @@ export async function downloadInvoiceStatementExcel(entries, { startDate, endDat
       invoice_number: entry.invoice_number,
       entry_date: formatDateFR(entry.entry_date),
       client_name: entry.client_name,
-      amount: Number(entry.amount) || 0,
+      total_ht: Number(entry.total_ht) || 0,
       discount_amount: Number(entry.discount_amount) || 0,
       total_tva: Number(entry.total_tva) || 0,
       total_ttc: Number(entry.total_ttc) || 0,
@@ -107,7 +107,7 @@ export async function downloadInvoiceStatementExcel(entries, { startDate, endDat
   const totalsRow = sheet.addRow({
     invoice_number: 'Nombre de lignes :',
     entry_date: entries.length,
-    amount: sum('amount'),
+    total_ht: sum('total_ht'),
     discount_amount: sum('discount_amount'),
     total_tva: sum('total_tva'),
     total_ttc: sum('total_ttc'),
