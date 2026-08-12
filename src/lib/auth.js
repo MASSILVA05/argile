@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar']
 
 // Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
@@ -99,6 +99,8 @@ export function clearSession() {
 // viewer (Bilal)   : Chargement (saisie + registre) + Maintenance (saisie +
 //                    registre), aucune autre page, pas d'export Excel
 // maintenance_only (Karim) : uniquement Maintenance (saisie + registre)
+// tva_only (AVADOU, Tahar) : uniquement TVA récupération + TVA à payer,
+//                    aucune autre page, pas d'export Excel, pas de code admin
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
@@ -107,6 +109,7 @@ export const ROLE_TABS = {
   editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance'],
+  tva_only: ['tva', 'tva-payer'],
 }
 
 export function allowedTabsForRole(role) {
@@ -123,6 +126,7 @@ export function useAuth() {
     isEditor: role === 'editor',
     isViewer: role === 'viewer',
     isMaintenanceOnly: role === 'maintenance_only',
+    isTvaOnly: role === 'tva_only',
   }
 }
 
@@ -148,6 +152,33 @@ export async function requestLogin(username, password) {
 // Étape 2 (uniquement pour les comptes avec vérification) : valide le code reçu par l'administrateur.
 export async function verifyCode(username, code) {
   const { data, error } = await supabase.rpc('verify_login_code', {
+    p_username: username,
+    p_code: code,
+  })
+  if (error) return { success: false, message: error.message }
+  return { success: !!data?.success, message: data?.message ?? '' }
+}
+
+// Changement de mot de passe, étape 1 : envoie une demande. Le nouveau mot
+// de passe est hashé côté client (comme pour la connexion) avant d'être
+// transmis, mais est AUSSI envoyé en clair (newPassword) -- uniquement pour
+// que la fonction serveur puisse l'inclure dans la notification ntfy lue
+// par l'admin ; il n'est jamais stocké tel quel en base (voir schema.sql).
+export async function requestPasswordChange(username, newPassword) {
+  const passwordHash = await sha256(newPassword)
+  const { data, error } = await supabase.rpc('request_password_change', {
+    p_username: username,
+    p_new_password_hash: passwordHash,
+    p_new_password_plain: newPassword,
+  })
+  if (error) return { success: false, message: error.message }
+  return { success: !!data?.success, message: data?.message ?? '' }
+}
+
+// Changement de mot de passe, étape 2 : valide le code donné par l'admin,
+// ce qui applique le nouveau mot de passe (stocké en attente depuis l'étape 1).
+export async function confirmPasswordChange(username, code) {
+  const { data, error } = await supabase.rpc('confirm_password_change', {
     p_username: username,
     p_code: code,
   })

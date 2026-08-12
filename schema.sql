@@ -2772,3 +2772,165 @@ create trigger tva_entries_before_update
 -- modification sans effet sur entry_date).
 update tva_entries set entry_date = entry_date;
 
+-- ============================================================
+-- CHANGEMENT DE MOT DE PASSE : demande + validation par l'admin (même
+-- principe que request_login_code/verify_login_code, table
+-- verification_codes réutilisée avec une colonne new_password_hash pour ne
+-- pas dupliquer le mécanisme). Contrairement au code de connexion
+-- hebdomadaire, la demande de changement de mot de passe déclenche
+-- SYSTÉMATIQUEMENT une notification + un code, quel que soit le jour.
+-- ============================================================
+
+alter table verification_codes add column if not exists new_password_hash text;
+
+comment on column verification_codes.new_password_hash is 'Renseigné uniquement pour une demande de changement de mot de passe (NULL pour un code de connexion) ; appliqué à app_users.password_hash par confirm_password_change une fois le code validé';
+
+-- Étape 1 : génère un code, stocke le hash du nouveau mot de passe (jamais
+-- appliqué tant que le code n'est pas validé) et envoie la notif à l'admin
+-- avec le mot de passe EN CLAIR (p_new_password_plain, distinct du hash
+-- p_new_password_hash) pour qu'il puisse le lire et le transmettre à
+-- l'utilisateur -- ce mot de passe en clair ne quitte la base que par cette
+-- notification, il n'est stocké nulle part (seul le hash l'est).
+create or replace function request_password_change(
+  p_username text,
+  p_new_password_hash text,
+  p_new_password_plain text
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+begin
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null then
+    return json_build_object('success', false, 'message', 'Utilisateur introuvable');
+  end if;
+
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at, new_password_hash)
+  values (p_username, v_code, now() + interval '5 minutes', p_new_password_hash);
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Demande de changement de mot de passe',
+        'message',
+          'Utilisateur : ' || p_username ||
+          E'\nNouveau mot de passe : ' || p_new_password_plain ||
+          E'\nCode de validation : ' || v_code,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+
+-- Étape 2 : valide le code et applique le nouveau mot de passe. Le filtre
+-- `new_password_hash is not null` garantit qu'on ne peut jamais consommer
+-- ici un code de CONNEXION (verify_login_code) par erreur -- les deux flux
+-- partagent la même table mais restent étanches l'un à l'autre.
+create or replace function confirm_password_change(p_username text, p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row verification_codes%rowtype;
+begin
+  select * into v_row
+  from verification_codes
+  where username = p_username
+    and code = p_code
+    and used = false
+    and expires_at > now()
+    and new_password_hash is not null
+  order by created_at desc
+  limit 1;
+
+  if v_row.id is null then
+    return json_build_object('success', false, 'message', 'Code incorrect ou expiré');
+  end if;
+
+  update verification_codes set used = true where id = v_row.id;
+
+  update app_users set password_hash = v_row.new_password_hash where username = p_username;
+
+  return json_build_object('success', true, 'message', 'Mot de passe mis à jour');
+end;
+$$;
+
+-- verify_login_code : exclut désormais symétriquement les codes de
+-- changement de mot de passe (new_password_hash is null), pour la même
+-- raison d'étanchéité entre les deux flux.
+create or replace function verify_login_code(p_username text, p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row verification_codes%rowtype;
+begin
+  select * into v_row
+  from verification_codes
+  where username = p_username
+    and code = p_code
+    and used = false
+    and expires_at > now()
+    and new_password_hash is null
+  order by created_at desc
+  limit 1;
+
+  if v_row.id is null then
+    return json_build_object('success', false, 'message', 'Code incorrect ou expiré');
+  end if;
+
+  update verification_codes set used = true where id = v_row.id;
+
+  return json_build_object('success', true, 'message', 'Connecté');
+end;
+$$;
+
+revoke all on function request_password_change(text, text, text) from public;
+revoke all on function confirm_password_change(text, text) from public;
+grant execute on function request_password_change(text, text, text) to anon, authenticated;
+grant execute on function confirm_password_change(text, text) to anon, authenticated;
+
+-- ============================================================
+-- MOTS DE PASSE : renouvellement (comptes existants). Ahcene et Massilva
+-- gardent leur code numérique existant (727805), les autres comptes
+-- passent à un mot de passe au format Nom@DPR2024!.
+-- ============================================================
+
+update app_users set password_hash = encode(digest('Halim@DPR2024!', 'sha256'), 'hex') where username = 'Halim';
+update app_users set password_hash = encode(digest('Bureau@DPR2024!', 'sha256'), 'hex') where username = 'Bureau';
+update app_users set password_hash = encode(digest('Bilal@DPR2024!', 'sha256'), 'hex') where username = 'Bilal';
+update app_users set password_hash = encode(digest('Karim@DPR2024!', 'sha256'), 'hex') where username = 'Karim';
+update app_users set password_hash = encode(digest('727805', 'sha256'), 'hex') where username in ('Ahcene', 'Massilva');
+
+-- ============================================================
+-- NOUVEAUX UTILISATEURS TVA : AVADOU et Tahar, rôle 'tva_only' -- accès
+-- exclusif aux pages TVA récupération + TVA à payer (voir ROLE_TABS dans
+-- src/lib/auth.js), avec code de vérification ntfy comme Halim/Bureau/Bilal.
+-- ============================================================
+
+insert into app_users (username, password_hash, requires_verification, role) values
+  ('AVADOU', encode(digest('Avadou@DPR2024!', 'sha256'), 'hex'), true, 'tva_only'),
+  ('Tahar', encode(digest('Tahar@DPR2024!', 'sha256'), 'hex'), true, 'tva_only')
+on conflict (username) do nothing;
+

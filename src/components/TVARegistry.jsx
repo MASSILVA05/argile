@@ -23,7 +23,7 @@ const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1]
 
 export default function TVARegistry() {
-  const { isAdmin, isViewer } = useAuth()
+  const { isAdmin, isViewer, isTvaOnly } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -325,7 +325,7 @@ export default function TVARegistry() {
           >
             Imprimer
           </button>
-          {!isViewer && (
+          {!isViewer && !isTvaOnly && (
             <button
               type="button"
               onClick={() => { setExportError(''); setExportModalOpen(true) }}

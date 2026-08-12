@@ -22,7 +22,7 @@ function isPaid(mode) {
 const STATUS_OPTIONS = ['Payé', 'Non payé']
 
 export default function TVAPayerRegistry() {
-  const { isAdmin, isViewer } = useAuth()
+  const { isAdmin, isViewer, isTvaOnly } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -304,7 +304,7 @@ export default function TVAPayerRegistry() {
           >
             Imprimer
           </button>
-          {!isViewer && (
+          {!isViewer && !isTvaOnly && (
             <button
               type="button"
               onClick={() => { setExportError(''); setExportModalOpen(true) }}
