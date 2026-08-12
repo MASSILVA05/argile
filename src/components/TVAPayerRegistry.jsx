@@ -500,6 +500,17 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
     onChange({ ...draft, [field]: value })
   }
 
+  // Timbre > 0 : la facture est considérée réglée en espèces (même logique
+  // que TVAPayerForm.jsx). Si le timbre revient à 0/vide, le statut n'est
+  // pas remis à zéro pour autant -- l'utilisateur reste libre de son choix.
+  function setStampDuty(value) {
+    const patch = { stamp_duty: value }
+    if ((Number(value) || 0) > 0) {
+      patch.payment_mode = 'Espèces'
+    }
+    onChange({ ...draft, ...patch })
+  }
+
   const totalHt = Number(draft.total_ht) || 0
   const discountAmount = Number(draft.discount_amount) || 0
   const totalTva = (totalHt - discountAmount) * 0.19
@@ -528,7 +539,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td>{formatDA(totalTva)}</Td>
       <Td>{formatDA(totalTtc)}</Td>
       <Td>
-        <input type="number" step="0.01" value={draft.stamp_duty} onChange={(e) => set('stamp_duty', e.target.value)} className={editInputClass} />
+        <input type="number" step="0.01" value={draft.stamp_duty} onChange={(e) => setStampDuty(e.target.value)} className={editInputClass} />
       </Td>
       <Td>
         <span className="font-display text-ocre">{formatDA(totalNet)}</span>

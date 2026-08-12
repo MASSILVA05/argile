@@ -73,6 +73,7 @@ export default function TVAPayerImportTab() {
           total_ht: row.total_ht,
           discount_amount: row.discount_amount,
           stamp_duty: row.stamp_duty,
+          payment_mode: row.payment_mode,
           ref_commande: row.ref_commande,
           ref_livraison: row.ref_livraison,
           observations: 'Importé depuis fichier Excel',
@@ -146,6 +147,7 @@ export default function TVAPayerImportTab() {
                   <Th>Total HT</Th>
                   <Th>Remise</Th>
                   <Th>Timbre</Th>
+                  <Th>Paiement</Th>
                   <Th>Réf. Commande</Th>
                   <Th>Réf. Livraison</Th>
                 </tr>
@@ -162,6 +164,7 @@ export default function TVAPayerImportTab() {
                     <Td>{formatDA(row.total_ht)}</Td>
                     <Td>{formatDA(row.discount_amount)}</Td>
                     <Td>{formatDA(row.stamp_duty)}</Td>
+                    <Td>{row.payment_mode}</Td>
                     <Td>{row.ref_commande ?? ''}</Td>
                     <Td>{row.ref_livraison ?? ''}</Td>
                   </tr>

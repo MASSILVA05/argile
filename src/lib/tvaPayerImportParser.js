@@ -121,6 +121,7 @@ export function parseTvaPayerImportFile(arrayBuffer) {
     if (!clientName) continue
 
     const entryDate = parseDateCell(get('entry_date')) ?? new Date().toISOString().slice(0, 10)
+    const stampDuty = Number(get('stamp_duty')) || 0
 
     results.push({
       invoice_number: invoiceNumber,
@@ -128,7 +129,9 @@ export function parseTvaPayerImportFile(arrayBuffer) {
       client_name: clientName,
       total_ht: Number(get('total_ht')) || 0,
       discount_amount: Number(get('discount_amount')) || 0,
-      stamp_duty: Number(get('stamp_duty')) || 0,
+      stamp_duty: stampDuty,
+      // Timbre > 0 -> facture considérée réglée en espèces (voir TVAPayerForm).
+      payment_mode: stampDuty > 0 ? 'Espèces' : 'Non payé',
       ref_commande: String(get('ref_commande') ?? '').trim() || null,
       ref_livraison: String(get('ref_livraison') ?? '').trim() || null,
     })

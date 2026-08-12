@@ -68,6 +68,17 @@ export default function TVAPayerForm() {
   const stampDuty = Number(draft.stamp_duty) || 0
   const totalNet = totalTtc + stampDuty
 
+  // Timbre > 0 : la facture est considérée réglée en espèces (cas des
+  // paiements comptant sur place). Si le timbre revient à 0/vide, le statut
+  // n'est pas remis à zéro pour autant -- l'utilisateur reste libre de son
+  // choix dans ce cas.
+  useEffect(() => {
+    if (stampDuty > 0) {
+      update('payment_mode', 'Espèces')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stampDuty])
+
   function validate() {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
     if (!draft.entry_date) return 'La date est obligatoire.'
