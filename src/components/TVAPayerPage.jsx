@@ -2,6 +2,8 @@ import { useState } from 'react'
 import TVAPayerForm from './TVAPayerForm'
 import TVAPayerRegistry from './TVAPayerRegistry'
 import TVAPayerImportTab from './TVAPayerImportTab'
+import { useAuth } from '../lib/auth'
+import { ENTITIES } from '../lib/tvaPayment'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
@@ -11,9 +13,33 @@ const TABS = [
 
 export default function TVAPayerPage() {
   const [view, setView] = useState('form')
+  const { entity: userEntity, canSeeAllEntities } = useAuth()
+  const canChooseEntity = userEntity == null
+  const [selectedEntity, setSelectedEntity] = useState(userEntity ?? 'Briqueterie')
+
+  const entityFilter = userEntity ?? (selectedEntity === 'Tout' ? null : selectedEntity)
+  const formEntity = userEntity ?? (selectedEntity === 'Tout' ? 'Briqueterie' : selectedEntity)
 
   return (
     <div className="flex flex-col gap-4">
+      {canChooseEntity && (
+        <div className="no-print flex items-center gap-2">
+          <span className="text-sm text-ink-muted">Entité :</span>
+          <select
+            value={selectedEntity}
+            onChange={(e) => setSelectedEntity(e.target.value)}
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+          >
+            {ENTITIES.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+            {canSeeAllEntities && <option value="Tout">Tout</option>}
+          </select>
+        </div>
+      )}
+
       <nav className="no-print flex gap-2 overflow-x-auto">
         {TABS.map((t) => (
           <button
@@ -31,9 +57,9 @@ export default function TVAPayerPage() {
         ))}
       </nav>
 
-      {view === 'form' && <TVAPayerForm />}
-      {view === 'registry' && <TVAPayerRegistry />}
-      {view === 'import' && <TVAPayerImportTab />}
+      {view === 'form' && <TVAPayerForm entity={formEntity} canChooseEntity={canChooseEntity} />}
+      {view === 'registry' && <TVAPayerRegistry entityFilter={entityFilter} />}
+      {view === 'import' && <TVAPayerImportTab entityFilter={entityFilter} />}
     </div>
   )
 }

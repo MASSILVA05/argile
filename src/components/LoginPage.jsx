@@ -19,6 +19,7 @@ export default function LoginPage({ onLogin }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [pendingRole, setPendingRole] = useState(null)
+  const [pendingEntity, setPendingEntity] = useState(null)
   const [access, setAccess] = useState(() => getLoginAccessStatus(username))
 
   const [changeUsername, setChangeUsername] = useState(USERNAMES[0])
@@ -55,10 +56,11 @@ export default function LoginPage({ onLogin }) {
     }
     if (result.requiresVerification) {
       setPendingRole(result.role)
+      setPendingEntity(result.entity)
       setStep('code')
       return
     }
-    onLogin(saveSession(username, result.role))
+    onLogin(saveSession(username, result.role, result.entity))
   }
 
   async function handleCodeSubmit(e) {
@@ -76,7 +78,7 @@ export default function LoginPage({ onLogin }) {
       setError(result.message || 'Code incorrect ou expiré.')
       return
     }
-    onLogin(saveSession(username, pendingRole))
+    onLogin(saveSession(username, pendingRole, pendingEntity))
   }
 
   function openChangeRequest() {

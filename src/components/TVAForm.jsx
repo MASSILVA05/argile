@@ -5,7 +5,7 @@ import { sendTvaEmail } from '../lib/email'
 import { uploadTvaPhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { getSession } from '../lib/auth'
-import { PAYMENT_MODES, MONTHS } from '../lib/tvaPayment'
+import { PAYMENT_MODES, MONTHS, ENTITIES } from '../lib/tvaPayment'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -40,8 +40,8 @@ const emptyDraft = {
   observations: '',
 }
 
-export default function TVAForm() {
-  const [draft, setDraft] = useState(emptyDraft)
+export default function TVAForm({ entity, canChooseEntity }) {
+  const [draft, setDraft] = useState(() => ({ ...emptyDraft, entity }))
   const [suppliers, setSuppliers] = useState([])
   const [addresses, setAddresses] = useState([])
   const [banks, setBanks] = useState([])
@@ -55,6 +55,14 @@ export default function TVAForm() {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // Si l'entité par défaut change (sélecteur en haut de TVAPage.jsx changé
+  // par un admin/Tahar), la re-répercute dans le formulaire -- sauf si
+  // l'entité est fixe (Halim/AVADOU), auquel cas elle ne bouge jamais.
+  useEffect(() => {
+    setDraft((d) => ({ ...d, entity }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity])
 
   function dedupe(list) {
     return [...new Set((list ?? []).filter(Boolean))]
@@ -173,6 +181,7 @@ export default function TVAForm() {
 
       const payload = {
         invoice_number: invoiceNumber,
+        entity: draft.entity,
         piece_number: draft.piece_number.trim() || null,
         entry_date: draft.entry_date,
         entry_time: formatHHMM(new Date()),
@@ -223,7 +232,7 @@ export default function TVAForm() {
       setBanks((p) => dedupe([payload.cheque_bank, ...p]))
 
       setTvaTouched(false)
-      setDraft((d) => ({ ...emptyDraft, entry_date: d.entry_date, recovery_month: d.recovery_month, recovery_year: d.recovery_year }))
+      setDraft((d) => ({ ...emptyDraft, entity: d.entity, entry_date: d.entry_date, recovery_month: d.recovery_month, recovery_year: d.recovery_year }))
       setSuccess(`Facture n° ${invoiceNumber} enregistrée.`)
     } catch (err) {
       setError(`Erreur d'enregistrement : ${err.message}`)
@@ -234,6 +243,18 @@ export default function TVAForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {canChooseEntity && (
+        <Field label="Entité" required>
+          <select value={draft.entity} onChange={(e) => update('entity', e.target.value)} className={inputClass}>
+            {ENTITIES.map((e) => (
+              <option key={e} value={e}>
+                {e}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="N° Facture" required>
           <input

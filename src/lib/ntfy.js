@@ -165,7 +165,7 @@ export function notifyTvaEntry(entry) {
   lines.push(`Paiement : ${entry.payment_mode ?? 'Non payé'}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy(TOPIC_TVA, 'Nouvelle facture TVA', lines, 'receipt')
+  return sendNtfy(TOPIC_TVA, `TVA ${entry.entity ?? 'Briqueterie'} — Nouvelle facture`, lines, 'receipt')
 }
 
 export function notifyTvaPayerEntry(entry) {
@@ -185,7 +185,7 @@ export function notifyTvaPayerEntry(entry) {
   lines.push(`Paiement : ${entry.payment_mode ?? 'Non payé'}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy(TOPIC_TVA, 'Nouvelle facture TVA à payer', lines, 'receipt')
+  return sendNtfy(TOPIC_TVA, `TVA ${entry.entity ?? 'Briqueterie'} — Nouvelle facture à payer`, lines, 'receipt')
 }
 
 export function notifyClientAdvance(advance) {

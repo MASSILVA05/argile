@@ -1,5 +1,7 @@
 export const PAYMENT_MODES = ['Espèces', 'Chèque', 'Versement', 'Virement', 'Non payé']
 
+export const ENTITIES = ['Briqueterie', 'AVADOU']
+
 export const MONTHS = [
   'Janvier',
   'Février',

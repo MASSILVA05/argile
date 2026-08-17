@@ -22,8 +22,8 @@ function formatDANullable(value) {
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1]
 
-export default function TVARegistry() {
-  const { isAdmin, isViewer, isTvaOnly } = useAuth()
+export default function TVARegistry({ entityFilter }) {
+  const { isAdmin, isViewer } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -48,11 +48,13 @@ export default function TVARegistry() {
 
     async function load() {
       setLoading(true)
-      const { data, error: fetchError } = await supabase
+      let query = supabase
         .from('tva_entries')
         .select('*')
         .order('entry_date', { ascending: false })
         .order('created_at', { ascending: false })
+      if (entityFilter) query = query.eq('entity', entityFilter)
+      const { data, error: fetchError } = await query
       if (!active) return
       if (fetchError) {
         setError(`Erreur de chargement : ${fetchError.message}`)
@@ -66,17 +68,26 @@ export default function TVARegistry() {
     load()
 
     const channel = supabase
-      .channel('tva-entries-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tva_entries' }, (payload) => {
-        setEntries((current) => applyRealtimeChange(current, payload))
-      })
+      .channel(`tva-entries-registry-${entityFilter ?? 'all'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tva_entries',
+          ...(entityFilter ? { filter: `entity=eq.${entityFilter}` } : {}),
+        },
+        (payload) => {
+          setEntries((current) => applyRealtimeChange(current, payload))
+        }
+      )
       .subscribe()
 
     return () => {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [entityFilter])
 
   const banks = useMemo(() => [...new Set(entries.map((e) => e.cheque_bank).filter(Boolean))], [entries])
 
@@ -325,7 +336,7 @@ export default function TVARegistry() {
           >
             Imprimer
           </button>
-          {!isViewer && !isTvaOnly && (
+          {!isViewer && (
             <button
               type="button"
               onClick={() => { setExportError(''); setExportModalOpen(true) }}
@@ -380,6 +391,7 @@ export default function TVARegistry() {
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>N° Fact</Th>
+                  <Th>Entité</Th>
                   <Th>N° Pièce</Th>
                   <Th>Date</Th>
                   <Th>Saisie le</Th>
@@ -414,6 +426,7 @@ export default function TVARegistry() {
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.invoice_number}</Td>
+                      <Td>{entry.entity ?? '—'}</Td>
                       <Td>{entry.piece_number ?? '—'}</Td>
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
@@ -526,6 +539,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       <Td sticky="bg-bg-soft">
         <input type="text" value={draft.invoice_number} onChange={(e) => set('invoice_number', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{draft.entity ?? '—'}</Td>
       <Td>
         <input type="text" value={draft.piece_number ?? ''} onChange={(e) => set('piece_number', e.target.value)} className={editInputClass} />
       </Td>

@@ -82,10 +82,10 @@ export function getSession() {
   }
 }
 
-export function saveSession(username, role) {
+export function saveSession(username, role, entity = null) {
   const loginTime = Date.now()
   const expiresAt = nextWorkEndTimestamp(new Date(loginTime))
-  const session = { username, role, loginTime, expiresAt }
+  const session = { username, role, entity, loginTime, expiresAt }
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   return session
 }
@@ -95,12 +95,24 @@ export function clearSession() {
 }
 
 // admin            : tout accès, seul rôle pouvant utiliser le code admin (déblocage 72h)
-// editor           : saisie + consultation + export, pas de code admin
+// editor (Halim, Bureau) : saisie + consultation + export, pas de code admin
+//                    -- NOTE : Halim et Bureau partagent ce même rôle, donc
+//                    Bureau a techniquement accès aux pages TVA comme Halim
+//                    (contrairement à ce que documentait ce commentaire
+//                    avant l'ajout du cloisonnement par entité ci-dessous).
+//                    Seul Halim est cloisonné sur l'entité 'Briqueterie'
+//                    (voir request_login_code dans schema.sql) ; Bureau,
+//                    n'ayant pas d'entité fixe, verrait un choix libre
+//                    Briqueterie/AVADOU comme Tahar s'il ouvrait ces pages.
 // viewer (Bilal)   : Chargement (saisie + registre) + Maintenance (saisie +
 //                    registre), aucune autre page, pas d'export Excel
-// maintenance_only (Karim) : uniquement Maintenance (saisie + registre)
+// maintenance_only (Karim) : uniquement Maintenance (saisie + registre),
+//                    export Excel autorisé
 // tva_only (AVADOU, Tahar) : uniquement TVA récupération + TVA à payer,
-//                    aucune autre page, pas d'export Excel, pas de code admin
+//                    aucune autre page, export Excel autorisé, pas de code
+//                    admin. AVADOU est cloisonné sur l'entité 'AVADOU',
+//                    Tahar choisit librement (Briqueterie/AVADOU) --
+//                    voir TVAPage.jsx / TVAPayerPage.jsx.
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
@@ -127,6 +139,10 @@ export function useAuth() {
     isViewer: role === 'viewer',
     isMaintenanceOnly: role === 'maintenance_only',
     isTvaOnly: role === 'tva_only',
+    // Entité TVA fixe de l'utilisateur (Halim -> 'Briqueterie', AVADOU ->
+    // 'AVADOU'), NULL si l'utilisateur choisit librement (Tahar, admins).
+    entity: session?.entity ?? null,
+    canSeeAllEntities: role === 'admin',
   }
 }
 
@@ -145,6 +161,7 @@ export async function requestLogin(username, password) {
     success: !!data?.success,
     requiresVerification: !!data?.requires_verification,
     role: data?.role ?? null,
+    entity: data?.entity ?? null,
     message: data?.message ?? '',
   }
 }

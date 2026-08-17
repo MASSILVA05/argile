@@ -30,6 +30,7 @@ function formatDateFR(iso) {
 // totaux "Nombre de lignes :".
 const COLUMNS = [
   { header: 'Numéro', key: 'invoice_number', width: 16 },
+  { header: 'Entité', key: 'entity', width: 14 },
   { header: 'Du', key: 'entry_date', width: 12 },
   { header: 'Client', key: 'client_name', width: 34 },
   { header: 'Total HT', key: 'total_ht', width: 16 },
@@ -82,6 +83,7 @@ export async function downloadTvaPayerExcel(entries, { startDate, endDate } = {}
   for (const entry of entries) {
     const row = sheet.addRow({
       invoice_number: entry.invoice_number,
+      entity: entry.entity ?? '',
       entry_date: formatDateFR(entry.entry_date),
       client_name: entry.client_name,
       total_ht: Number(entry.total_ht) || 0,

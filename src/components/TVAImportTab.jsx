@@ -12,7 +12,7 @@ function formatDANullable(value) {
   return value == null ? '—' : formatDA(value)
 }
 
-export default function TVAImportTab() {
+export default function TVAImportTab({ entityFilter }) {
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState([])
   const [parseError, setParseError] = useState('')
@@ -53,7 +53,7 @@ export default function TVAImportTab() {
 
   async function handleImport() {
     const toImport = rows.filter((r) => r.selected)
-    if (toImport.length === 0) return
+    if (toImport.length === 0 || !entityFilter) return
     setImporting(true)
     setSummary(null)
     setProgress({ done: 0, total: toImport.length })
@@ -68,6 +68,7 @@ export default function TVAImportTab() {
       try {
         const payload = {
           invoice_number: row.invoice_number,
+          entity: entityFilter,
           piece_number: row.piece_number,
           entry_date: row.entry_date,
           recovery_month: row.recovery_month,
@@ -111,16 +112,34 @@ export default function TVAImportTab() {
 
   return (
     <div className="flex flex-col gap-4">
+      {!entityFilter && (
+        <p className="rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-3 text-sm text-ocre">
+          Choisissez une entité précise (Briqueterie ou AVADOU) dans le sélecteur en haut de la page avant
+          d'importer — l'import n'est pas possible avec "Tout" sélectionné.
+        </p>
+      )}
+
       <div className="flex flex-col gap-2">
-        <label className="min-h-11 inline-flex w-fit cursor-pointer items-center rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10">
+        <label
+          className={`min-h-11 inline-flex w-fit items-center rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors ${
+            entityFilter ? 'cursor-pointer hover:bg-ocre/10' : 'cursor-not-allowed opacity-50'
+          }`}
+        >
           Choisir un fichier .xls/.xlsx
-          <input type="file" accept=".xls,.xlsx" onChange={handleFileChange} className="hidden" />
+          <input
+            type="file"
+            accept=".xls,.xlsx"
+            onChange={handleFileChange}
+            disabled={!entityFilter}
+            className="hidden"
+          />
         </label>
         {fileName && <p className="text-sm text-ink-muted">Fichier : {fileName}</p>}
         <p className="text-xs text-ink-muted">
           Colonnes détectées automatiquement par en-tête (N° FACT, DATE, NOM DE FOURNISSEUR, ADRESSE, TOTAL HT, TVA…).
           N° Pièce et Mois de récupération, absents du fichier, restent vides — à compléter plus tard dans le
           registre. Total HT reste vide pour les lignes sans montant HT (quittances douane).
+          {entityFilter && ` Import pour l'entité : ${entityFilter}.`}
         </p>
       </div>
 
@@ -221,7 +240,7 @@ export default function TVAImportTab() {
           <button
             type="button"
             onClick={handleImport}
-            disabled={importing || selectedCount === 0}
+            disabled={importing || selectedCount === 0 || !entityFilter}
             className="min-h-12 rounded-lg bg-terracotta px-4 py-3 font-display text-lg font-medium tracking-wide text-ink transition-colors hover:bg-terracotta-hover disabled:opacity-50"
           >
             {importing ? 'Import en cours…' : `Importer les lignes sélectionnées (${selectedCount})`}

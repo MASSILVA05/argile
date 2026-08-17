@@ -2934,3 +2934,99 @@ insert into app_users (username, password_hash, requires_verification, role) val
   ('Tahar', encode(digest('Tahar@DPR2024!', 'sha256'), 'hex'), true, 'tva_only')
 on conflict (username) do nothing;
 
+-- ============================================================
+-- TVA PAR ENTITÉ : "Briqueterie" (DPR AXXAM, gérée par Halim) et "AVADOU"
+-- (gérée par AVADOU) ont chacune leur propre comptabilité TVA. Halim et
+-- AVADOU sont cloisonnés sur leur entité ; Tahar et les admins voient/
+-- saisissent pour les deux (sélecteur côté interface, voir TVAPage.jsx /
+-- TVAPayerPage.jsx).
+--
+-- NOTE : `tva_payer_entries` n'a jamais été ajoutée à ce fichier schema.sql
+-- (créée directement en base à un moment non documenté ici) -- seul l'ALTER
+-- ci-dessous est donc fourni pour cette table, pas son CREATE TABLE.
+-- ============================================================
+
+alter table tva_entries add column if not exists entity text not null default 'Briqueterie'
+  check (entity in ('Briqueterie', 'AVADOU'));
+alter table tva_payer_entries add column if not exists entity text not null default 'Briqueterie'
+  check (entity in ('Briqueterie', 'AVADOU'));
+
+create index if not exists tva_entries_entity_idx on tva_entries (entity);
+create index if not exists tva_payer_entries_entity_idx on tva_payer_entries (entity);
+
+comment on column tva_entries.entity is 'Entité comptable TVA : Briqueterie (DPR AXXAM) ou AVADOU';
+comment on column tva_payer_entries.entity is 'Entité comptable TVA : Briqueterie (DPR AXXAM) ou AVADOU';
+
+-- request_login_code renvoie désormais aussi l'entité TVA par défaut de
+-- l'utilisateur : 'Briqueterie' pour Halim, 'AVADOU' pour AVADOU, NULL pour
+-- tous les autres (Tahar/admins : pas de restriction, choix libre côté
+-- interface ; Bureau/Bilal/Karim : sans objet, ces rôles n'ont de toute
+-- façon pas accès aux pages TVA -- voir ROLE_TABS dans src/lib/auth.js).
+create or replace function request_login_code(p_username text, p_password_hash text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+  v_dow int;
+  v_entity text;
+begin
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null or v_user.password_hash <> p_password_hash then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Identifiants invalides');
+  end if;
+
+  v_entity := case
+    when p_username = 'Halim' then 'Briqueterie'
+    when p_username = 'AVADOU' then 'AVADOU'
+    else null
+  end;
+
+  if not v_user.requires_verification then
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'entity', v_entity, 'message', 'Connecté');
+  end if;
+
+  -- Jour de la semaine en Algérie (0 = dimanche ... 5 = vendredi, 6 = samedi).
+  v_dow := extract(dow from (now() at time zone 'Africa/Algiers'));
+
+  if v_dow = 5 then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Jour de repos — accès indisponible');
+  end if;
+
+  if v_dow <> 6 then
+    -- Dimanche à jeudi : mot de passe seul suffit, pas de code.
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'entity', v_entity, 'message', 'Connecté');
+  end if;
+
+  -- Samedi : code de vérification requis.
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at)
+  values (p_username, v_code, now() + interval '5 minutes');
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Code de connexion',
+        'message', 'Code de connexion : ' || v_code || ' — Demandé par : ' || p_username,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'requires_verification', true, 'role', v_user.role, 'entity', v_entity, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+-- Le grant execute existant sur request_login_code(text, text) reste valide
+-- (create or replace ne modifie pas les privilèges déjà accordés).
+
