@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef']
 
 // Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
@@ -113,6 +113,11 @@ export function clearSession() {
 //                    admin. AVADOU est cloisonné sur l'entité 'AVADOU',
 //                    Tahar choisit librement (Briqueterie/AVADOU) --
 //                    voir TVAPage.jsx / TVAPayerPage.jsx.
+// youcef_role (Youcef) : uniquement Carburant + Sable + Factures, export
+//                    Excel autorisé, modification/suppression dans les 72h,
+//                    pas de code admin. Dans Factures, limité aux sous-onglets
+//                    Saisie + Registre (pas Avances/Stock/Mouvements/G50) --
+//                    voir InvoicesPage.jsx.
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
@@ -122,6 +127,7 @@ export const ROLE_TABS = {
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance'],
   tva_only: ['tva', 'tva-payer'],
+  youcef_role: ['fuel', 'sand', 'invoices'],
 }
 
 export function allowedTabsForRole(role) {
@@ -139,6 +145,7 @@ export function useAuth() {
     isViewer: role === 'viewer',
     isMaintenanceOnly: role === 'maintenance_only',
     isTvaOnly: role === 'tva_only',
+    isYoucefRole: role === 'youcef_role',
     // Entité TVA fixe de l'utilisateur (Halim -> 'Briqueterie', AVADOU ->
     // 'AVADOU'), NULL si l'utilisateur choisit librement (Tahar, admins).
     entity: session?.entity ?? null,

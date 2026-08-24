@@ -7,6 +7,7 @@ import StockMovementsTab from './StockMovementsTab'
 import ClientBalancesModal from './ClientBalancesModal'
 import ImportG50Tab from './ImportG50Tab'
 import GenerateG50Tab from './GenerateG50Tab'
+import { useAuth } from '../lib/auth'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
@@ -18,7 +19,14 @@ const TABS = [
   { id: 'generate-g50', label: 'Générer G50' },
 ]
 
+// Youcef (youcef_role) n'a accès qu'à Factures parmi les pages "avancées" de
+// ce module, et seulement pour la saisie + consultation -- pas Avances/Stock/
+// Mouvements/G50 (voir ROLE_TABS dans src/lib/auth.js).
+const RESTRICTED_TABS = TABS.filter((t) => t.id === 'form' || t.id === 'registry')
+
 export default function InvoicesPage() {
+  const { isYoucefRole } = useAuth()
+  const tabs = isYoucefRole ? RESTRICTED_TABS : TABS
   const [view, setView] = useState('form')
   const [balancesOpen, setBalancesOpen] = useState(false)
 
@@ -26,7 +34,7 @@ export default function InvoicesPage() {
     <div className="flex flex-col gap-4">
       <div className="no-print flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <nav className="flex gap-2 overflow-x-auto">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -42,24 +50,26 @@ export default function InvoicesPage() {
           ))}
         </nav>
 
-        <button
-          type="button"
-          onClick={() => setBalancesOpen(true)}
-          className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
-        >
-          Voir tous les soldes
-        </button>
+        {!isYoucefRole && (
+          <button
+            type="button"
+            onClick={() => setBalancesOpen(true)}
+            className="min-h-11 shrink-0 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Voir tous les soldes
+          </button>
+        )}
       </div>
 
       {view === 'form' && <InvoiceForm />}
       {view === 'registry' && <InvoiceRegistry />}
-      {view === 'advances' && <AdvancesTab />}
-      {view === 'stock' && <StockTab />}
-      {view === 'movements' && <StockMovementsTab />}
-      {view === 'import-g50' && <ImportG50Tab />}
-      {view === 'generate-g50' && <GenerateG50Tab />}
+      {!isYoucefRole && view === 'advances' && <AdvancesTab />}
+      {!isYoucefRole && view === 'stock' && <StockTab />}
+      {!isYoucefRole && view === 'movements' && <StockMovementsTab />}
+      {!isYoucefRole && view === 'import-g50' && <ImportG50Tab />}
+      {!isYoucefRole && view === 'generate-g50' && <GenerateG50Tab />}
 
-      <ClientBalancesModal open={balancesOpen} onClose={() => setBalancesOpen(false)} />
+      {!isYoucefRole && <ClientBalancesModal open={balancesOpen} onClose={() => setBalancesOpen(false)} />}
     </div>
   )
 }
