@@ -12,6 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
+import { printRegistry } from '../lib/printRegistry'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -117,6 +118,49 @@ export default function TVARegistry({ entityFilter }) {
       { count: 0, totalHt: 0, tva: 0, totalTtc: 0, totalNet: 0 }
     )
   }, [filtered])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (monthFilter) filterParts.push(`Mois récup. : ${monthFilter}`)
+    if (yearFilter) filterParts.push(`Année : ${yearFilter}`)
+    if (paymentFilter) filterParts.push(`Paiement : ${paymentFilter}`)
+
+    printRegistry({
+      subtitle: 'Registre TVA',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'invoice_number', label: 'N° Fact' },
+        { key: 'entity', label: 'Entité' },
+        { key: 'piece_number', label: 'N° Pièce' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'recovery', label: 'Mois récup.' },
+        { key: 'supplier_name', label: 'Fournisseur' },
+        { key: 'supplier_address', label: 'Adresse' },
+        { key: 'total_ht', label: 'HT', align: 'right', format: (v) => formatDA(v) },
+        { key: 'discount_amount', label: 'Remise', align: 'right', format: (v) => formatDA(v) },
+        { key: 'ht_net', label: 'HT Net', align: 'right', format: (v) => formatDA(v) },
+        { key: 'tva_amount', label: 'TVA', align: 'right', format: (v) => formatDA(v) },
+        { key: 'dd_amount', label: 'DD', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_ttc', label: 'TTC', align: 'right', format: (v) => formatDA(v) },
+        { key: 'stamp_duty', label: 'Timbre', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
+        { key: 'payment_mode', label: 'Paiement' },
+        { key: 'photo_url', label: 'Photo', format: (v) => (v ? 'Oui' : 'Non') },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered.map((e) => ({ ...e, recovery: recoveryLabel(e.recovery_month, e.recovery_year) })),
+      totals: {
+        invoice_number: 'TOTAL',
+        total_ht: formatDA(totals.totalHt),
+        tva_amount: formatDA(totals.tva),
+        total_ttc: formatDA(totals.totalTtc),
+        total_net: formatDA(totals.totalNet),
+      },
+    })
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -395,7 +439,7 @@ export default function TVARegistry({ entityFilter }) {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

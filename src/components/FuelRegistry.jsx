@@ -11,6 +11,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
+import { printRegistry } from '../lib/printRegistry'
 
 const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
 
@@ -86,6 +87,36 @@ export default function FuelRegistry() {
       )
     })
   }, [entries, query, typeFilter])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (typeFilter) filterParts.push(`Type : ${typeFilter}`)
+
+    const volumeSum = filtered.reduce((sum, e) => sum + (Number(e.volume_liters) || 0), 0)
+
+    printRegistry({
+      subtitle: 'Registre Carburant',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'bon_number', label: 'Bon' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
+        { key: 'operation_type', label: 'Type' },
+        { key: 'truck_plate', label: 'Matricule' },
+        { key: 'driver_name', label: 'Chauffeur' },
+        { key: 'volume_liters', label: 'Volume (L)', align: 'right', format: (v) => Number(v).toLocaleString('fr-FR') },
+        { key: 'supplier_name', label: 'Fournisseur' },
+        { key: 'tank_volume_after', label: 'Réserve après', align: 'right', format: (v) => `${Number(v).toLocaleString('fr-FR')} L` },
+        { key: 'observations', label: 'Observations' },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered,
+      totals: { bon_number: 'TOTAL', volume_liters: volumeSum.toLocaleString('fr-FR') },
+    })
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -295,7 +326,7 @@ export default function FuelRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

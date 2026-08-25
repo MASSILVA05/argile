@@ -12,6 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
+import { printRegistry } from '../lib/printRegistry'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -127,6 +128,68 @@ export default function InvoiceRegistry() {
       { count: 0, amount: 0, discount: 0, total: 0, settlement: 0, balance: 0, totalTva: 0, totalTtc: 0, stampDuty: 0, totalNet: 0 }
     )
   }, [filtered])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (paymentFilter) filterParts.push(`Paiement : ${paymentFilter}`)
+    if (startDate) filterParts.push(`Du ${startDate}`)
+    if (endDate) filterParts.push(`Au ${endDate}`)
+
+    printRegistry({
+      subtitle: 'Registre Factures',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'invoice_number', label: 'N° Facture' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'client_name', label: 'Client' },
+        { key: 'client_code', label: 'Code' },
+        { key: 'designation_label', label: 'Désignation' },
+        { key: 'bl_number', label: 'N° BL' },
+        { key: 'qty_b8', label: 'B8 (T)', align: 'right' },
+        { key: 'qty_b12', label: 'B12 (T)', align: 'right' },
+        { key: 'qty_h', label: 'Autre (H)', align: 'right' },
+        { key: 'price_b8', label: 'Prix B8', align: 'right' },
+        { key: 'price_b12', label: 'Prix B12', align: 'right' },
+        { key: 'price_h', label: 'Prix H', align: 'right' },
+        { key: 'amount', label: 'Montant', align: 'right', format: (v) => formatDA(v) },
+        { key: 'discount_amount', label: 'Remise', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total', label: 'Total', align: 'right', format: (v) => formatDA(v) },
+        { key: 'settlement', label: 'Règlement', align: 'right', format: (v) => formatDA(v) },
+        { key: 'disbursement', label: 'Décaissement', align: 'right', format: (v) => formatDA(v) },
+        { key: 'driver_name', label: 'Chauffeur' },
+        { key: 'truck_plate', label: 'Immat' },
+        { key: 'payment_type', label: 'Type (N/B)' },
+        { key: 'balance', label: 'Solde', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_tva', label: 'TVA', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_ttc', label: 'TTC', align: 'right', format: (v) => formatDA(v) },
+        { key: 'stamp_duty', label: 'Timbre', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
+        { key: 'payment_status', label: 'Paiement' },
+        { key: 'observations', label: 'Observations' },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered.map((e) => ({
+        ...e,
+        designation_label: designationLabel(e),
+        client_code: clientInfoByName.get(e.client_name)?.client_code ?? '',
+      })),
+      totals: {
+        invoice_number: 'TOTAL',
+        amount: formatDA(totals.amount),
+        discount_amount: formatDA(totals.discount),
+        total: formatDA(totals.total),
+        settlement: formatDA(totals.settlement),
+        balance: formatDA(totals.balance),
+        total_tva: formatDA(totals.totalTva),
+        total_ttc: formatDA(totals.totalTtc),
+        stamp_duty: formatDA(totals.stampDuty),
+        total_net: formatDA(totals.totalNet),
+      },
+    })
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -426,7 +489,7 @@ export default function InvoiceRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

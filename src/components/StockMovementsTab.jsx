@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { downloadStockExcel } from '../lib/stockExcel'
 import { formatDateTime } from '../lib/dateFormat'
 import PrintHeader from './PrintHeader'
+import { printRegistry } from '../lib/printRegistry'
 
 const PRODUCTS = ['B8', 'B12']
 const MOVEMENT_TYPES = ['Production', 'Vente', 'Ajustement']
@@ -83,7 +84,54 @@ export default function StockMovementsTab() {
   }
 
   function handlePrint() {
-    window.print()
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (productFilter) filterParts.push(`Produit : ${productFilter}`)
+    if (typeFilter) filterParts.push(`Type : ${typeFilter}`)
+    if (startDate) filterParts.push(`Du ${startDate}`)
+    if (endDate) filterParts.push(`Au ${endDate}`)
+
+    printRegistry({
+      subtitle: 'Mouvements de stock',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'entry_time', label: 'Heure', format: (v) => (v ? v.slice(0, 5) : '—') },
+        { key: 'product_name', label: 'Produit' },
+        { key: 'movement_type', label: 'Type' },
+        { key: 'cadence_theorique', label: 'Cadence théo.', align: 'right' },
+        { key: 'feuillard', label: 'Feuillard', align: 'right' },
+        { key: 'report', label: 'Report', align: 'right' },
+        { key: 'cadence_reelle', label: 'Cadence réelle', align: 'right' },
+        { key: 'consommation', label: 'Consommation', align: 'right' },
+        { key: 'stock_final', label: 'Stock final', align: 'right' },
+        { key: 'nb_wagon', label: 'Nb WAGON', align: 'right' },
+        { key: 'nb_paquet', label: 'Nb PAQUET', align: 'right' },
+        { key: 'total_wagon', label: 'Total WAGON', align: 'right' },
+        { key: 'total_paquets', label: 'Total PAQUETS', align: 'right' },
+        { key: 'nb_briques', label: 'Nb briques', align: 'right' },
+        { key: 'commercial', label: 'Commercial', align: 'right' },
+        { key: 'stocks_fin_journee', label: 'Stock fin journée', align: 'right' },
+        { key: 'quantity_display', label: 'Quantité', align: 'right' },
+        { key: 'stock_after', label: 'Stock après', align: 'right', format: (v) => formatQty(v) },
+        { key: 'reference', label: 'Référence' },
+        { key: 'observations', label: 'Observations' },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered.map((m) => {
+        const isProduction = m.movement_type === 'Production'
+        return {
+          ...m,
+          report: isProduction ? formatQty(m.stock_start) : '—',
+          stock_final: isProduction ? formatQty(m.stock_final) : '—',
+          commercial: isProduction ? formatQty(m.commercial) : '—',
+          stocks_fin_journee: isProduction ? formatQty(m.stocks_fin_journee) : '—',
+          quantity_display: `${Number(m.quantity) > 0 ? '+' : ''}${formatQty(m.quantity)}`,
+        }
+      }),
+    })
   }
 
   return (

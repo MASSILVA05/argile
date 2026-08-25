@@ -11,6 +11,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
+import { printRegistry } from '../lib/printRegistry'
 
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
@@ -86,6 +87,40 @@ export default function MaintenanceRegistry() {
       )
     })
   }, [entries, query, paidFilter])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (paidFilter) filterParts.push(`Statut : ${paidFilter}`)
+
+    const amountSum = filtered.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+
+    printRegistry({
+      subtitle: 'Registre Maintenance',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'fiche_number', label: 'Fiche' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
+        { key: 'machine_name', label: 'Machine' },
+        { key: 'problem_description', label: 'Problème' },
+        { key: 'supplier_name', label: 'Fournisseur' },
+        { key: 'purchased_by', label: 'Acheté par' },
+        { key: 'entered_by', label: 'Renseigné par' },
+        { key: 'requested_by', label: 'Demandé par' },
+        { key: 'amount', label: 'Montant', align: 'right', format: (v) => formatDA(v) },
+        { key: 'is_paid', label: 'Payé' },
+        { key: 'machine_photo_url', label: 'Photo machine', format: (v) => (v ? 'Oui' : 'Non') },
+        { key: 'receipt_photo_url', label: 'Photo bon', format: (v) => (v ? 'Oui' : 'Non') },
+        { key: 'observations', label: 'Observations' },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered,
+      totals: { fiche_number: 'TOTAL', amount: formatDA(amountSum) },
+    })
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -304,7 +339,7 @@ export default function MaintenanceRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

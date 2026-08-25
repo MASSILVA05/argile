@@ -12,6 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
+import { printRegistry } from '../lib/printRegistry'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -91,6 +92,37 @@ export default function Registry() {
     const weight = filtered.reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
     return { count: filtered.length, weight }
   }, [filtered])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (typeFilter) filterParts.push(`Type : ${typeFilter}`)
+
+    printRegistry({
+      subtitle: 'Registre de Chargement',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'bon_number', label: 'Bon' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
+        { key: 'truck_plate', label: 'Matricule' },
+        { key: 'driver_name', label: 'Chauffeur' },
+        { key: 'unloading_type', label: 'Type' },
+        { key: 'ticket_number', label: 'Ticket' },
+        { key: 'weight_tons', label: 'Poids (T)', align: 'right', format: (v) => Number(v).toFixed(2) },
+        { key: 'photo_url', label: 'Photo', format: (v) => (v ? 'Oui' : 'Non') },
+        { key: 'observations', label: 'Observations' },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered,
+      totals: {
+        bon_number: `${totals.count} bon${totals.count > 1 ? 's' : ''}`,
+        weight_tons: totals.weight.toFixed(2),
+      },
+    })
+  }
 
   function sheetNameOptions(typeId) {
     const field = typeId === 'matricule' ? 'truck_plate' : 'driver_name'
@@ -313,7 +345,7 @@ export default function Registry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

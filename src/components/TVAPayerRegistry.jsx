@@ -10,6 +10,7 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 import PrintHeader from './PrintHeader'
+import { printRegistry } from '../lib/printRegistry'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -119,6 +120,51 @@ export default function TVAPayerRegistry({ entityFilter }) {
       { count: 0, totalHt: 0, discount: 0, totalTva: 0, totalTtc: 0, stampDuty: 0, totalNet: 0 }
     )
   }, [filtered])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (clientFilter) filterParts.push(`Client : ${clientFilter}`)
+    if (statusFilter) filterParts.push(`Statut : ${statusFilter}`)
+    if (startDate) filterParts.push(`Du ${startDate}`)
+    if (endDate) filterParts.push(`Au ${endDate}`)
+
+    printRegistry({
+      subtitle: 'Registre TVA à payer',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'invoice_number', label: 'Numéro' },
+        { key: 'entity', label: 'Entité' },
+        { key: 'entry_date', label: 'Du' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'client_name', label: 'Client' },
+        { key: 'total_ht', label: 'Total HT', align: 'right', format: (v) => formatDA(v) },
+        { key: 'discount_amount', label: 'Remise', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_tva', label: 'Total TVA', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_ttc', label: 'Total TTC', align: 'right', format: (v) => formatDA(v) },
+        { key: 'stamp_duty', label: 'Timbre', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_net', label: 'Total net', align: 'right', format: (v) => formatDA(v) },
+        { key: 'ref_commande', label: 'Réf. Commande' },
+        { key: 'ref_livraison', label: 'Réf. Livraison' },
+        { key: 'payment_mode', label: 'Paiement' },
+        { key: 'status_label', label: 'Statut' },
+        { key: 'photo_url', label: 'Photo', format: (v) => (v ? 'Oui' : 'Non') },
+        { key: 'observations', label: 'Observations' },
+        { key: 'entered_by_user', label: 'Saisi par' },
+      ],
+      rows: filtered.map((e) => ({ ...e, status_label: isPaid(e.payment_mode) ? 'Payé' : 'Non payé' })),
+      totals: {
+        invoice_number: 'TOTAL',
+        total_ht: formatDA(totals.totalHt),
+        discount_amount: formatDA(totals.discount),
+        total_tva: formatDA(totals.totalTva),
+        total_ttc: formatDA(totals.totalTtc),
+        stamp_duty: formatDA(totals.stampDuty),
+        total_net: formatDA(totals.totalNet),
+      },
+    })
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -310,7 +356,7 @@ export default function TVAPayerRegistry({ entityFilter }) {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import PrintableSheet from './PrintableSheet'
 import { downloadSheetExcel } from '../lib/sheetExcel'
+import { printRegistry } from '../lib/printRegistry'
 import { QUICK_PERIODS, defaultPeriod } from '../lib/period'
 
 // Modale générique "Fiche" réutilisée par tous les registres : choix d'une
@@ -86,6 +87,19 @@ export default function EntitySheetModal({
 
   function handleClose() {
     onClose()
+  }
+
+  function handlePrint() {
+    if (!sheet) return
+    printRegistry({
+      title: 'SARL DPR AXXAM BRIQUETERIE',
+      subtitle: sheet.title,
+      columns: sheet.columns,
+      rows: sheet.rows,
+      totals: sheet.totalRows,
+      filters: sheet.periodLabel,
+      orientation: 'portrait',
+    })
   }
 
   return (
@@ -193,7 +207,7 @@ export default function EntitySheetModal({
             <div className="no-print flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => window.print()}
+                onClick={handlePrint}
                 className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
               >
                 Imprimer
@@ -218,9 +232,7 @@ export default function EntitySheetModal({
             {error && <p className="no-print text-sm text-terracotta">{error}</p>}
 
             <div className="max-h-[65vh] overflow-y-auto rounded-lg">
-              <div className="print-area">
-                <PrintableSheet {...sheet} />
-              </div>
+              <PrintableSheet {...sheet} />
             </div>
           </div>
         )}

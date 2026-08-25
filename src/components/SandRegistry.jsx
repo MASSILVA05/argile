@@ -12,6 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
+import { printRegistry } from '../lib/printRegistry'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -107,6 +108,45 @@ export default function SandRegistry() {
     const amount = filtered.reduce((sum, e) => sum + total(e), 0)
     return { count: filtered.length, quantity, amount }
   }, [filtered])
+
+  function handlePrint() {
+    const filterParts = []
+    if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
+    if (supplierPaidFilter) filterParts.push(`Statut fourn. : ${supplierPaidFilter}`)
+    if (transporterPaidFilter) filterParts.push(`Statut transp. : ${transporterPaidFilter}`)
+
+    printRegistry({
+      subtitle: 'Registre Sable',
+      orientation: 'landscape',
+      filters: filterParts.join(' — '),
+      columns: [
+        { key: 'bon_number', label: 'Bon' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
+        { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
+        { key: 'supplier_name', label: 'Fournisseur' },
+        { key: 'transporter_name', label: 'Transporteur' },
+        { key: 'truck_plate', label: 'Matricule' },
+        { key: 'driver_name', label: 'Chauffeur' },
+        { key: 'quantity_tons', label: 'Quantité (T)', align: 'right', format: (v) => Number(v).toFixed(2) },
+        { key: 'unit_price', label: 'Prix unit.', align: 'right', format: (v) => formatDA(v) },
+        { key: 'sand_total', label: 'Total sable', align: 'right', format: (v) => formatDA(v) },
+        { key: 'transport_price', label: 'Transport', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total_general', label: 'Total général', align: 'right', format: (v) => formatDA(v) },
+        { key: 'supplier_paid', label: 'Statut fourn.' },
+        { key: 'transporter_paid', label: 'Statut transp.' },
+        { key: 'photo_url', label: 'Photo', format: (v) => (v ? 'Oui' : 'Non') },
+        { key: 'entered_by_user', label: 'Saisi par' },
+        { key: 'observations', label: 'Observations' },
+      ],
+      rows: filtered.map((e) => ({ ...e, total_general: total(e) })),
+      totals: {
+        bon_number: `${totals.count} bon${totals.count > 1 ? 's' : ''}`,
+        quantity_tons: totals.quantity.toFixed(2),
+        total_general: formatDA(totals.amount),
+      },
+    })
+  }
 
   function sheetNameOptions(typeId) {
     const field = typeId === 'transporteur' ? 'transporter_name' : 'supplier_name'
@@ -363,7 +403,7 @@ export default function SandRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer

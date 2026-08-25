@@ -51,41 +51,12 @@
   }
 }
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  .print-area,
-  .print-area * {
-    visibility: visible;
-  }
-  .print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-  }
-  .print-area table {
-    font-size: 9px;
-  }
-  @page {
-    size: landscape;
-    margin: 1cm;
-  }
-  .no-print {
-    display: none !important;
-  }
-  /* Fiches par entité (PrintableSheet) : A4 portrait, distinct du paysage
-     par défaut des registres ci-dessus -- "page" nommée pour ne s'appliquer
-     qu'aux éléments qui la référencent (voir .printable-sheet plus bas). */
-  @page fiche-a4 {
-    size: A4 portrait;
-    margin: 1.5cm;
-  }
-  .printable-sheet {
-    page: fiche-a4;
-  }
-}
+/* L'impression ne passe plus par @media print sur cette page (thème sombre +
+   navigation impossibles à masquer proprement) : chaque bouton "Imprimer"
+   ouvre désormais une fenêtre séparée avec un document HTML autonome (voir
+   src/lib/printRegistry.js). `.no-print`/`.print-area` restent présentes
+   dans le JSX de certains composants mais ne font plus rien -- pas
+   nettoyées ici pour ne pas élargir le diff au-delà de ce qui a été demandé. */
 
 /* Fiches par entité (EntitySheetModal / PrintableSheet) : fond blanc/texte
    noir imposé en permanence (pas seulement à l'impression), pour rester
