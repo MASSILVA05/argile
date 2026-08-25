@@ -8,9 +8,16 @@ import { formatDateTime } from '../lib/dateFormat'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
+import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 
 const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
+
+const FUEL_SHEET_TYPES = [
+  { id: 'vehicule', label: 'Véhicule', nameLabel: 'Matricule' },
+  { id: 'chauffeur', label: 'Chauffeur', nameLabel: 'Chauffeur' },
+]
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -33,6 +40,7 @@ export default function FuelRegistry() {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  const [sheetModal, setSheetModal] = useState(null) // 'vehicule' | 'chauffeur' | null
 
   useEffect(() => {
     let active = true
@@ -175,6 +183,56 @@ export default function FuelRegistry() {
     return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
   }
 
+  function sheetNameOptions(typeId) {
+    const field = typeId === 'chauffeur' ? 'driver_name' : 'truck_plate'
+    return [...new Set(entries.map((e) => e[field]).filter(Boolean))].sort()
+  }
+
+  function buildFuelSheet(typeId, name, startDate, endDate) {
+    const field = typeId === 'chauffeur' ? 'driver_name' : 'truck_plate'
+    const label = typeId === 'chauffeur' ? 'Chauffeur' : 'Véhicule'
+    const nameLower = name.trim().toLowerCase()
+
+    const rows = entries
+      .filter((e) => {
+        if (String(e[field] ?? '').trim().toLowerCase() !== nameLower) return false
+        if (startDate && e.entry_date < startDate) return false
+        if (endDate && e.entry_date > endDate) return false
+        return true
+      })
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : 1))
+      .map((e) => ({
+        bon_number: e.bon_number,
+        entry_date: e.entry_date,
+        operation_type: e.operation_type,
+        volume_liters: Number(e.volume_liters) || 0,
+        observations: e.observations ?? '—',
+      }))
+
+    if (rows.length === 0) {
+      return { error: `Aucune opération trouvée pour ${typeId === 'chauffeur' ? 'le chauffeur' : 'le véhicule'} "${name}" sur cette période.` }
+    }
+
+    const columns = [
+      { key: 'bon_number', header: 'N° Bon' },
+      { key: 'entry_date', header: 'Date' },
+      { key: 'operation_type', header: 'Type opération' },
+      { key: 'volume_liters', header: 'Volume (L)', align: 'right', format: (v) => Number(v).toLocaleString('fr-FR') },
+      { key: 'observations', header: 'Observations' },
+    ]
+
+    const volumeSum = rows.reduce((s, r) => s + r.volume_liters, 0)
+
+    return {
+      title: `Relevé ${label} : ${name}`,
+      periodLabel: formatPeriodLabel(startDate, endDate),
+      columns,
+      rows,
+      totalRows: [{ cells: { bon_number: 'TOTAL', volume_liters: volumeSum } }],
+      excelFilename: `Fiche_${label}_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+    }
+  }
+
   async function handleExport(filters) {
     const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'operation_type' })
     if (toExport.length === 0) {
@@ -252,6 +310,20 @@ export default function FuelRegistry() {
               {exporting ? 'Génération en cours…' : 'Exporter Excel'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setSheetModal('vehicule')}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche véhicule
+          </button>
+          <button
+            type="button"
+            onClick={() => setSheetModal('chauffeur')}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche chauffeur
+          </button>
         </div>
       </div>
 
@@ -351,6 +423,17 @@ export default function FuelRegistry() {
         busy={adminBusy}
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
+      />
+
+      <EntitySheetModal
+        open={sheetModal != null}
+        onClose={() => setSheetModal(null)}
+        modalTitle="Générer une fiche"
+        types={FUEL_SHEET_TYPES}
+        initialType={sheetModal}
+        nameOptions={sheetNameOptions}
+        onGenerate={buildFuelSheet}
+        excelSheetName="Fiche carburant"
       />
     </div>
   )

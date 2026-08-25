@@ -9,7 +9,9 @@ import { PAYMENT_MODES, MONTHS, recoveryLabel } from '../lib/tvaPayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
+import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -42,6 +44,7 @@ export default function TVARegistry({ entityFilter }) {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  const [sheetModalOpen, setSheetModalOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -239,6 +242,67 @@ export default function TVARegistry({ entityFilter }) {
     return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
   }
 
+  function sheetSupplierOptions() {
+    return [...new Set(entries.map((e) => e.supplier_name).filter(Boolean))].sort()
+  }
+
+  function buildTvaSheet(_typeId, name, startDate, endDate) {
+    const nameLower = name.trim().toLowerCase()
+    const rows = entries
+      .filter((e) => {
+        if (String(e.supplier_name ?? '').trim().toLowerCase() !== nameLower) return false
+        if (startDate && e.entry_date < startDate) return false
+        if (endDate && e.entry_date > endDate) return false
+        return true
+      })
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : 1))
+      .map((e) => ({
+        invoice_number: e.invoice_number,
+        entry_date: e.entry_date,
+        total_ht: e.total_ht == null ? null : Number(e.total_ht),
+        tva_amount: Number(e.tva_amount) || 0,
+        total_ttc: Number(e.total_ttc) || 0,
+        stamp_duty: Number(e.stamp_duty) || 0,
+        total_net: Number(e.total_net) || 0,
+        payment_mode: e.payment_mode ?? 'Non payé',
+      }))
+
+    if (rows.length === 0) {
+      return { error: `Aucune facture trouvée pour le fournisseur "${name}" sur cette période.` }
+    }
+
+    const columns = [
+      { key: 'invoice_number', header: 'N° Facture' },
+      { key: 'entry_date', header: 'Date' },
+      { key: 'total_ht', header: 'HT', align: 'right', format: (v) => formatDA(v) },
+      { key: 'tva_amount', header: 'TVA', align: 'right', format: (v) => formatDA(v) },
+      { key: 'total_ttc', header: 'TTC', align: 'right', format: (v) => formatDA(v) },
+      { key: 'stamp_duty', header: 'Timbre', align: 'right', format: (v) => formatDA(v) },
+      { key: 'total_net', header: 'Total Net', align: 'right', format: (v) => formatDA(v) },
+      { key: 'payment_mode', header: 'Paiement' },
+    ]
+
+    const sums = rows.reduce(
+      (acc, r) => ({
+        total_ht: acc.total_ht + (Number(r.total_ht) || 0),
+        tva_amount: acc.tva_amount + r.tva_amount,
+        total_ttc: acc.total_ttc + r.total_ttc,
+        stamp_duty: acc.stamp_duty + r.stamp_duty,
+        total_net: acc.total_net + r.total_net,
+      }),
+      { total_ht: 0, tva_amount: 0, total_ttc: 0, stamp_duty: 0, total_net: 0 }
+    )
+
+    return {
+      title: `Relevé Fournisseur TVA : ${name}`,
+      periodLabel: formatPeriodLabel(startDate, endDate),
+      columns,
+      rows,
+      totalRows: [{ cells: { invoice_number: 'TOTAL', ...sums } }],
+      excelFilename: `Fiche_Fournisseur_TVA_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+    }
+  }
+
   async function handleExport(filters) {
     const withRecoveryLabel = entries.map((e) => ({ ...e, recovery_label: recoveryLabel(e.recovery_month, e.recovery_year) }))
     const toExport = applyExportFilters(withRecoveryLabel, { ...filters, categoricalField: 'recovery_label' })
@@ -346,6 +410,13 @@ export default function TVARegistry({ entityFilter }) {
               {exportProgress != null ? 'Génération en cours…' : 'Exporter Excel'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setSheetModalOpen(true)}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche fournisseur
+          </button>
         </div>
       </div>
 
@@ -494,6 +565,16 @@ export default function TVARegistry({ entityFilter }) {
         busy={adminBusy}
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
+      />
+
+      <EntitySheetModal
+        open={sheetModalOpen}
+        onClose={() => setSheetModalOpen(false)}
+        modalTitle="Fiche fournisseur"
+        nameLabel="Fournisseur"
+        nameOptions={sheetSupplierOptions}
+        onGenerate={buildTvaSheet}
+        excelSheetName="Fiche TVA"
       />
     </div>
   )

@@ -9,11 +9,18 @@ import { formatDateTime } from '../lib/dateFormat'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
+import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
+
+const CHARGEMENT_SHEET_TYPES = [
+  { id: 'chauffeur', label: 'Chauffeur', nameLabel: 'Chauffeur' },
+  { id: 'matricule', label: 'Matricule', nameLabel: 'Matricule' },
+]
 
 export default function Registry() {
   const { isAdmin, isViewer } = useAuth()
@@ -33,6 +40,7 @@ export default function Registry() {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  const [sheetModal, setSheetModal] = useState(null) // 'chauffeur' | 'matricule' | null
 
   useEffect(() => {
     let active = true
@@ -83,6 +91,63 @@ export default function Registry() {
     const weight = filtered.reduce((sum, e) => sum + (Number(e.weight_tons) || 0), 0)
     return { count: filtered.length, weight }
   }, [filtered])
+
+  function sheetNameOptions(typeId) {
+    const field = typeId === 'matricule' ? 'truck_plate' : 'driver_name'
+    return [...new Set(entries.map((e) => e[field]).filter(Boolean))].sort()
+  }
+
+  function buildChargementSheet(typeId, name, startDate, endDate) {
+    const field = typeId === 'matricule' ? 'truck_plate' : 'driver_name'
+    const label = typeId === 'matricule' ? 'Matricule' : 'Chauffeur'
+    const otherLabel = typeId === 'matricule' ? 'Chauffeur' : 'Matricule'
+    const nameLower = name.trim().toLowerCase()
+
+    const rows = entries
+      .filter((e) => {
+        if (String(e[field] ?? '').trim().toLowerCase() !== nameLower) return false
+        if (startDate && e.entry_date < startDate) return false
+        if (endDate && e.entry_date > endDate) return false
+        return true
+      })
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : 1))
+      .map((e) => ({
+        bon_number: e.bon_number,
+        entry_date: e.entry_date,
+        entry_time: formatTime(e.entry_time),
+        other_party: typeId === 'matricule' ? (e.driver_name ?? '—') : (e.truck_plate ?? '—'),
+        unloading_type: e.unloading_type,
+        weight_tons: e.weight_tons == null ? null : Number(e.weight_tons),
+        ticket_number: e.ticket_number ?? '—',
+      }))
+
+    if (rows.length === 0) {
+      return { error: `Aucun bon trouvé pour ${typeId === 'matricule' ? 'le matricule' : 'le chauffeur'} "${name}" sur cette période.` }
+    }
+
+    const columns = [
+      { key: 'bon_number', header: 'N° Bon' },
+      { key: 'entry_date', header: 'Date' },
+      { key: 'entry_time', header: 'Heure' },
+      { key: 'other_party', header: otherLabel },
+      { key: 'unloading_type', header: 'Type' },
+      { key: 'weight_tons', header: 'Poids (T)', align: 'right', format: (v) => Number(v).toFixed(2) },
+      { key: 'ticket_number', header: 'Ticket' },
+    ]
+
+    const weightSum = rows.reduce((s, r) => s + (Number(r.weight_tons) || 0), 0)
+
+    return {
+      title: `Relevé ${label} : ${name}`,
+      periodLabel: formatPeriodLabel(startDate, endDate),
+      columns,
+      rows,
+      totalRows: [
+        { cells: { bon_number: `${rows.length} bon${rows.length > 1 ? 's' : ''}`, weight_tons: weightSum } },
+      ],
+      excelFilename: `Fiche_${label}_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+    }
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -267,6 +332,20 @@ export default function Registry() {
                 : 'Exporter Excel'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setSheetModal('chauffeur')}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche chauffeur
+          </button>
+          <button
+            type="button"
+            onClick={() => setSheetModal('matricule')}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche matricule
+          </button>
         </div>
       </div>
 
@@ -399,6 +478,17 @@ export default function Registry() {
         busy={adminBusy}
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
+      />
+
+      <EntitySheetModal
+        open={sheetModal != null}
+        onClose={() => setSheetModal(null)}
+        modalTitle="Générer une fiche"
+        types={CHARGEMENT_SHEET_TYPES}
+        initialType={sheetModal}
+        nameOptions={sheetNameOptions}
+        onGenerate={buildChargementSheet}
+        excelSheetName="Fiche chargement"
       />
     </div>
   )

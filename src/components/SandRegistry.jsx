@@ -9,15 +9,26 @@ import { PAYMENT_MODES, PAID_OPTIONS, buildPaymentPayload } from '../lib/sandPay
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
+import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
 
+function formatDA(value) {
+  return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
+}
+
 function total(entry) {
   return Number(entry.sand_total || 0) + Number(entry.transport_price || 0)
 }
+
+const SAND_SHEET_TYPES = [
+  { id: 'fournisseur', label: 'Fournisseur', nameLabel: 'Fournisseur' },
+  { id: 'transporteur', label: 'Transporteur', nameLabel: 'Transporteur' },
+]
 
 export default function SandRegistry() {
   const { isAdmin, isViewer } = useAuth()
@@ -38,6 +49,7 @@ export default function SandRegistry() {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  const [sheetModal, setSheetModal] = useState(null) // 'fournisseur' | 'transporteur' | null
 
   useEffect(() => {
     let active = true
@@ -95,6 +107,72 @@ export default function SandRegistry() {
     const amount = filtered.reduce((sum, e) => sum + total(e), 0)
     return { count: filtered.length, quantity, amount }
   }, [filtered])
+
+  function sheetNameOptions(typeId) {
+    const field = typeId === 'transporteur' ? 'transporter_name' : 'supplier_name'
+    return [...new Set(entries.map((e) => e[field]).filter(Boolean))].sort()
+  }
+
+  function buildSandSheet(typeId, name, startDate, endDate) {
+    const field = typeId === 'transporteur' ? 'transporter_name' : 'supplier_name'
+    const paidField = typeId === 'transporteur' ? 'transporter_paid' : 'supplier_paid'
+    const label = typeId === 'transporteur' ? 'Transporteur' : 'Fournisseur'
+    const otherLabel = typeId === 'transporteur' ? 'Fournisseur' : 'Transporteur'
+    const nameLower = name.trim().toLowerCase()
+
+    const rows = entries
+      .filter((e) => {
+        if (String(e[field] ?? '').trim().toLowerCase() !== nameLower) return false
+        if (startDate && e.entry_date < startDate) return false
+        if (endDate && e.entry_date > endDate) return false
+        return true
+      })
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : 1))
+      .map((e) => ({
+        bon_number: e.bon_number,
+        entry_date: e.entry_date,
+        other_party: typeId === 'transporteur' ? (e.supplier_name ?? '—') : (e.transporter_name ?? '—'),
+        quantity_tons: Number(e.quantity_tons) || 0,
+        unit_price: Number(e.unit_price) || 0,
+        sand_total: Number(e.sand_total) || 0,
+        transport_price: Number(e.transport_price) || 0,
+        total: total(e),
+        payment_status: e[paidField] ?? 'Non payé',
+      }))
+
+    if (rows.length === 0) {
+      return { error: `Aucune opération trouvée pour ${label.toLowerCase()} "${name}" sur cette période.` }
+    }
+
+    const columns = [
+      { key: 'bon_number', header: 'N° Bon' },
+      { key: 'entry_date', header: 'Date' },
+      { key: 'other_party', header: otherLabel },
+      { key: 'quantity_tons', header: 'Quantité (T)', align: 'right', format: (v) => Number(v).toFixed(2) },
+      { key: 'unit_price', header: 'Prix unitaire', align: 'right', format: (v) => formatDA(v) },
+      { key: 'sand_total', header: 'Total Sable', align: 'right', format: (v) => formatDA(v) },
+      { key: 'transport_price', header: 'Transport', align: 'right', format: (v) => formatDA(v) },
+      { key: 'total', header: 'Total', align: 'right', format: (v) => formatDA(v) },
+      { key: 'payment_status', header: 'Statut paiement' },
+    ]
+
+    const quantitySum = rows.reduce((s, r) => s + r.quantity_tons, 0)
+    const totalSum = rows.reduce((s, r) => s + r.total, 0)
+    const dueAmountField = typeId === 'transporteur' ? 'transport_price' : 'sand_total'
+    const dueSum = rows.filter((r) => r.payment_status !== 'Payé').reduce((s, r) => s + r[dueAmountField], 0)
+
+    return {
+      title: `Relevé ${label} : ${name}`,
+      periodLabel: formatPeriodLabel(startDate, endDate),
+      columns,
+      rows,
+      totalRows: [
+        { cells: { bon_number: 'TOTAL', quantity_tons: quantitySum, total: totalSum } },
+        { cells: { bon_number: 'RESTE À PAYER', total: dueSum }, highlight: true },
+      ],
+      excelFilename: `Fiche_${label}_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+    }
+  }
 
   function startEdit(entry) {
     setEditingId(entry.id)
@@ -304,6 +382,20 @@ export default function SandRegistry() {
                 : 'Exporter Excel'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setSheetModal('fournisseur')}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche fournisseur
+          </button>
+          <button
+            type="button"
+            onClick={() => setSheetModal('transporteur')}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche transporteur
+          </button>
         </div>
       </div>
 
@@ -457,6 +549,17 @@ export default function SandRegistry() {
         busy={adminBusy}
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
+      />
+
+      <EntitySheetModal
+        open={sheetModal != null}
+        onClose={() => setSheetModal(null)}
+        modalTitle="Générer une fiche"
+        types={SAND_SHEET_TYPES}
+        initialType={sheetModal}
+        nameOptions={sheetNameOptions}
+        onGenerate={buildSandSheet}
+        excelSheetName="Fiche sable"
       />
     </div>
   )

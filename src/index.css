@@ -75,4 +75,92 @@
   .no-print {
     display: none !important;
   }
+  /* Fiches par entité (PrintableSheet) : A4 portrait, distinct du paysage
+     par défaut des registres ci-dessus -- "page" nommée pour ne s'appliquer
+     qu'aux éléments qui la référencent (voir .printable-sheet plus bas). */
+  @page fiche-a4 {
+    size: A4 portrait;
+    margin: 1.5cm;
+  }
+  .printable-sheet {
+    page: fiche-a4;
+  }
+}
+
+/* Fiches par entité (EntitySheetModal / PrintableSheet) : fond blanc/texte
+   noir imposé en permanence (pas seulement à l'impression), pour rester
+   lisible même affichée en aperçu dans la modale au thème sombre de l'app. */
+.printable-sheet {
+  background: #ffffff;
+  color: #171717;
+  padding: 24px;
+  border-radius: 8px;
+}
+
+.printable-sheet * {
+  color: inherit;
+}
+
+.printable-sheet-header {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.printable-sheet-company {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b6b6b;
+  margin: 0;
+}
+
+.printable-sheet-title {
+  font-size: 14pt;
+  font-weight: 700;
+  margin: 4px 0;
+}
+
+.printable-sheet-subtitle,
+.printable-sheet-period {
+  font-size: 10pt;
+  color: #444444;
+  margin: 2px 0;
+}
+
+.printable-sheet-extra {
+  margin-bottom: 16px;
+  font-size: 10pt;
+}
+
+.printable-sheet-empty {
+  font-size: 10pt;
+  color: #666666;
+  text-align: center;
+  padding: 24px 0;
+}
+
+.printable-sheet-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 10pt;
+}
+
+.printable-sheet-table th,
+.printable-sheet-table td {
+  border: 1px solid #cccccc;
+  padding: 4px 8px;
+}
+
+.printable-sheet-table thead th {
+  background: #e5e5e5;
+  font-weight: 600;
+}
+
+.printable-sheet-table tfoot td {
+  font-weight: 700;
+}
+
+.printable-sheet-table tfoot .printable-sheet-highlight td {
+  background: #f6e2c4;
 }

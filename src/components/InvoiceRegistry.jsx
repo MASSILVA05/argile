@@ -9,7 +9,9 @@ import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES, isInvoicePaid } from '..
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
+import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -38,14 +40,15 @@ export default function InvoiceRegistry() {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
-  const [clientCodeByName, setClientCodeByName] = useState(new Map())
+  const [clientInfoByName, setClientInfoByName] = useState(new Map())
+  const [sheetModalOpen, setSheetModalOpen] = useState(false)
 
   useEffect(() => {
     supabase
       .from('clients')
-      .select('name, client_code')
+      .select('name, client_code, balance')
       .then(({ data }) => {
-        setClientCodeByName(new Map((data ?? []).map((c) => [c.name, c.client_code])))
+        setClientInfoByName(new Map((data ?? []).map((c) => [c.name, c])))
       })
   }, [])
 
@@ -258,6 +261,95 @@ export default function InvoiceRegistry() {
     return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
   }
 
+  function sheetClientOptions() {
+    return [...new Set(entries.map((e) => e.client_name).filter(Boolean))].sort()
+  }
+
+  function buildInvoiceSheet(_typeId, name, startDate, endDate) {
+    const nameLower = name.trim().toLowerCase()
+    const rows = entries
+      .filter((e) => {
+        if (String(e.client_name ?? '').trim().toLowerCase() !== nameLower) return false
+        if (startDate && e.entry_date < startDate) return false
+        if (endDate && e.entry_date > endDate) return false
+        return true
+      })
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : 1))
+      .map((e) => ({
+        invoice_number: e.invoice_number,
+        entry_date: e.entry_date,
+        designation: designationLabel(e),
+        qty_b8: Number(e.qty_b8) || 0,
+        qty_b12: Number(e.qty_b12) || 0,
+        qty_h: Number(e.qty_h) || 0,
+        amount: Number(e.amount) || 0,
+        discount_amount: Number(e.discount_amount) || 0,
+        total: Number(e.total) || 0,
+        settlement: Number(e.settlement) || 0,
+        balance: Number(e.balance) || 0,
+      }))
+
+    if (rows.length === 0) {
+      return { error: `Aucune facture trouvée pour le client "${name}" sur cette période.` }
+    }
+
+    const columns = [
+      { key: 'invoice_number', header: 'N° Facture' },
+      { key: 'entry_date', header: 'Date' },
+      { key: 'designation', header: 'Désignation' },
+      { key: 'qty_b8', header: 'B8', align: 'right', format: (v) => (v ? Number(v).toFixed(2) : '') },
+      { key: 'qty_b12', header: 'B12', align: 'right', format: (v) => (v ? Number(v).toFixed(2) : '') },
+      { key: 'qty_h', header: 'H', align: 'right', format: (v) => (v ? Number(v).toFixed(2) : '') },
+      { key: 'amount', header: 'Montant', align: 'right', format: (v) => formatDA(v) },
+      { key: 'discount_amount', header: 'Remise', align: 'right', format: (v) => formatDA(v) },
+      { key: 'total', header: 'Total', align: 'right', format: (v) => formatDA(v) },
+      { key: 'settlement', header: 'Règlement', align: 'right', format: (v) => formatDA(v) },
+      { key: 'balance', header: 'Solde', align: 'right', format: (v) => formatDA(v) },
+    ]
+
+    const sums = rows.reduce(
+      (acc, r) => ({
+        amount: acc.amount + r.amount,
+        discount_amount: acc.discount_amount + r.discount_amount,
+        total: acc.total + r.total,
+        settlement: acc.settlement + r.settlement,
+      }),
+      { amount: 0, discount_amount: 0, total: 0, settlement: 0 }
+    )
+
+    const clientInfo = clientInfoByName.get(name.trim().toUpperCase())
+    const previousBalance = Number(clientInfo?.balance ?? 0)
+    const newBalance = previousBalance + sums.total - sums.settlement
+
+    const extra = (
+      <div>
+        {clientInfo?.client_code && <p>Code client : {clientInfo.client_code}</p>}
+        <p>Solde précédent : {formatDA(previousBalance)} DA</p>
+      </div>
+    )
+
+    return {
+      title: `Relevé Client : ${name}`,
+      periodLabel: formatPeriodLabel(startDate, endDate),
+      extra,
+      columns,
+      rows,
+      totalRows: [
+        {
+          cells: {
+            invoice_number: 'TOTAL',
+            amount: sums.amount,
+            discount_amount: sums.discount_amount,
+            total: sums.total,
+            settlement: sums.settlement,
+          },
+        },
+        { cells: { invoice_number: 'NOUVEAU SOLDE', total: newBalance }, highlight: true },
+      ],
+      excelFilename: `Fiche_Client_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+    }
+  }
+
   async function handleExport(filters) {
     const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'payment_status' })
     if (toExport.length === 0) {
@@ -349,6 +441,13 @@ export default function InvoiceRegistry() {
               {exportProgress != null ? 'Génération en cours…' : 'Exporter Excel'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setSheetModalOpen(true)}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche client
+          </button>
         </div>
       </div>
 
@@ -456,7 +555,7 @@ export default function InvoiceRegistry() {
                       onCancel={cancelEdit}
                       bankSuggestions={banks}
                       paymentTypeSuggestions={paymentTypes}
-                      clientCode={clientCodeByName.get(entry.client_name)}
+                      clientCode={clientInfoByName.get(entry.client_name)?.client_code}
                     />
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
@@ -464,7 +563,7 @@ export default function InvoiceRegistry() {
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{entry.client_name}</Td>
-                      <Td>{clientCodeByName.get(entry.client_name) ?? '—'}</Td>
+                      <Td>{clientInfoByName.get(entry.client_name)?.client_code ?? '—'}</Td>
                       <Td>{designationLabel(entry)}</Td>
                       <Td>{entry.bl_number ?? '—'}</Td>
                       <Td>{entry.qty_b8}</Td>
@@ -532,6 +631,16 @@ export default function InvoiceRegistry() {
         busy={adminBusy}
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
+      />
+
+      <EntitySheetModal
+        open={sheetModalOpen}
+        onClose={() => setSheetModalOpen(false)}
+        modalTitle="Fiche client"
+        nameLabel="Client"
+        nameOptions={sheetClientOptions}
+        onGenerate={buildInvoiceSheet}
+        excelSheetName="Fiche client"
       />
     </div>
   )

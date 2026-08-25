@@ -8,12 +8,18 @@ import { formatDateTime } from '../lib/dateFormat'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
+import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
+import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
+}
+
+function formatDA(value) {
+  return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
 }
 
 export default function MaintenanceRegistry() {
@@ -34,6 +40,7 @@ export default function MaintenanceRegistry() {
   const [adminCodeValue, setAdminCodeValue] = useState('')
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
+  const [sheetModalOpen, setSheetModalOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -181,6 +188,58 @@ export default function MaintenanceRegistry() {
     return [...new Set(entries.map((e) => e[field]).filter(Boolean))]
   }
 
+  function sheetSupplierOptions() {
+    return [...new Set(entries.map((e) => e.supplier_name).filter(Boolean))].sort()
+  }
+
+  function buildMaintenanceSheet(_typeId, name, startDate, endDate) {
+    const nameLower = name.trim().toLowerCase()
+    const rows = entries
+      .filter((e) => {
+        if (String(e.supplier_name ?? '').trim().toLowerCase() !== nameLower) return false
+        if (startDate && e.entry_date < startDate) return false
+        if (endDate && e.entry_date > endDate) return false
+        return true
+      })
+      .sort((a, b) => (a.entry_date < b.entry_date ? -1 : 1))
+      .map((e) => ({
+        fiche_number: e.fiche_number,
+        entry_date: e.entry_date,
+        machine_name: e.machine_name,
+        problem_description: e.problem_description,
+        amount: e.amount == null ? null : Number(e.amount),
+        is_paid: e.is_paid,
+      }))
+
+    if (rows.length === 0) {
+      return { error: `Aucune fiche trouvée pour le fournisseur "${name}" sur cette période.` }
+    }
+
+    const columns = [
+      { key: 'fiche_number', header: 'N° Fiche' },
+      { key: 'entry_date', header: 'Date' },
+      { key: 'machine_name', header: 'Machine' },
+      { key: 'problem_description', header: 'Description' },
+      { key: 'amount', header: 'Montant', align: 'right', format: (v) => formatDA(v) },
+      { key: 'is_paid', header: 'Statut paiement' },
+    ]
+
+    const amountSum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+    const dueSum = rows.filter((r) => r.is_paid !== 'Oui').reduce((s, r) => s + (Number(r.amount) || 0), 0)
+
+    return {
+      title: `Relevé Fournisseur Maintenance : ${name}`,
+      periodLabel: formatPeriodLabel(startDate, endDate),
+      columns,
+      rows,
+      totalRows: [
+        { cells: { fiche_number: 'TOTAL', amount: amountSum } },
+        { cells: { fiche_number: 'RESTE À PAYER', amount: dueSum }, highlight: true },
+      ],
+      excelFilename: `Fiche_Fournisseur_Maintenance_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+    }
+  }
+
   async function handleExport(filters, includePhotos) {
     const toExport = applyExportFilters(entries, { ...filters, categoricalField: 'is_paid' })
     if (toExport.length === 0) {
@@ -264,6 +323,13 @@ export default function MaintenanceRegistry() {
                 : 'Exporter Excel'}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setSheetModalOpen(true)}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Fiche fournisseur
+          </button>
         </div>
       </div>
 
@@ -387,6 +453,16 @@ export default function MaintenanceRegistry() {
         busy={adminBusy}
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
+      />
+
+      <EntitySheetModal
+        open={sheetModalOpen}
+        onClose={() => setSheetModalOpen(false)}
+        modalTitle="Fiche fournisseur"
+        nameLabel="Fournisseur"
+        nameOptions={sheetSupplierOptions}
+        onGenerate={buildMaintenanceSheet}
+        excelSheetName="Fiche maintenance"
       />
     </div>
   )
