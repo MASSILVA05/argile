@@ -12,6 +12,7 @@ const TOPIC_CARBURANT = import.meta.env.VITE_NTFY_TOPIC_CARBURANT || NTFY_TOPIC
 const TOPIC_SABLE = import.meta.env.VITE_NTFY_TOPIC_SABLE || NTFY_TOPIC
 const TOPIC_FACTURES = import.meta.env.VITE_NTFY_TOPIC_FACTURES || NTFY_TOPIC
 const TOPIC_TVA = import.meta.env.VITE_NTFY_TOPIC_TVA || NTFY_TOPIC
+const TOPIC_CAISSE = import.meta.env.VITE_NTFY_TOPIC_CAISSE || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -186,6 +187,29 @@ export function notifyTvaPayerEntry(entry) {
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy(TOPIC_TVA, `TVA ${entry.entity ?? 'Briqueterie'} — Nouvelle facture à payer`, lines, 'receipt')
+}
+
+export function notifyCaisseEntry(entry) {
+  const category =
+    entry.category === 'Autre' && entry.category_other ? entry.category_other : entry.category
+  const lines = [
+    `Bon n° ${entry.bon_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Type : ${entry.operation_type}`,
+    `Motif : ${entry.description}`,
+    `Montant : ${Number(entry.amount).toLocaleString('fr-FR')} DA`,
+  ]
+  if (entry.beneficiary) lines.push(`Fournisseur/Bénéficiaire : ${entry.beneficiary}`)
+  if (entry.client_name) lines.push(`Client : ${entry.client_name}`)
+  lines.push(`Mode de paiement : ${entry.payment_mode}`)
+  if (entry.payment_mode === 'Chèque' && entry.cheque_number) {
+    lines.push(`Chèque n° ${entry.cheque_number}${entry.cheque_bank ? ` — ${entry.cheque_bank}` : ''}`)
+  }
+  if (entry.piece_number) lines.push(`N° Pièce : ${entry.piece_number}`)
+  lines.push(`Catégorie : ${category}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_CAISSE, `Caisse — ${entry.operation_type}`, lines, 'moneybag')
 }
 
 export function notifyClientAdvance(advance) {

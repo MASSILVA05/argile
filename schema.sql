@@ -3030,3 +3030,168 @@ $$;
 -- Le grant execute existant sur request_login_code(text, text) reste valide
 -- (create or replace ne modifie pas les privilèges déjà accordés).
 
+
+-- ============================================================
+-- CAISSE : registre de caisse (encaissements / décaissements / dépenses)
+-- + solde courant. Onglet "Caisse" (9e onglet), réservé aux rôles admin,
+-- editor et youcef_role (voir ROLE_TABS dans src/lib/auth.js).
+-- ============================================================
+
+create table if not exists caisse_entries (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  operation_type text not null
+    check (operation_type in ('Encaissement', 'Décaissement', 'Dépense')),
+  description text not null,
+  amount numeric(12, 2) not null,
+  beneficiary text,
+  client_name text,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Versement', 'Virement')),
+  cheque_number text,
+  cheque_bank text,
+  piece_number text,
+  photo_url text,
+  category text default 'Autre'
+    check (category in ('Fournisseur', 'Client', 'Salaire', 'Carburant', 'Maintenance', 'Frais généraux', 'Autre')),
+  category_other text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table caisse_entries is 'Registre de caisse : encaissements (entrée), décaissements et dépenses (sortie)';
+comment on column caisse_entries.amount is 'Montant en valeur absolue (DA) ; le signe est déduit de operation_type côté application';
+comment on column caisse_entries.beneficiary is 'Fournisseur / bénéficiaire : la personne qui reçoit ou donne l''argent';
+
+create index if not exists caisse_entries_created_at_idx on caisse_entries (created_at desc);
+create index if not exists caisse_entries_entry_date_idx on caisse_entries (entry_date desc);
+create index if not exists caisse_entries_bon_number_idx on caisse_entries (bon_number desc);
+create index if not exists caisse_entries_operation_type_idx on caisse_entries (operation_type);
+create index if not exists caisse_entries_category_idx on caisse_entries (category);
+create index if not exists caisse_entries_beneficiary_idx on caisse_entries (beneficiary);
+create index if not exists caisse_entries_client_name_idx on caisse_entries (client_name);
+
+alter table caisse_entries enable row level security;
+
+create policy "Lecture publique caisse"
+  on caisse_entries for select
+  using (true);
+
+create policy "Ajout caisse"
+  on caisse_entries for insert
+  with check (true);
+
+create policy "Modification caisse"
+  on caisse_entries for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+
+create policy "Suppression caisse"
+  on caisse_entries for delete
+  using (created_at > now() - interval '72 hours');
+
+-- Realtime : bandeau de solde + registre mis à jour en direct
+alter publication supabase_realtime add table caisse_entries;
+
+-- Storage : bucket public pour les photos des justificatifs de caisse
+insert into storage.buckets (id, name, public)
+values ('caisse-photos', 'caisse-photos', true)
+on conflict (id) do nothing;
+
+create policy "Lecture publique photos caisse"
+  on storage.objects for select
+  using (bucket_id = 'caisse-photos');
+
+create policy "Ajout photos caisse"
+  on storage.objects for insert
+  with check (bucket_id = 'caisse-photos');
+
+create policy "Suppression photos caisse"
+  on storage.objects for delete
+  using (bucket_id = 'caisse-photos');
+
+-- Code admin (même principe que admin_update_fuel / admin_delete_fuel) :
+-- déblocage sécurisé des modifications/suppressions après le verrou de 72h.
+create or replace function admin_update_caisse(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_operation_type text,
+  p_description text,
+  p_amount numeric,
+  p_beneficiary text,
+  p_client_name text,
+  p_payment_mode text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_piece_number text,
+  p_category text,
+  p_category_other text,
+  p_observations text
+)
+returns caisse_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result caisse_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update caisse_entries set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    operation_type = p_operation_type,
+    description = p_description,
+    amount = p_amount,
+    beneficiary = p_beneficiary,
+    client_name = p_client_name,
+    payment_mode = p_payment_mode,
+    cheque_number = p_cheque_number,
+    cheque_bank = p_cheque_bank,
+    piece_number = p_piece_number,
+    category = p_category,
+    category_other = p_category_other,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Opération introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_caisse(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  delete from caisse_entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_caisse(uuid, text, integer, date, text, text, numeric, text, text, text, text, text, text, text, text, text) from public;
+revoke all on function admin_delete_caisse(uuid, text) from public;
+grant execute on function admin_update_caisse(uuid, text, integer, date, text, text, numeric, text, text, text, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function admin_delete_caisse(uuid, text) to anon, authenticated;

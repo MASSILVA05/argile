@@ -82,6 +82,17 @@ function PercentIcon(props) {
   )
 }
 
+function WalletIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <path d="M3 7a2 2 0 0 1 2-2h13v4" />
+      <path d="M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3" />
+      <path d="M20 9v6h-4a3 3 0 0 1 0-6z" />
+      <path d="M16 12h.01" />
+    </svg>
+  )
+}
+
 function CalculatorIcon(props) {
   return (
     <svg {...ICON_PROPS} {...props}>
@@ -109,6 +120,7 @@ const TABS = [
   { id: 'invoices', label: 'Factures', Icon: InvoiceIcon },
   { id: 'tva', label: 'TVA', Icon: PercentIcon },
   { id: 'tva-payer', label: 'TVA à payer', Icon: CalculatorIcon },
+  { id: 'caisse', label: 'Caisse', Icon: WalletIcon },
 ]
 
 export default function BottomNav({ active, onChange, allowedTabs }) {

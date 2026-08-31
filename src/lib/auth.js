@@ -6,6 +6,12 @@ export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Kar
 // Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
 
+// Comptes non soumis à la plage horaire 8h-17h : les admins (déjà exemptés
+// de toute restriction) + Karim, qui peut se connecter à toute heure de la
+// journée. Karim reste soumis au jour de repos (vendredi) et au code OTP du
+// samedi (requires_verification en base, inchangé), et n'a pas le code admin.
+export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Karim']
+
 const SESSION_KEY = 'dpr-session'
 const ALGERIA_TZ = 'Africa/Algiers'
 const WORK_START_HOUR = 8
@@ -50,9 +56,10 @@ function nextWorkEndTimestamp(date) {
 }
 
 // Vérifie si `username` peut accéder à la page de connexion à l'instant `date`.
-// Les admins (Ahcene, Massilva) n'ont aucune restriction. Les autres comptes
-// (Halim, Bureau, Bilal) : accès uniquement 8h-17h, du dimanche au samedi
-// (vendredi = jour de repos, pas d'accès).
+// Les admins (Ahcene, Massilva) n'ont aucune restriction. Karim est exempté de
+// la plage 8h-17h (accès à toute heure) mais reste soumis au jour de repos.
+// Les autres comptes (Halim, Bureau, Bilal) : accès uniquement 8h-17h, du
+// dimanche au samedi (vendredi = jour de repos, pas d'accès).
 export function getLoginAccessStatus(username, date = new Date()) {
   if (ADMIN_USERNAMES.includes(username)) return { allowed: true }
 
@@ -61,7 +68,10 @@ export function getLoginAccessStatus(username, date = new Date()) {
   if (dayOfWeek === 5) {
     return { allowed: false, message: 'Jour de repos — accès indisponible' }
   }
-  if (hour < WORK_START_HOUR || hour >= WORK_END_HOUR) {
+  if (
+    !UNRESTRICTED_HOURS_USERS.includes(username) &&
+    (hour < WORK_START_HOUR || hour >= WORK_END_HOUR)
+  ) {
     return { allowed: false, message: 'Accès disponible de 8h à 17h' }
   }
   return { allowed: true }
@@ -82,9 +92,15 @@ export function getSession() {
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
 export function saveSession(username, role, entity = null) {
   const loginTime = Date.now()
-  const expiresAt = nextWorkEndTimestamp(new Date(loginTime))
+  // Comptes sans restriction d'horaire (admins + Karim) : session de 24h à
+  // partir de la connexion, au lieu d'expirer à 17h le jour même.
+  const expiresAt = UNRESTRICTED_HOURS_USERS.includes(username)
+    ? loginTime + DAY_MS
+    : nextWorkEndTimestamp(new Date(loginTime))
   const session = { username, role, entity, loginTime, expiresAt }
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   return session
@@ -121,13 +137,17 @@ export function clearSession() {
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
+// La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
+// youcef_role -> concrètement Youcef, Halim, Bureau et les admins (Massilva,
+// Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, AVADOU + Tahar/
+// tva_only) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer'],
-  editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer'],
+  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
+  editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance'],
   tva_only: ['tva', 'tva-payer'],
-  youcef_role: ['fuel', 'sand', 'invoices'],
+  youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
 }
 
 export function allowedTabsForRole(role) {

@@ -181,6 +181,31 @@ export function sendTvaPayerEmail(entry) {
   })
 }
 
+export function sendCaisseEmail(entry) {
+  const category =
+    entry.category === 'Autre' && entry.category_other ? entry.category_other : entry.category
+  const lines = [
+    `Bon n° ${entry.bon_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Type : ${entry.operation_type}`,
+    `Motif : ${entry.description}`,
+    `Montant : ${entry.amount} DA`,
+    `Fournisseur/Bénéficiaire : ${entry.beneficiary || 'N/A'}`,
+    `Client : ${entry.client_name || 'N/A'}`,
+    `Mode de paiement : ${entry.payment_mode}`,
+    `N° chèque : ${entry.cheque_number || 'N/A'}`,
+    `Banque : ${entry.cheque_bank || 'N/A'}`,
+    `N° pièce justificative : ${entry.piece_number || 'N/A'}`,
+    `Catégorie : ${category}`,
+    `Observations : ${entry.observations || 'Aucune'}`,
+    `Saisi par : ${entry.entered_by_user || 'N/A'}`,
+  ]
+  return send({
+    subject: `Caisse — ${entry.operation_type}`,
+    message: lines.join('\n'),
+  })
+}
+
 export function sendClientAdvanceEmail(advance) {
   const lines = [
     `Client : ${advance.client_name}`,
