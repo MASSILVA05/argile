@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz']
 
 // Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
@@ -134,6 +134,9 @@ export function clearSession() {
 //                    pas de code admin. Dans Factures, limité aux sous-onglets
 //                    Saisie + Registre (pas Avances/Stock/Mouvements/G50) --
 //                    voir InvoicesPage.jsx.
+// magasin_only (Aziz) : uniquement la page Magasin (Bejaia) -- stock, ventes,
+//                    crédits clients, import. Aucune autre page, pas de code
+//                    admin. Les admins y ont aussi accès ; personne d'autre.
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
@@ -142,12 +145,13 @@ export function clearSession() {
 // Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, AVADOU + Tahar/
 // tva_only) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
+  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin'],
   editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance'],
   tva_only: ['tva', 'tva-payer'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
+  magasin_only: ['magasin'],
 }
 
 export function allowedTabsForRole(role) {
@@ -166,6 +170,7 @@ export function useAuth() {
     isMaintenanceOnly: role === 'maintenance_only',
     isTvaOnly: role === 'tva_only',
     isYoucefRole: role === 'youcef_role',
+    isMagasinOnly: role === 'magasin_only',
     // Entité TVA fixe de l'utilisateur (Halim -> 'Briqueterie', AVADOU ->
     // 'AVADOU'), NULL si l'utilisateur choisit librement (Tahar, admins).
     entity: session?.entity ?? null,

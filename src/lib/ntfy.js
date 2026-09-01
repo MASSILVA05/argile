@@ -13,6 +13,7 @@ const TOPIC_SABLE = import.meta.env.VITE_NTFY_TOPIC_SABLE || NTFY_TOPIC
 const TOPIC_FACTURES = import.meta.env.VITE_NTFY_TOPIC_FACTURES || NTFY_TOPIC
 const TOPIC_TVA = import.meta.env.VITE_NTFY_TOPIC_TVA || NTFY_TOPIC
 const TOPIC_CAISSE = import.meta.env.VITE_NTFY_TOPIC_CAISSE || NTFY_TOPIC
+const TOPIC_MAGASIN = import.meta.env.VITE_NTFY_TOPIC_MAGASIN || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -210,6 +211,49 @@ export function notifyCaisseEntry(entry) {
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy(TOPIC_CAISSE, `Caisse — ${entry.operation_type}`, lines, 'moneybag')
+}
+
+export function notifyMagasinVente(vente) {
+  const items = Array.isArray(vente.items) ? vente.items : []
+  const lines = [
+    `Bon n° ${vente.bon_number}`,
+    `Date : ${vente.entry_date}${vente.entry_time ? ` à ${vente.entry_time.slice(0, 5)}` : ''}`,
+  ]
+  if (vente.client_name) lines.push(`Client : ${vente.client_name}`)
+  if (vente.is_payment) {
+    lines.push(`Règlement client : ${formatDA(vente.total)} DA`)
+  } else {
+    lines.push(`Articles : ${items.length}`)
+    for (const it of items.slice(0, 15)) {
+      lines.push(`• ${it.designation} ×${it.quantite} = ${formatDA(it.total)} DA`)
+    }
+    if (items.length > 15) lines.push(`… +${items.length - 15} article(s)`)
+    lines.push(`Total HT : ${formatDA(vente.total_ht)} DA`)
+    if (Number(vente.remise)) lines.push(`Remise : ${formatDA(vente.remise)} DA`)
+    lines.push(`Total : ${formatDA(vente.total)} DA`)
+  }
+  lines.push(`Mode de paiement : ${vente.payment_mode}`)
+  if (vente.payment_mode === 'Chèque' && vente.cheque_number) {
+    lines.push(`Chèque n° ${vente.cheque_number}${vente.cheque_bank ? ` — ${vente.cheque_bank}` : ''}`)
+  }
+  if (vente.observations) lines.push(`Obs : ${vente.observations}`)
+  if (vente.entered_by_user) lines.push(`Saisi par : ${vente.entered_by_user}`)
+  return sendNtfy(
+    TOPIC_MAGASIN,
+    vente.is_payment ? 'Magasin — Règlement client' : 'Magasin — Nouvelle vente',
+    lines,
+    'moneybag'
+  )
+}
+
+export function notifyMagasinStockEntry({ designation, reference, added, quantite, entered_by_user }) {
+  const lines = [
+    `Article : ${designation}${reference ? ` (${reference})` : ''}`,
+    `Entrée : +${formatDA(added)}`,
+    `Nouveau stock : ${formatDA(quantite)}`,
+  ]
+  if (entered_by_user) lines.push(`Saisi par : ${entered_by_user}`)
+  return sendNtfy(TOPIC_MAGASIN, 'Magasin — Entrée de stock', lines, 'package')
 }
 
 export function notifyClientAdvance(advance) {

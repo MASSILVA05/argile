@@ -111,6 +111,17 @@ function CalculatorIcon(props) {
   )
 }
 
+function StoreIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <path d="M3 9l1.5-5h15L21 9" />
+      <path d="M4 9v11h16V9" />
+      <path d="M3 9a2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 3 0" />
+      <path d="M9 20v-6h6v6" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
@@ -121,6 +132,7 @@ const TABS = [
   { id: 'tva', label: 'TVA', Icon: PercentIcon },
   { id: 'tva-payer', label: 'TVA à payer', Icon: CalculatorIcon },
   { id: 'caisse', label: 'Caisse', Icon: WalletIcon },
+  { id: 'magasin', label: 'Magasin', Icon: StoreIcon },
 ]
 
 export default function BottomNav({ active, onChange, allowedTabs }) {

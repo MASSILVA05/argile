@@ -3195,3 +3195,363 @@ revoke all on function admin_update_caisse(uuid, text, integer, date, text, text
 revoke all on function admin_delete_caisse(uuid, text) from public;
 grant execute on function admin_update_caisse(uuid, text, integer, date, text, text, numeric, text, text, text, text, text, text, text, text, text) to anon, authenticated;
 grant execute on function admin_delete_caisse(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- MAGASIN BEJAIA : stock pièces détachées + ventes + crédits clients
+-- 10e onglet "Magasin". Accès : rôle 'admin' (Ahcene, Massilva) et rôle
+-- 'magasin_only' (Aziz Amaouche). Aucun autre compte n'y a accès -- voir
+-- ROLE_TABS dans src/lib/auth.js.
+--
+-- 3 tables :
+--   magasin_stock   : catalogue / stock du magasin (une ligne par article)
+--   magasin_clients : comptes clients (chiffre d'affaires, seuil, solde crédit)
+--   magasin_ventes  : bons de vente (items en jsonb) + règlements clients
+--                     (lignes is_payment = true, sans marchandise)
+-- ============================================================
+
+-- Utilisateur Aziz Amaouche (gérant du magasin). requires_verification = true
+-- -> comme les autres comptes non-admin : code OTP le samedi uniquement,
+-- envoyé à l'administrateur via ntfy (voir request_login_code plus haut ;
+-- aucune modification nécessaire, la fonction lit v_user.role tel quel).
+insert into app_users (username, password_hash, requires_verification, role)
+values ('Aziz', encode(digest('Aziz@DPR2024!', 'sha256'), 'hex'), true, 'magasin_only')
+on conflict (username) do nothing;
+
+-- ------------------------------------------------------------
+-- magasin_stock
+-- ------------------------------------------------------------
+create table if not exists magasin_stock (
+  id uuid primary key default gen_random_uuid(),
+  reference text,
+  designation text not null,
+  marque text,
+  quantite numeric(10, 2) not null default 0,
+  prix_achat numeric(10, 2) default 0,
+  prix_gros numeric(10, 2) default 0,
+  prix_detail numeric(10, 2) default 0,
+  prix_euro numeric(10, 2) default 0,
+  stock_min numeric(10, 2) default 0,
+  rayonnage text,
+  code_barre text,
+  created_at timestamptz not null default now()
+);
+
+comment on table magasin_stock is 'Stock du magasin Bejaia (pièces détachées) — une ligne par article';
+comment on column magasin_stock.quantite is 'Quantité en stock ; décrémentée automatiquement par magasin_record_vente à chaque vente';
+
+create index if not exists magasin_stock_reference_idx on magasin_stock (reference);
+create index if not exists magasin_stock_designation_idx on magasin_stock (lower(designation));
+create index if not exists magasin_stock_marque_idx on magasin_stock (marque);
+
+-- Référence unique uniquement quand elle est renseignée : permet l'upsert
+-- à l'import (onConflict: 'reference') sans contraindre les nombreux
+-- articles sans code (rapprochés par désignation côté application).
+create unique index if not exists magasin_stock_reference_unique
+  on magasin_stock (reference)
+  where reference is not null and reference <> '';
+
+alter table magasin_stock enable row level security;
+
+create policy "Lecture publique magasin_stock" on magasin_stock for select using (true);
+create policy "Ajout magasin_stock" on magasin_stock for insert with check (true);
+create policy "Modification magasin_stock" on magasin_stock for update using (true) with check (true);
+create policy "Suppression magasin_stock" on magasin_stock for delete using (true);
+
+alter publication supabase_realtime add table magasin_stock;
+
+-- ------------------------------------------------------------
+-- magasin_clients
+-- ------------------------------------------------------------
+create table if not exists magasin_clients (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  phone text,
+  chiffre_affaires numeric(14, 2) default 0,
+  seuil_credit numeric(12, 2) default 0,
+  credit numeric(12, 2) default 0,
+  last_operation_date date,
+  created_at timestamptz not null default now()
+);
+
+comment on table magasin_clients is 'Comptes clients du magasin Bejaia';
+comment on column magasin_clients.credit is 'Solde : négatif = le client nous doit, positif = nous lui devons. Maj automatique : vente à crédit -> credit -= total ; règlement -> credit += montant';
+comment on column magasin_clients.chiffre_affaires is 'Cumul du chiffre d''affaires réalisé avec ce client (toutes ventes, hors règlements)';
+
+-- Noms toujours normalisés en MAJUSCULES (comme la table `clients` du module
+-- Factures) : évite les doublons "ahcene djennadi" / "AHCENE DJENNADI".
+create or replace function magasin_clients_normalize_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.name := upper(trim(new.name));
+  return new;
+end;
+$$;
+
+drop trigger if exists magasin_clients_normalize_name_trg on magasin_clients;
+create trigger magasin_clients_normalize_name_trg
+  before insert or update on magasin_clients
+  for each row execute function magasin_clients_normalize_name();
+
+alter table magasin_clients enable row level security;
+
+create policy "Lecture publique magasin_clients" on magasin_clients for select using (true);
+create policy "Ajout magasin_clients" on magasin_clients for insert with check (true);
+create policy "Modification magasin_clients" on magasin_clients for update using (true) with check (true);
+create policy "Suppression magasin_clients" on magasin_clients for delete using (true);
+
+alter publication supabase_realtime add table magasin_clients;
+
+-- ------------------------------------------------------------
+-- magasin_ventes
+-- ------------------------------------------------------------
+create table if not exists magasin_ventes (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  client_name text,
+  items jsonb not null default '[]'::jsonb,
+  total_ht numeric(12, 2) not null default 0,
+  remise numeric(10, 2) default 0,
+  total numeric(12, 2) not null default 0,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Crédit', 'Versement')),
+  cheque_number text,
+  cheque_bank text,
+  observations text,
+  is_payment boolean not null default false,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table magasin_ventes is 'Bons de vente du magasin Bejaia (items en jsonb) + règlements clients';
+comment on column magasin_ventes.items is 'Tableau [{stock_id, reference, designation, quantite, prix_unitaire, total}] ; vide pour un règlement';
+comment on column magasin_ventes.is_payment is 'true = règlement d''un client (diminue sa dette) ; items vide, stock non impacté';
+
+create index if not exists magasin_ventes_created_at_idx on magasin_ventes (created_at desc);
+create index if not exists magasin_ventes_entry_date_idx on magasin_ventes (entry_date desc);
+create index if not exists magasin_ventes_bon_number_idx on magasin_ventes (bon_number desc);
+create index if not exists magasin_ventes_client_name_idx on magasin_ventes (client_name);
+
+alter table magasin_ventes enable row level security;
+
+create policy "Lecture publique magasin_ventes" on magasin_ventes for select using (true);
+create policy "Ajout magasin_ventes" on magasin_ventes for insert with check (true);
+create policy "Modification magasin_ventes" on magasin_ventes for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression magasin_ventes" on magasin_ventes for delete
+  using (created_at > now() - interval '72 hours');
+
+alter publication supabase_realtime add table magasin_ventes;
+
+-- ------------------------------------------------------------
+-- magasin_record_vente : enregistre atomiquement un bon de vente OU un
+-- règlement client, applique la décrémentation du stock et met à jour le
+-- compte client. Appelée par MagasinVenteForm et MagasinCredits.
+--
+--   - vente normale  : stock -= quantité vendue (par ligne), CA += total,
+--                      et si payment_mode = 'Crédit' : credit -= total
+--   - règlement (is_payment = true) : credit += total, stock intact
+--
+-- Le client est créé s'il n'existe pas encore (nom en MAJUSCULES).
+-- Une quantité vendue supérieure au stock n'est PAS bloquée (le stock peut
+-- passer négatif) : l'avertissement est affiché côté application.
+-- ------------------------------------------------------------
+create or replace function magasin_record_vente(p jsonb)
+returns magasin_ventes
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row magasin_ventes;
+  v_item jsonb;
+  v_client text := nullif(upper(trim(coalesce(p->>'client_name', ''))), '');
+  v_is_payment boolean := coalesce((p->>'is_payment')::boolean, false);
+  v_total numeric := coalesce((p->>'total')::numeric, 0);
+  v_mode text := coalesce(p->>'payment_mode', 'Espèces');
+begin
+  insert into magasin_ventes (
+    bon_number, entry_date, entry_time, client_name, items,
+    total_ht, remise, total, payment_mode, cheque_number, cheque_bank,
+    observations, is_payment, entered_by_user
+  ) values (
+    (p->>'bon_number')::int,
+    coalesce((p->>'entry_date')::date, current_date),
+    (p->>'entry_time')::time,
+    v_client,
+    coalesce(p->'items', '[]'::jsonb),
+    coalesce((p->>'total_ht')::numeric, 0),
+    coalesce((p->>'remise')::numeric, 0),
+    v_total,
+    v_mode,
+    nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    v_is_payment,
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  if not v_is_payment then
+    for v_item in select * from jsonb_array_elements(coalesce(p->'items', '[]'::jsonb))
+    loop
+      if nullif(v_item->>'stock_id', '') is not null then
+        update magasin_stock
+          set quantite = quantite - coalesce((v_item->>'quantite')::numeric, 0)
+          where id = (v_item->>'stock_id')::uuid;
+      elsif nullif(trim(coalesce(v_item->>'reference', '')), '') is not null then
+        update magasin_stock
+          set quantite = quantite - coalesce((v_item->>'quantite')::numeric, 0)
+          where reference = v_item->>'reference';
+      end if;
+    end loop;
+  end if;
+
+  if v_client is not null then
+    insert into magasin_clients (name) values (v_client) on conflict (name) do nothing;
+
+    if v_is_payment then
+      update magasin_clients
+        set credit = credit + v_total,
+            last_operation_date = v_row.entry_date
+        where name = v_client;
+    else
+      update magasin_clients
+        set chiffre_affaires = chiffre_affaires + v_total,
+            credit = credit - case when v_mode = 'Crédit' then v_total else 0 end,
+            last_operation_date = v_row.entry_date
+        where name = v_client;
+    end if;
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function magasin_record_vente(jsonb) from public;
+grant execute on function magasin_record_vente(jsonb) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Code admin : déblocage des modifications / suppressions après le verrou
+-- de 72h (même principe que admin_update_caisse / admin_delete_caisse).
+-- NOTE : admin_update_magasin_vente met à jour les champs du bon UNIQUEMENT
+-- (pas de réajustement automatique du stock ni du solde client). Une
+-- correction de stock/solde après coup se fait via une entrée de stock ou
+-- un règlement dédié.
+-- ------------------------------------------------------------
+create or replace function admin_update_magasin_vente(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_client_name text,
+  p_items jsonb,
+  p_total_ht numeric,
+  p_remise numeric,
+  p_total numeric,
+  p_payment_mode text,
+  p_cheque_number text,
+  p_cheque_bank text,
+  p_observations text
+)
+returns magasin_ventes
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result magasin_ventes;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update magasin_ventes set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    client_name = nullif(upper(trim(coalesce(p_client_name, ''))), ''),
+    items = coalesce(p_items, '[]'::jsonb),
+    total_ht = p_total_ht,
+    remise = p_remise,
+    total = p_total,
+    payment_mode = p_payment_mode,
+    cheque_number = nullif(trim(coalesce(p_cheque_number, '')), ''),
+    cheque_bank = nullif(trim(coalesce(p_cheque_bank, '')), ''),
+    observations = nullif(trim(coalesce(p_observations, '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Bon de vente introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_magasin_vente(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from magasin_ventes where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_magasin_stock(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from magasin_stock where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_magasin_client(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from magasin_clients where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_magasin_vente(uuid, text, integer, date, text, jsonb, numeric, numeric, numeric, text, text, text, text) from public;
+revoke all on function admin_delete_magasin_vente(uuid, text) from public;
+revoke all on function admin_delete_magasin_stock(uuid, text) from public;
+revoke all on function admin_delete_magasin_client(uuid, text) from public;
+grant execute on function admin_update_magasin_vente(uuid, text, integer, date, text, jsonb, numeric, numeric, numeric, text, text, text, text) to anon, authenticated;
+grant execute on function admin_delete_magasin_vente(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_magasin_stock(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_magasin_client(uuid, text) to anon, authenticated;
