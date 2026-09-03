@@ -39,6 +39,18 @@ function WrenchIcon(props) {
   )
 }
 
+function FactoryIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <path d="M3 21h18" />
+      <path d="M4 21V10l6 4V10l6 4V6l4 2v13" />
+      <path d="M7 21v-4" />
+      <path d="M12 21v-4" />
+      <path d="M17 21v-4" />
+    </svg>
+  )
+}
+
 function FuelIcon(props) {
   return (
     <svg {...ICON_PROPS} {...props}>
@@ -126,6 +138,7 @@ const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
   { id: 'maintenance', label: 'Maintenance', Icon: WrenchIcon },
+  { id: 'production', label: 'Production', Icon: FactoryIcon },
   { id: 'fuel', label: 'Carburant', Icon: FuelIcon },
   { id: 'sand', label: 'Sable', Icon: SandIcon },
   { id: 'invoices', label: 'Factures', Icon: InvoiceIcon },

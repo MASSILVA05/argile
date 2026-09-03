@@ -40,3 +40,9 @@ export function uploadTvaPayerPhoto(file, invoiceNumber) {
 export function uploadCaissePhoto(file, bonNumber) {
   return uploadPhoto(file, 'caisse-photos', String(bonNumber))
 }
+
+// Magasin Bejaia : photos des bons de vente et des bons d'achat fournisseur
+// (bucket public "magasin-photos" côté serveur de photos).
+export function uploadMagasinPhoto(file, ref) {
+  return uploadPhoto(file, 'magasin-photos', String(ref))
+}

@@ -50,6 +50,70 @@ export function itemLineTotal(quantite, prixUnitaire) {
   return (Number(quantite) || 0) * (Number(prixUnitaire) || 0)
 }
 
+// --- Achats fournisseur (sous-onglet "Achats") -------------------------------
+
+// Modes de paiement d'un bon d'achat fournisseur (mêmes libellés que les
+// ventes, sans "Versement").
+export const ACHAT_PAYMENT_MODES = ['Espèces', 'Chèque', 'Crédit']
+
+// Destination d'un achat : "Stock" (marchandise ajoutée au stock du magasin)
+// ou "Revente directe" (revendue immédiatement à un client, hors stock).
+export const ACHAT_DESTINATIONS = ['Stock', 'Revente directe']
+
+export function computeAchatTotal(items) {
+  return (items ?? []).reduce((s, it) => s + (Number(it.total) || 0), 0)
+}
+
+export function achatItemsText(items) {
+  if (!Array.isArray(items) || items.length === 0) return ''
+  return items
+    .map((it) => `${it.designation} ×${formatQty(it.quantite)} @ ${formatDA(it.prix_achat)} = ${formatDA(it.total)}`)
+    .join(' ; ')
+}
+
+// Fiche fournisseur (relevé des achats) réutilisée par EntitySheetModal.
+export function buildMagasinFournisseurSheet(achats, name, startDate, endDate) {
+  const nameU = name.trim().toUpperCase()
+  const rows = (achats ?? [])
+    .filter((a) => String(a.fournisseur ?? '').trim().toUpperCase() === nameU)
+    .filter((a) => (!startDate || a.entry_date >= startDate) && (!endDate || a.entry_date <= endDate))
+    .sort((a, b) =>
+      a.entry_date < b.entry_date ? -1 : a.entry_date > b.entry_date ? 1 : a.bon_number - b.bon_number
+    )
+    .map((a) => ({
+      bon_number: a.bon_number,
+      entry_date: a.entry_date,
+      libelle: itemsSummary(a.items),
+      destination: a.destination ?? '—',
+      payment_mode: a.payment_mode ?? '—',
+      total: Number(a.total) || 0,
+    }))
+
+  if (rows.length === 0) {
+    return { error: `Aucun achat trouvé pour « ${name} » sur cette période.` }
+  }
+
+  const columns = [
+    { key: 'bon_number', header: 'N° Bon' },
+    { key: 'entry_date', header: 'Date' },
+    { key: 'libelle', header: 'Articles' },
+    { key: 'destination', header: 'Destination' },
+    { key: 'payment_mode', header: 'Paiement' },
+    { key: 'total', header: 'Total (DA)', align: 'right', format: (v) => formatDA(v) },
+  ]
+
+  const net = rows.reduce((s, r) => s + r.total, 0)
+
+  return {
+    title: `Relevé fournisseur magasin — ${name}`,
+    periodLabel: periodLabel(startDate, endDate),
+    columns,
+    rows,
+    totalRows: [{ cells: { bon_number: 'TOTAL ACHATS', total: net }, highlight: true }],
+    excelFilename: `Fiche_Fournisseur_Magasin_${name.replace(/\s+/g, '_')}_${todayISO()}.xlsx`,
+  }
+}
+
 // Construit les données d'une fiche client (relevé) réutilisées par
 // EntitySheetModal : mêmes colonnes/rows/totaux pour l'impression et l'export
 // Excel. `ventes` = toutes les lignes magasin_ventes déjà chargées (ventes +

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import EntryForm from './components/EntryForm'
 import Registry from './components/Registry'
 import MaintenancePage from './components/MaintenancePage'
+import ProductionPage from './components/ProductionPage'
 import FuelPage from './components/FuelPage'
 import SandPage from './components/SandPage'
 import InvoicesPage from './components/InvoicesPage'
@@ -19,6 +20,7 @@ const TITLES = {
   form: 'Suivi de chargement',
   registry: 'Registre de chargement',
   maintenance: 'Maintenance',
+  production: 'Production',
   fuel: 'Carburant',
   sand: 'Sable',
   invoices: 'Factures',
@@ -114,6 +116,7 @@ function App() {
         {tab === 'form' && <EntryForm />}
         {tab === 'registry' && <Registry />}
         {tab === 'maintenance' && <MaintenancePage />}
+        {tab === 'production' && <ProductionPage />}
         {tab === 'fuel' && <FuelPage />}
         {tab === 'sand' && <SandPage />}
         {tab === 'invoices' && <InvoicesPage />}

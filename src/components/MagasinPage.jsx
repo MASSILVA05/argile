@@ -3,12 +3,14 @@ import { supabase } from '../lib/supabase'
 import { formatDA, isLowStock } from '../lib/magasin'
 import MagasinStock from './MagasinStock'
 import MagasinVentes from './MagasinVentes'
+import MagasinAchats from './MagasinAchats'
 import MagasinCredits from './MagasinCredits'
 import MagasinImport from './MagasinImport'
 
 const TABS = [
   { id: 'stock', label: 'Stock' },
   { id: 'ventes', label: 'Ventes' },
+  { id: 'achats', label: 'Achats' },
   { id: 'credits', label: 'Crédits clients' },
   { id: 'import', label: 'Import' },
 ]
@@ -84,6 +86,7 @@ export default function MagasinPage() {
 
       {view === 'stock' && <MagasinStock />}
       {view === 'ventes' && <MagasinVentes />}
+      {view === 'achats' && <MagasinAchats />}
       {view === 'credits' && <MagasinCredits />}
       {view === 'import' && <MagasinImport />}
     </div>

@@ -14,6 +14,7 @@ const TOPIC_FACTURES = import.meta.env.VITE_NTFY_TOPIC_FACTURES || NTFY_TOPIC
 const TOPIC_TVA = import.meta.env.VITE_NTFY_TOPIC_TVA || NTFY_TOPIC
 const TOPIC_CAISSE = import.meta.env.VITE_NTFY_TOPIC_CAISSE || NTFY_TOPIC
 const TOPIC_MAGASIN = import.meta.env.VITE_NTFY_TOPIC_MAGASIN || NTFY_TOPIC
+const TOPIC_PRODUCTION = import.meta.env.VITE_NTFY_TOPIC_PRODUCTION || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -254,6 +255,55 @@ export function notifyMagasinStockEntry({ designation, reference, added, quantit
   ]
   if (entered_by_user) lines.push(`Saisi par : ${entered_by_user}`)
   return sendNtfy(TOPIC_MAGASIN, 'Magasin — Entrée de stock', lines, 'package')
+}
+
+export function notifyProductionEntry(entry) {
+  const lines = [
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Équipe ${entry.equipe ?? '—'} · Poste ${entry.poste ?? '—'}`,
+    `Produit : ${entry.produit}`,
+  ]
+  if (entry.operateur) lines.push(`Opérateur : ${entry.operateur}`)
+  lines.push(`Presse : ${entry.presse_chariots ?? 0} chariot(s) = ${entry.presse_total_pieces ?? 0} pièces`)
+  if (entry.presse_rebutes) lines.push(`Chariots rebutés presse : ${entry.presse_rebutes}`)
+  lines.push(`Séchoir : ${entry.sechoir_entres ?? 0} entrés / ${entry.sechoir_sortis ?? 0} sortis`)
+  lines.push(`Four : ${entry.four_enfournes ?? 0} enfournés / ${entry.four_defournes ?? 0} défournés`)
+  if (entry.four_gaz) lines.push(`Gaz : ${entry.four_gaz} m³`)
+  lines.push(
+    `Défournement : ${entry.defourn_conformes ?? 0} conformes, ${entry.defourn_cassees ?? 0} cassées, ${entry.defourn_fissurees ?? 0} fissurées`
+  )
+  lines.push(`Emballage : ${entry.emballage_paquets ?? 0} paquet(s), ${entry.emballage_palettes ?? 0} palette(s)`)
+  if (entry.emballage_stock_final) lines.push(`Stock final : ${entry.emballage_stock_final} pièces`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_PRODUCTION, `Production — ${entry.produit} (Équipe ${entry.equipe ?? '?'})`, lines, 'factory')
+}
+
+export function notifyMagasinAchat(achat) {
+  const items = Array.isArray(achat.items) ? achat.items : []
+  const lines = [
+    `Bon n° ${achat.bon_number}`,
+    `Date : ${achat.entry_date}${achat.entry_time ? ` à ${achat.entry_time.slice(0, 5)}` : ''}`,
+    `Fournisseur : ${achat.fournisseur}`,
+    `Destination : ${achat.destination}`,
+  ]
+  lines.push(`Articles : ${items.length}`)
+  for (const it of items.slice(0, 15)) {
+    lines.push(`• ${it.designation} ×${it.quantite} = ${formatDA(it.total)} DA`)
+  }
+  if (items.length > 15) lines.push(`… +${items.length - 15} article(s)`)
+  lines.push(`Total achat : ${formatDA(achat.total)} DA`)
+  if (achat.destination === 'Revente directe') {
+    if (achat.client_revente) lines.push(`Client revente : ${achat.client_revente}`)
+    if (achat.prix_revente != null) lines.push(`Prix revente : ${formatDA(achat.prix_revente)} DA`)
+    if (achat.marge != null) lines.push(`Marge : ${formatDA(achat.marge)} DA`)
+  }
+  lines.push(`Mode de paiement : ${achat.payment_mode}`)
+  if (achat.payment_mode === 'Chèque' && achat.cheque_number) {
+    lines.push(`Chèque n° ${achat.cheque_number}${achat.cheque_bank ? ` — ${achat.cheque_bank}` : ''}`)
+  }
+  if (achat.observations) lines.push(`Obs : ${achat.observations}`)
+  if (achat.entered_by_user) lines.push(`Saisi par : ${achat.entered_by_user}`)
+  return sendNtfy(TOPIC_MAGASIN, 'Magasin — Nouvel achat fournisseur', lines, 'package')
 }
 
 export function notifyClientAdvance(advance) {

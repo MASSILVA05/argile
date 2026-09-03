@@ -1,16 +1,17 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane']
 
 // Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
 
 // Comptes non soumis à la plage horaire 8h-17h : les admins (déjà exemptés
-// de toute restriction) + Karim, qui peut se connecter à toute heure de la
-// journée. Karim reste soumis au jour de repos (vendredi) et au code OTP du
-// samedi (requires_verification en base, inchangé), et n'a pas le code admin.
-export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Karim']
+// de toute restriction) + Karim et Sofiane, qui peuvent se connecter à toute
+// heure de la journée. Ils restent soumis au jour de repos (vendredi) et au
+// code OTP du samedi (requires_verification en base, inchangé), et n'ont pas
+// le code admin.
+export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Karim', 'Sofiane']
 
 const SESSION_KEY = 'dpr-session'
 const ALGERIA_TZ = 'Africa/Algiers'
@@ -122,8 +123,9 @@ export function clearSession() {
 //                    Briqueterie/AVADOU comme Tahar s'il ouvrait ces pages.
 // viewer (Bilal)   : Chargement (saisie + registre) + Maintenance (saisie +
 //                    registre), aucune autre page, pas d'export Excel
-// maintenance_only (Karim) : uniquement Maintenance (saisie + registre),
-//                    export Excel autorisé
+// maintenance_only (Karim, Sofiane) : Maintenance (saisie + registre) +
+//                    Production (saisie + registre + tableau de bord),
+//                    export Excel autorisé, accès 24h, pas de code admin
 // tva_only (AVADOU, Tahar) : uniquement TVA récupération + TVA à payer,
 //                    aucune autre page, export Excel autorisé, pas de code
 //                    admin. AVADOU est cloisonné sur l'entité 'AVADOU',
@@ -145,10 +147,10 @@ export function clearSession() {
 // Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, AVADOU + Tahar/
 // tva_only) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin'],
+  admin: ['form', 'registry', 'maintenance', 'production', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin'],
   editor: ['form', 'registry', 'maintenance', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
-  maintenance_only: ['maintenance'],
+  maintenance_only: ['maintenance', 'production'],
   tva_only: ['tva', 'tva-payer'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
   magasin_only: ['magasin'],

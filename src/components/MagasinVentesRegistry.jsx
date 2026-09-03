@@ -42,6 +42,7 @@ export default function MagasinVentesRegistry() {
   const [exportOpen, setExportOpen] = useState(false)
   const [exportError, setExportError] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [lightboxUrl, setLightboxUrl] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -364,6 +365,7 @@ export default function MagasinVentesRegistry() {
                   <Th>Remise</Th>
                   <Th>Total</Th>
                   <Th>Paiement</Th>
+                  <Th className="no-print">Photo</Th>
                   <Th>Saisi par</Th>
                   <Th className="no-print">Actions</Th>
                 </tr>
@@ -386,6 +388,15 @@ export default function MagasinVentesRegistry() {
                       <Td className="text-right">{formatDA(v.remise)}</Td>
                       <Td className="text-right font-medium text-ocre">{formatDA(v.total)}</Td>
                       <Td>{paymentLabel(v)}</Td>
+                      <Td className="no-print">
+                        {v.photo_url ? (
+                          <button type="button" onClick={() => setLightboxUrl(v.photo_url)} className="block">
+                            <img src={v.photo_url} alt="" className="h-10 w-10 rounded object-cover" />
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </Td>
                       <Td>{v.entered_by_user ?? '—'}</Td>
                       <Td className="no-print">
                         <RowActions
@@ -402,6 +413,15 @@ export default function MagasinVentesRegistry() {
             </table>
           </div>
         </>
+      )}
+
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <img src={lightboxUrl} alt="Bon de vente" className="max-h-full max-w-full rounded-lg" />
+        </div>
       )}
 
       <AdminCodeModal
@@ -493,6 +513,9 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
             </>
           )}
         </div>
+      </Td>
+      <Td className="no-print">
+        {draft.photo_url ? <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" /> : '—'}
       </Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td className="no-print">

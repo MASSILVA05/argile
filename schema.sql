@@ -3555,3 +3555,470 @@ grant execute on function admin_update_magasin_vente(uuid, text, integer, date, 
 grant execute on function admin_delete_magasin_vente(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_magasin_stock(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_magasin_client(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- AJOUTS 2026-09-03 :
+--   1. Photo sur les bons de vente magasin (magasin_ventes.photo_url)
+--   2. Module PRODUCTION (briqueterie) : table production_entries
+--   3. Magasin Bejaia — sous-onglet "Achats" : table magasin_achats
+--   4. Utilisateur Sofiane (rôle maintenance_only, comme Karim)
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 1. Photo des bons de vente magasin
+--    Les photos sont hébergées par le serveur de photos
+--    (VITE_PHOTO_SERVER_URL, bucket public "magasin-photos"), comme pour
+--    les autres modules (caisse, sable, maintenance...).
+-- ------------------------------------------------------------
+alter table magasin_ventes add column if not exists photo_url text;
+alter table magasin_ventes add column if not exists is_payment boolean not null default false;
+
+-- magasin_record_vente : version mise à jour pour enregistrer photo_url.
+create or replace function magasin_record_vente(p jsonb)
+returns magasin_ventes
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row magasin_ventes;
+  v_item jsonb;
+  v_client text := nullif(upper(trim(coalesce(p->>'client_name', ''))), '');
+  v_is_payment boolean := coalesce((p->>'is_payment')::boolean, false);
+  v_total numeric := coalesce((p->>'total')::numeric, 0);
+  v_mode text := coalesce(p->>'payment_mode', 'Espèces');
+begin
+  insert into magasin_ventes (
+    bon_number, entry_date, entry_time, client_name, items,
+    total_ht, remise, total, payment_mode, cheque_number, cheque_bank,
+    observations, photo_url, is_payment, entered_by_user
+  ) values (
+    (p->>'bon_number')::int,
+    coalesce((p->>'entry_date')::date, current_date),
+    (p->>'entry_time')::time,
+    v_client,
+    coalesce(p->'items', '[]'::jsonb),
+    coalesce((p->>'total_ht')::numeric, 0),
+    coalesce((p->>'remise')::numeric, 0),
+    v_total,
+    v_mode,
+    nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    nullif(trim(coalesce(p->>'photo_url', '')), ''),
+    v_is_payment,
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  if not v_is_payment then
+    for v_item in select * from jsonb_array_elements(coalesce(p->'items', '[]'::jsonb))
+    loop
+      if nullif(v_item->>'stock_id', '') is not null then
+        update magasin_stock
+          set quantite = quantite - coalesce((v_item->>'quantite')::numeric, 0)
+          where id = (v_item->>'stock_id')::uuid;
+      elsif nullif(trim(coalesce(v_item->>'reference', '')), '') is not null then
+        update magasin_stock
+          set quantite = quantite - coalesce((v_item->>'quantite')::numeric, 0)
+          where reference = v_item->>'reference';
+      end if;
+    end loop;
+  end if;
+
+  if v_client is not null then
+    insert into magasin_clients (name) values (v_client) on conflict (name) do nothing;
+
+    if v_is_payment then
+      update magasin_clients
+        set credit = credit + v_total,
+            last_operation_date = v_row.entry_date
+        where name = v_client;
+    else
+      update magasin_clients
+        set chiffre_affaires = chiffre_affaires + v_total,
+            credit = credit - case when v_mode = 'Crédit' then v_total else 0 end,
+            last_operation_date = v_row.entry_date
+        where name = v_client;
+    end if;
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function magasin_record_vente(jsonb) from public;
+grant execute on function magasin_record_vente(jsonb) to anon, authenticated;
+
+-- admin_update_magasin_vente : version jsonb-agnostique conservée telle quelle
+-- ci-dessus ; on ajoute juste la prise en charge de photo_url via une
+-- fonction dédiée simple (le registre n'édite pas la photo, mais on garde la
+-- valeur existante : rien à faire ici).
+
+
+-- ------------------------------------------------------------
+-- 4. Utilisateur Sofiane — rôle maintenance_only (identique à Karim) :
+--    accès Maintenance + Production, 24h/24, code OTP le samedi, pas de
+--    code admin. Voir ROLE_TABS / UNRESTRICTED_HOURS_USERS dans auth.js.
+-- ------------------------------------------------------------
+insert into app_users (username, password_hash, requires_verification, role)
+values ('Sofiane', encode(digest('Sofiane@DPR2024!', 'sha256'), 'hex'), true, 'maintenance_only')
+on conflict (username) do nothing;
+
+
+-- ============================================================
+-- 2. MODULE PRODUCTION (briqueterie)
+--    Onglet "Production". Accès : rôle 'admin' (Ahcene, Massilva) et rôle
+--    'maintenance_only' (Karim, Sofiane). Aucun autre compte.
+--    Une ligne production_entries = un poste de production suivi de bout en
+--    bout : Presse -> Séchoir -> Four -> Défournement -> Emballage.
+-- ============================================================
+create table if not exists production_entries (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  equipe text check (equipe in ('A', 'B', 'C')),
+  poste text check (poste in ('1', '2', '3')),
+  operateur text,
+  produit text not null check (produit in ('B8', 'B12')),
+
+  presse_chariots integer default 0,
+  presse_numeros text,
+  presse_pression numeric(6, 2),
+  presse_pieces_etage integer default 72,
+  presse_etages_chariot integer default 12,
+  presse_rebutes integer default 0,
+  presse_total_pieces integer generated always as
+    (presse_chariots * presse_etages_chariot * presse_pieces_etage) stored,
+  presse_remarques text,
+
+  sechoir_entres integer default 0,
+  sechoir_sortis integer default 0,
+  sechoir_temperature numeric(6, 2),
+  sechoir_humidite numeric(5, 2),
+  sechoir_duree numeric(6, 2),
+  sechoir_rebutes integer default 0,
+  sechoir_remarques text,
+
+  four_enfournes integer default 0,
+  four_defournes integer default 0,
+  four_temperature numeric(6, 2),
+  four_duree numeric(6, 2),
+  four_gaz numeric(8, 2),
+  four_remarques text,
+
+  defourn_chariots integer default 0,
+  defourn_conformes integer default 0,
+  defourn_cassees integer default 0,
+  defourn_fissurees integer default 0,
+  defourn_remarques text,
+
+  emballage_paquets integer default 0,
+  emballage_pieces_paquet integer default 0,
+  emballage_palettes integer default 0,
+  emballage_stock_final integer default 0,
+  emballage_remarques text,
+
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table production_entries is 'Suivi de production briqueterie : un poste (presse->séchoir->four->défournement->emballage)';
+comment on column production_entries.presse_total_pieces is 'Calculé : presse_chariots × presse_etages_chariot × presse_pieces_etage';
+
+create index if not exists production_entries_entry_date_idx on production_entries (entry_date desc);
+create index if not exists production_entries_created_at_idx on production_entries (created_at desc);
+create index if not exists production_entries_produit_idx on production_entries (produit);
+create index if not exists production_entries_equipe_idx on production_entries (equipe);
+
+alter table production_entries enable row level security;
+
+create policy "Lecture publique production_entries" on production_entries for select using (true);
+create policy "Ajout production_entries" on production_entries for insert with check (true);
+-- Modification / suppression verrouillées après 72h (déblocage via code admin
+-- avec admin_update_production / admin_delete_production, SECURITY DEFINER).
+create policy "Modification production_entries" on production_entries for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression production_entries" on production_entries for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table production_entries;
+exception when duplicate_object then null;
+end $$;
+
+-- admin_update_production : met à jour une saisie après le verrou de 72h.
+-- Payload jsonb (trop de colonnes pour des paramètres nommés).
+create or replace function admin_update_production(p_id uuid, p_admin_code text, p jsonb)
+returns production_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result production_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update production_entries set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    equipe = coalesce(p->>'equipe', equipe),
+    poste = coalesce(p->>'poste', poste),
+    operateur = nullif(trim(coalesce(p->>'operateur', '')), ''),
+    produit = coalesce(p->>'produit', produit),
+    presse_chariots = coalesce((p->>'presse_chariots')::int, 0),
+    presse_numeros = nullif(trim(coalesce(p->>'presse_numeros', '')), ''),
+    presse_pression = (p->>'presse_pression')::numeric,
+    presse_pieces_etage = coalesce((p->>'presse_pieces_etage')::int, 0),
+    presse_etages_chariot = coalesce((p->>'presse_etages_chariot')::int, 0),
+    presse_rebutes = coalesce((p->>'presse_rebutes')::int, 0),
+    presse_remarques = nullif(trim(coalesce(p->>'presse_remarques', '')), ''),
+    sechoir_entres = coalesce((p->>'sechoir_entres')::int, 0),
+    sechoir_sortis = coalesce((p->>'sechoir_sortis')::int, 0),
+    sechoir_temperature = (p->>'sechoir_temperature')::numeric,
+    sechoir_humidite = (p->>'sechoir_humidite')::numeric,
+    sechoir_duree = (p->>'sechoir_duree')::numeric,
+    sechoir_rebutes = coalesce((p->>'sechoir_rebutes')::int, 0),
+    sechoir_remarques = nullif(trim(coalesce(p->>'sechoir_remarques', '')), ''),
+    four_enfournes = coalesce((p->>'four_enfournes')::int, 0),
+    four_defournes = coalesce((p->>'four_defournes')::int, 0),
+    four_temperature = (p->>'four_temperature')::numeric,
+    four_duree = (p->>'four_duree')::numeric,
+    four_gaz = (p->>'four_gaz')::numeric,
+    four_remarques = nullif(trim(coalesce(p->>'four_remarques', '')), ''),
+    defourn_chariots = coalesce((p->>'defourn_chariots')::int, 0),
+    defourn_conformes = coalesce((p->>'defourn_conformes')::int, 0),
+    defourn_cassees = coalesce((p->>'defourn_cassees')::int, 0),
+    defourn_fissurees = coalesce((p->>'defourn_fissurees')::int, 0),
+    defourn_remarques = nullif(trim(coalesce(p->>'defourn_remarques', '')), ''),
+    emballage_paquets = coalesce((p->>'emballage_paquets')::int, 0),
+    emballage_pieces_paquet = coalesce((p->>'emballage_pieces_paquet')::int, 0),
+    emballage_palettes = coalesce((p->>'emballage_palettes')::int, 0),
+    emballage_stock_final = coalesce((p->>'emballage_stock_final')::int, 0),
+    emballage_remarques = nullif(trim(coalesce(p->>'emballage_remarques', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Saisie de production introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_production(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from production_entries where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_production(uuid, text, jsonb) from public;
+revoke all on function admin_delete_production(uuid, text) from public;
+grant execute on function admin_update_production(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_production(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- 3. MAGASIN BEJAIA — sous-onglet "Achats" (achat fournisseur pour revente)
+--    Table magasin_achats : bons d'achat auprès des fournisseurs.
+--    destination = 'Stock'          -> marchandise ajoutée au stock magasin
+--    destination = 'Revente directe' -> pas de stock, juste l'enregistrement
+--                                       + client + prix de revente + marge
+-- ============================================================
+create table if not exists magasin_achats (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  fournisseur text not null,
+  items jsonb not null default '[]'::jsonb,
+  total numeric(12, 2) not null default 0,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Crédit')),
+  cheque_number text,
+  cheque_bank text,
+  destination text default 'Stock' check (destination in ('Stock', 'Revente directe')),
+  client_revente text,
+  prix_revente numeric(12, 2),
+  marge numeric(12, 2),
+  photo_url text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table magasin_achats is 'Bons d''achat fournisseur du magasin Bejaia (items en jsonb)';
+comment on column magasin_achats.items is 'Tableau [{stock_id, reference, designation, quantite, prix_achat, total}]';
+comment on column magasin_achats.marge is 'Revente directe : prix_revente - total (achat)';
+
+create index if not exists magasin_achats_created_at_idx on magasin_achats (created_at desc);
+create index if not exists magasin_achats_entry_date_idx on magasin_achats (entry_date desc);
+create index if not exists magasin_achats_bon_number_idx on magasin_achats (bon_number desc);
+create index if not exists magasin_achats_fournisseur_idx on magasin_achats (fournisseur);
+
+alter table magasin_achats enable row level security;
+
+create policy "Lecture publique magasin_achats" on magasin_achats for select using (true);
+create policy "Ajout magasin_achats" on magasin_achats for insert with check (true);
+create policy "Modification magasin_achats" on magasin_achats for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression magasin_achats" on magasin_achats for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table magasin_achats;
+exception when duplicate_object then null;
+end $$;
+
+-- magasin_record_achat : enregistre atomiquement un bon d'achat et, si
+-- destination = 'Stock', ajoute la marchandise au stock du magasin :
+--   - article rapproché par stock_id, sinon par reference, sinon créé.
+create or replace function magasin_record_achat(p jsonb)
+returns magasin_achats
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row magasin_achats;
+  v_item jsonb;
+  v_dest text := coalesce(p->>'destination', 'Stock');
+  v_stock_id uuid;
+  v_ref text;
+  v_qty numeric;
+begin
+  insert into magasin_achats (
+    bon_number, entry_date, entry_time, fournisseur, items, total,
+    payment_mode, cheque_number, cheque_bank, destination, client_revente,
+    prix_revente, marge, photo_url, observations, entered_by_user
+  ) values (
+    (p->>'bon_number')::int,
+    coalesce((p->>'entry_date')::date, current_date),
+    (p->>'entry_time')::time,
+    trim(coalesce(p->>'fournisseur', '')),
+    coalesce(p->'items', '[]'::jsonb),
+    coalesce((p->>'total')::numeric, 0),
+    coalesce(p->>'payment_mode', 'Espèces'),
+    nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    v_dest,
+    nullif(trim(coalesce(p->>'client_revente', '')), ''),
+    (p->>'prix_revente')::numeric,
+    (p->>'marge')::numeric,
+    nullif(trim(coalesce(p->>'photo_url', '')), ''),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  if v_dest = 'Stock' then
+    for v_item in select * from jsonb_array_elements(coalesce(p->'items', '[]'::jsonb))
+    loop
+      v_stock_id := nullif(v_item->>'stock_id', '')::uuid;
+      v_ref := nullif(trim(coalesce(v_item->>'reference', '')), '');
+      v_qty := coalesce((v_item->>'quantite')::numeric, 0);
+
+      if v_stock_id is not null then
+        update magasin_stock set quantite = quantite + v_qty where id = v_stock_id;
+      elsif v_ref is not null and exists (select 1 from magasin_stock where reference = v_ref) then
+        update magasin_stock
+          set quantite = quantite + v_qty,
+              prix_achat = coalesce((v_item->>'prix_achat')::numeric, prix_achat)
+          where reference = v_ref;
+      else
+        insert into magasin_stock (reference, designation, quantite, prix_achat)
+        values (
+          v_ref,
+          trim(coalesce(v_item->>'designation', 'Article sans nom')),
+          v_qty,
+          coalesce((v_item->>'prix_achat')::numeric, 0)
+        );
+      end if;
+    end loop;
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function magasin_record_achat(jsonb) from public;
+grant execute on function magasin_record_achat(jsonb) to anon, authenticated;
+
+-- Code admin : édition / suppression après le verrou de 72h.
+create or replace function admin_update_magasin_achat(p_id uuid, p_admin_code text, p jsonb)
+returns magasin_achats
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result magasin_achats;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update magasin_achats set
+    bon_number = coalesce((p->>'bon_number')::int, bon_number),
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    fournisseur = nullif(trim(coalesce(p->>'fournisseur', '')), ''),
+    total = coalesce((p->>'total')::numeric, 0),
+    payment_mode = coalesce(p->>'payment_mode', payment_mode),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    destination = coalesce(p->>'destination', destination),
+    client_revente = nullif(trim(coalesce(p->>'client_revente', '')), ''),
+    prix_revente = (p->>'prix_revente')::numeric,
+    marge = (p->>'marge')::numeric,
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Bon d''achat introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_magasin_achat(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from magasin_achats where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_magasin_achat(uuid, text, jsonb) from public;
+revoke all on function admin_delete_magasin_achat(uuid, text) from public;
+grant execute on function admin_update_magasin_achat(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_magasin_achat(uuid, text) to anon, authenticated;
