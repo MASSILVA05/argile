@@ -257,6 +257,29 @@ export function notifyMagasinStockEntry({ designation, reference, added, quantit
   return sendNtfy(TOPIC_MAGASIN, 'Magasin — Entrée de stock', lines, 'package')
 }
 
+export function notifyMagasinCaisseEntry(entry) {
+  const category =
+    entry.category === 'Autre' && entry.category_other ? entry.category_other : entry.category
+  const lines = [
+    `Bon n° ${entry.bon_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Type : ${entry.operation_type}`,
+    `Motif : ${entry.description}`,
+    `Montant : ${formatDA(entry.amount)} DA`,
+  ]
+  if (entry.beneficiary) lines.push(`Fournisseur/Bénéficiaire : ${entry.beneficiary}`)
+  if (entry.client_name) lines.push(`Client : ${entry.client_name}`)
+  lines.push(`Mode de paiement : ${entry.payment_mode}`)
+  if (entry.payment_mode === 'Chèque' && entry.cheque_number) {
+    lines.push(`Chèque n° ${entry.cheque_number}${entry.cheque_bank ? ` — ${entry.cheque_bank}` : ''}`)
+  }
+  if (entry.piece_number) lines.push(`N° Pièce : ${entry.piece_number}`)
+  lines.push(`Catégorie : ${category}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_MAGASIN, `Magasin — Caisse : ${entry.operation_type}`, lines, 'moneybag')
+}
+
 export function notifyProductionEntry(entry) {
   const lines = [
     `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,

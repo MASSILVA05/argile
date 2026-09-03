@@ -4022,3 +4022,150 @@ revoke all on function admin_update_magasin_achat(uuid, text, jsonb) from public
 revoke all on function admin_delete_magasin_achat(uuid, text) from public;
 grant execute on function admin_update_magasin_achat(uuid, text, jsonb) to anon, authenticated;
 grant execute on function admin_delete_magasin_achat(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- AJOUT 2026-09-03 (2) : CAISSE DU MAGASIN (sous-onglet "Caisse" de la page
+-- Magasin Bejaia). Table `magasin_caisse`, totalement séparée de la caisse
+-- principale de la briqueterie (`caisse_entries`). Solde propre au magasin.
+-- Accès : rôle 'admin' + rôle 'magasin_only' (Aziz), comme le reste du
+-- magasin. Notifications ntfy sur le topic Argile_Magasin.
+-- ============================================================
+
+-- Bucket photos partagé du magasin (ventes / achats / justificatifs caisse).
+-- Les photos passent en pratique par le serveur de photos
+-- (VITE_PHOTO_SERVER_URL) ; ce bucket Supabase est créé par cohérence avec
+-- les autres modules (caisse-photos, sable-photos...).
+insert into storage.buckets (id, name, public)
+values ('magasin-photos', 'magasin-photos', true)
+on conflict (id) do nothing;
+
+do $$ begin
+  create policy "Lecture publique photos magasin" on storage.objects for select
+    using (bucket_id = 'magasin-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Ajout photos magasin" on storage.objects for insert
+    with check (bucket_id = 'magasin-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Suppression photos magasin" on storage.objects for delete
+    using (bucket_id = 'magasin-photos');
+exception when duplicate_object then null;
+end $$;
+
+create table if not exists magasin_caisse (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  operation_type text not null
+    check (operation_type in ('Encaissement', 'Décaissement', 'Dépense')),
+  description text not null,
+  amount numeric(12, 2) not null,
+  beneficiary text,
+  client_name text,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Versement', 'Virement')),
+  cheque_number text,
+  cheque_bank text,
+  piece_number text,
+  photo_url text,
+  category text default 'Autre'
+    check (category in ('Fournisseur', 'Client', 'Salaire', 'Frais généraux', 'Autre')),
+  category_other text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table magasin_caisse is 'Caisse du magasin Bejaia (séparée de caisse_entries) : encaissements / décaissements / dépenses';
+comment on column magasin_caisse.amount is 'Montant en valeur absolue (DA) ; le signe est déduit de operation_type côté application';
+
+create index if not exists magasin_caisse_created_at_idx on magasin_caisse (created_at desc);
+create index if not exists magasin_caisse_entry_date_idx on magasin_caisse (entry_date desc);
+create index if not exists magasin_caisse_bon_number_idx on magasin_caisse (bon_number desc);
+create index if not exists magasin_caisse_operation_type_idx on magasin_caisse (operation_type);
+create index if not exists magasin_caisse_category_idx on magasin_caisse (category);
+create index if not exists magasin_caisse_beneficiary_idx on magasin_caisse (beneficiary);
+create index if not exists magasin_caisse_client_name_idx on magasin_caisse (client_name);
+
+alter table magasin_caisse enable row level security;
+
+create policy "Lecture publique magasin_caisse" on magasin_caisse for select using (true);
+create policy "Ajout magasin_caisse" on magasin_caisse for insert with check (true);
+create policy "Modification magasin_caisse" on magasin_caisse for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression magasin_caisse" on magasin_caisse for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table magasin_caisse;
+exception when duplicate_object then null;
+end $$;
+
+-- Code admin : édition / suppression après le verrou de 72h (payload jsonb).
+create or replace function admin_update_magasin_caisse(p_id uuid, p_admin_code text, p jsonb)
+returns magasin_caisse
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result magasin_caisse;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update magasin_caisse set
+    bon_number = coalesce((p->>'bon_number')::int, bon_number),
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    operation_type = coalesce(p->>'operation_type', operation_type),
+    description = coalesce(nullif(trim(coalesce(p->>'description', '')), ''), description),
+    amount = coalesce((p->>'amount')::numeric, amount),
+    beneficiary = nullif(trim(coalesce(p->>'beneficiary', '')), ''),
+    client_name = nullif(trim(coalesce(p->>'client_name', '')), ''),
+    payment_mode = coalesce(p->>'payment_mode', payment_mode),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    piece_number = nullif(trim(coalesce(p->>'piece_number', '')), ''),
+    category = coalesce(p->>'category', category),
+    category_other = nullif(trim(coalesce(p->>'category_other', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Opération de caisse magasin introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_magasin_caisse(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from magasin_caisse where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_magasin_caisse(uuid, text, jsonb) from public;
+revoke all on function admin_delete_magasin_caisse(uuid, text) from public;
+grant execute on function admin_update_magasin_caisse(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_magasin_caisse(uuid, text) to anon, authenticated;
