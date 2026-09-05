@@ -63,9 +63,10 @@
    lisible même affichée en aperçu dans la modale au thème sombre de l'app. */
 .printable-sheet {
   background: #ffffff;
-  color: #171717;
-  padding: 24px;
+  color: #000000;
+  padding: 28px 32px;
   border-radius: 8px;
+  font-family: Calibri, Arial, Helvetica, sans-serif;
 }
 
 .printable-sheet * {
@@ -73,39 +74,47 @@
 }
 
 .printable-sheet-header {
-  margin-bottom: 16px;
+  margin-bottom: 6px;
   text-align: center;
 }
 
 .printable-sheet-company {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #6b6b6b;
+  font-size: 14pt;
+  font-weight: 700;
+  letter-spacing: 0.3px;
   margin: 0;
 }
 
 .printable-sheet-title {
-  font-size: 14pt;
+  font-size: 12pt;
   font-weight: 700;
-  margin: 4px 0;
+  margin: 3px 0 0;
 }
 
 .printable-sheet-subtitle,
 .printable-sheet-period {
-  font-size: 10pt;
-  color: #444444;
-  margin: 2px 0;
+  font-size: 9pt;
+  color: #333333;
+  margin: 2px 0 0;
+}
+
+/* Filet de séparation sous l'en-tête (comme le document imprimé). */
+.printable-sheet-header::after {
+  content: "";
+  display: block;
+  border-top: 1.5px solid #000000;
+  margin: 10px 0 0;
 }
 
 .printable-sheet-extra {
-  margin-bottom: 16px;
-  font-size: 10pt;
+  margin: 10px 0 0;
+  font-size: 9pt;
 }
 
 .printable-sheet-empty {
   font-size: 10pt;
-  color: #666666;
+  color: #555555;
+  font-style: italic;
   text-align: center;
   padding: 24px 0;
 }
@@ -114,24 +123,44 @@
   width: 100%;
   border-collapse: collapse;
   margin-top: 12px;
-  font-size: 10pt;
+  font-size: 8pt;
 }
 
 .printable-sheet-table th,
 .printable-sheet-table td {
-  border: 1px solid #cccccc;
-  padding: 4px 8px;
+  border: 1px solid #000000;
+  padding: 3px 6px;
+  vertical-align: top;
 }
 
 .printable-sheet-table thead th {
-  background: #e5e5e5;
-  font-weight: 600;
+  background: #e2e2e2;
+  font-weight: 700;
+  font-size: 9pt;
+}
+
+.printable-sheet-table tbody tr:nth-child(even) {
+  background: #f9f9f9;
 }
 
 .printable-sheet-table tfoot td {
   font-weight: 700;
+  background: #f0f0f0;
+  border-top: 1.5px solid #000000;
 }
 
 .printable-sheet-table tfoot .printable-sheet-highlight td {
-  background: #f6e2c4;
+  background: #e2e2e2;
+}
+
+@media print {
+  .printable-sheet {
+    padding: 0;
+  }
+  .printable-sheet-table tbody tr {
+    page-break-inside: avoid;
+  }
+  .printable-sheet-table thead {
+    display: table-header-group;
+  }
 }

@@ -4474,11 +4474,32 @@ begin
 end;
 $$;
 
+-- Suppression en masse de toutes les matières premières (bouton « Tout
+-- supprimer », réservé admin) : utile pour ré-importer un stock à jour.
+create or replace function admin_delete_all_prodnet_matieres(p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from prodnet_matieres;
+end;
+$$;
+
 revoke all on function admin_update_prodnet_fabrication(uuid, text, jsonb) from public;
 revoke all on function admin_delete_prodnet_fabrication(uuid, text) from public;
 revoke all on function admin_delete_prodnet_product(uuid, text) from public;
 revoke all on function admin_delete_prodnet_matiere(uuid, text) from public;
+revoke all on function admin_delete_all_prodnet_matieres(text) from public;
 grant execute on function admin_update_prodnet_fabrication(uuid, text, jsonb) to anon, authenticated;
 grant execute on function admin_delete_prodnet_fabrication(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_prodnet_product(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_prodnet_matiere(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_all_prodnet_matieres(text) to anon, authenticated;

@@ -135,6 +135,22 @@ export default function ProdnetMatieres() {
     setError('')
   }
 
+  async function handleDeleteAll() {
+    if (!isAdmin) return
+    if (!window.confirm(
+      `Supprimer TOUTES les matières premières (${rows.length}) ?\n\nCette action est irréversible. Utile pour ré-importer un stock à jour.`
+    )) return
+    const code = window.prompt('Code administrateur :') ?? ''
+    if (!code) return
+    const { error: rpcError } = await supabase.rpc('admin_delete_all_prodnet_matieres', { p_admin_code: code })
+    if (rpcError) {
+      setError(`Erreur : ${rpcError.message}`)
+      return
+    }
+    setRows([])
+    setError('')
+  }
+
   async function handleExport() {
     setExporting(true)
     try {
@@ -177,6 +193,15 @@ export default function ProdnetMatieres() {
         >
           {exporting ? 'Génération…' : 'Exporter Excel'}
         </button>
+        {isAdmin && rows.length > 0 && (
+          <button
+            type="button"
+            onClick={handleDeleteAll}
+            className="min-h-11 rounded-lg border border-terracotta px-4 py-2 font-display text-terracotta hover:bg-terracotta/10"
+          >
+            Tout supprimer
+          </button>
+        )}
       </div>
 
       {adding && <MatiereForm draft={addDraft} onChange={setAddDraft} onSubmit={handleAdd} onCancel={() => setAdding(false)} submitLabel="Ajouter" />}

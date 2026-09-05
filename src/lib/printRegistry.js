@@ -1,12 +1,13 @@
-// Remplace l'ancien système d'impression (@media print + .print-area/.no-print
-// sur la page elle-même, qui imprimait le thème sombre/la navigation malgré
-// les tentatives de masquage). Ouvre désormais une fenêtre séparée contenant
-// un document HTML autonome (fond blanc, tableau propre), et déclenche
-// window.print() dessus -- la page principale de l'app n'est jamais imprimée.
+// Impression : ouvre une fenêtre séparée contenant un document HTML autonome
+// (fond blanc, mise en page « PDF » propre) puis déclenche window.print()
+// dessus -- la page principale de l'app n'est jamais imprimée.
 //
-// Utilisé à la fois par le bouton "Imprimer" de chaque registre (colonnes
-// larges, la table complète actuellement filtrée à l'écran) et par
-// EntitySheetModal (fiches par entité, colonnes réduites, portrait).
+// Utilisé par le bouton « Imprimer » de chaque registre (table complète
+// filtrée à l'écran, paysage) ET par EntitySheetModal (fiches par entité :
+// fournisseur / client / chauffeur…, portrait). Le format ci-dessous
+// s'applique aux deux : en-tête société, filtre/période, tableau à bordures
+// complètes avec en-têtes gris et lignes alternées, totaux en gras séparés
+// par un filet, et « Page X / Y » en pied via les compteurs CSS de @page.
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -19,12 +20,15 @@ function formatPrintedAt(date) {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} à ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-// Les lignes de totaux peuvent être passées soit à plat ({clé: valeur, ...}),
-// soit sous la forme { cells: {...}, highlight } déjà utilisée par les
-// fiches (EntitySheetModal/PrintableSheet) -- accepte les deux pour pouvoir
-// réutiliser sheet.totalRows tel quel sans transformation.
+// Les lignes de totaux peuvent être passées à plat ({clé: valeur}) ou sous la
+// forme { cells: {...}, highlight } (fiches / PrintableSheet) : on accepte les
+// deux pour réutiliser sheet.totalRows tel quel.
 function normalizeRow(row) {
   return row && typeof row === 'object' && 'cells' in row ? row.cells : row
+}
+
+function isHighlighted(row) {
+  return !!(row && typeof row === 'object' && 'cells' in row && row.highlight)
 }
 
 function cellValue(column, row) {
@@ -33,9 +37,10 @@ function cellValue(column, row) {
   return column.format ? column.format(raw) : raw
 }
 
-function buildRowHtml(columns, row, { bold = false } = {}) {
+function buildRowHtml(columns, row, { total = false } = {}) {
   const cells = normalizeRow(row)
-  return `<tr${bold ? ' class="totals"' : ''}>${columns
+  const cls = total ? ` class="totals${isHighlighted(row) ? ' totals-strong' : ''}"` : ''
+  return `<tr${cls}>${columns
     .map((c) => {
       const align = c.align === 'right' ? 'right' : 'left'
       return `<td class="${align}">${escapeHtml(cellValue(c, cells))}</td>`
@@ -60,6 +65,10 @@ export function printRegistry({
 
   const totalsRows = Array.isArray(totals) ? totals : totals ? [totals] : []
 
+  // Réduction automatique de la police quand le tableau a beaucoup de colonnes
+  // (pour tenir en A4) : 8pt par défaut, 7pt à partir de 13 colonnes.
+  const dataFontPt = columns.length >= 13 ? 7 : 8
+
   const headerHtml = columns
     .map((c) => `<th class="${c.align === 'right' ? 'right' : 'left'}">${escapeHtml(c.label ?? c.header)}</th>`)
     .join('')
@@ -68,7 +77,7 @@ export function printRegistry({
     ? rows.map((row) => buildRowHtml(columns, row)).join('')
     : `<tr><td class="empty" colspan="${columns.length}">Aucune donnée pour ces critères.</td></tr>`
 
-  const totalsHtml = totalsRows.map((t) => buildRowHtml(columns, t, { bold: true })).join('')
+  const totalsHtml = totalsRows.map((t) => buildRowHtml(columns, t, { total: true })).join('')
 
   const html = `<!DOCTYPE html>
 <html lang="fr">
@@ -77,48 +86,79 @@ export function printRegistry({
 <title>${escapeHtml(subtitle || title)}</title>
 <style>
   * { box-sizing: border-box; }
-  html, body {
-    background: #ffffff;
-    color: #000000;
-    margin: 0;
-    padding: 0;
-  }
+  html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
   body {
-    font-family: Arial, Helvetica, sans-serif;
-    padding: 16px 20px;
+    font-family: Calibri, Arial, Helvetica, sans-serif;
+    font-size: ${dataFontPt}pt;
   }
-  .header { text-align: center; margin-bottom: 14px; }
-  .company { font-size: 16pt; font-weight: bold; margin: 0; }
-  .subtitle { font-size: 12pt; font-weight: bold; margin: 4px 0; }
-  .meta { font-size: 9pt; color: #333333; margin: 2px 0; }
-  table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-  th, td {
-    border: 1px solid #000000;
-    padding: 4px 8px;
-    font-size: 9pt;
-    text-align: left;
-  }
-  th {
-    background: #e0e0e0;
-    font-weight: bold;
-    font-size: 10pt;
-  }
-  th.right, td.right { text-align: right; }
-  tr.totals td { font-weight: bold; }
-  td.empty { text-align: center; padding: 16px; color: #555555; }
+
   @page {
     size: A4 ${orientation};
-    margin: 1.5cm 1cm 2cm 1cm;
+    margin: 2cm 1.5cm;
+    @bottom-center {
+      content: "Page " counter(page) " / " counter(pages);
+      font-family: Arial, sans-serif;
+      font-size: 9pt;
+      color: #555555;
+    }
   }
+
+  .doc-header { text-align: center; margin-bottom: 6px; }
+  .doc-company { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
+  .doc-subtitle { font-size: 12pt; font-weight: bold; margin: 3px 0 0; }
+  .doc-meta-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    font-size: 9pt;
+    color: #333333;
+    margin-top: 6px;
+  }
+  .doc-meta-line .left { text-align: left; }
+  .doc-meta-line .right { text-align: right; white-space: nowrap; }
+  .doc-rule { border: none; border-top: 1.5px solid #000000; margin: 4px 0 10px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+  th, td {
+    border: 1px solid #000000;
+    padding: 3px 6px;
+    font-size: ${dataFontPt}pt;
+    text-align: left;
+    vertical-align: top;
+    word-break: break-word;
+  }
+  th {
+    background: #e2e2e2;
+    font-weight: bold;
+    font-size: ${dataFontPt + 1}pt;
+  }
+  th.right, td.right { text-align: right; }
+  tbody tr { page-break-inside: avoid; }
+  tbody tr:nth-child(even) { background: #f9f9f9; }
+
+  tr.totals td {
+    font-weight: bold;
+    background: #f0f0f0;
+    border-top: 1.5px solid #000000;
+  }
+  tr.totals-strong td { background: #e2e2e2; }
+
+  td.empty { text-align: center; padding: 16px; color: #555555; font-style: italic; }
 </style>
 </head>
 <body>
-  <div class="header">
-    <p class="company">${escapeHtml(title)}</p>
-    ${subtitle ? `<p class="subtitle">${escapeHtml(subtitle)}</p>` : ''}
-    <p class="meta">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</p>
-    ${filters ? `<p class="meta">Filtre : ${escapeHtml(filters)}</p>` : ''}
+  <div class="doc-header">
+    <p class="doc-company">${escapeHtml(title)}</p>
+    ${subtitle ? `<p class="doc-subtitle">${escapeHtml(subtitle)}</p>` : ''}
   </div>
+  <div class="doc-meta-line">
+    <span class="left">${filters ? escapeHtml(filters) : ''}</span>
+    <span class="right">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</span>
+  </div>
+  <hr class="doc-rule" />
   <table>
     <thead><tr>${headerHtml}</tr></thead>
     <tbody>${bodyHtml}</tbody>
@@ -132,12 +172,11 @@ export function printRegistry({
   win.document.close()
   win.focus()
 
-  // document.write() est parsé de façon synchrone, mais laisser un tick au
-  // moteur de rendu avant print() évite un dialogue d'impression sur une
-  // page pas encore peinte dans certains navigateurs.
+  // Laisser un tick au moteur de rendu avant print() (sinon dialogue sur une
+  // page pas encore peinte dans certains navigateurs).
   setTimeout(() => {
     win.print()
-  }, 150)
+  }, 200)
 
   win.onafterprint = () => win.close()
 }
