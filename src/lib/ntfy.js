@@ -301,6 +301,25 @@ export function notifyProductionEntry(entry) {
   return sendNtfy(TOPIC_PRODUCTION, `Production — ${entry.produit} (Équipe ${entry.equipe ?? '?'})`, lines, 'factory')
 }
 
+export function notifyProdnetFabrication(fab) {
+  const matieres = Array.isArray(fab.matieres) ? fab.matieres : []
+  const lines = [
+    `Date : ${fab.entry_date}${fab.entry_time ? ` à ${fab.entry_time.slice(0, 5)}` : ''}`,
+    `Produit fini : ${fab.product_designation}${fab.product_reference ? ` (${fab.product_reference})` : ''}`,
+    `Quantité produite : ${fab.quantite_produite}`,
+    `Matières consommées : ${matieres.length}`,
+  ]
+  for (const m of matieres.slice(0, 15)) {
+    lines.push(`• ${m.designation} ×${m.quantite_utilisee} = ${formatDA(m.total)} DA`)
+  }
+  if (matieres.length > 15) lines.push(`… +${matieres.length - 15} matière(s)`)
+  lines.push(`Coût total : ${formatDA(fab.cout_total)} DA`)
+  lines.push(`Coût unitaire : ${formatDA(fab.cout_unitaire)} DA`)
+  if (fab.observations) lines.push(`Obs : ${fab.observations}`)
+  if (fab.entered_by_user) lines.push(`Saisi par : ${fab.entered_by_user}`)
+  return sendNtfy(TOPIC_PRODUCTION, 'Prodnet — Nouvelle fabrication', lines, 'package')
+}
+
 export function notifyMagasinAchat(achat) {
   const items = Array.isArray(achat.items) ? achat.items : []
   const lines = [

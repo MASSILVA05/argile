@@ -4169,3 +4169,316 @@ revoke all on function admin_update_magasin_caisse(uuid, text, jsonb) from publi
 revoke all on function admin_delete_magasin_caisse(uuid, text) from public;
 grant execute on function admin_update_magasin_caisse(uuid, text, jsonb) to anon, authenticated;
 grant execute on function admin_delete_magasin_caisse(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- MODULE PRODNET (2026-09-03) : suivi du coût de revient des produits finis
+-- Onglet "Prodnet". Accès : rôle 'admin' (Ahcene, Massilva) et rôle 'editor'
+-- (Halim, Bureau). Voir ROLE_TABS dans src/lib/auth.js.
+--
+-- 3 tables :
+--   prodnet_products     : catalogue des produits finis (stock + prix moyen)
+--   prodnet_matieres     : stock des matières premières
+--   prodnet_fabrications : historique des fabrications (consommation matières
+--                          -> production produit fini, coût de revient)
+--
+-- Une fabrication consomme des matières premières (jamais en dessous de 0) et
+-- alimente le prix moyen pondéré du produit fini avec son coût de revient.
+-- ============================================================
+
+-- Nouvel utilisateur Abderhmane : rôle maintenance_only (comme Karim /
+-- Sofiane) -> accès Maintenance + Production, 24h/24, code OTP le samedi.
+insert into app_users (username, password_hash, requires_verification, role)
+values ('Abderhmane', encode(digest('Abderhmane@DPR2024!', 'sha256'), 'hex'), true, 'maintenance_only')
+on conflict (username) do nothing;
+
+-- ------------------------------------------------------------
+-- prodnet_products
+-- ------------------------------------------------------------
+create table if not exists prodnet_products (
+  id uuid primary key default gen_random_uuid(),
+  reference text unique,
+  designation text not null,
+  quantite numeric(10, 2) default 0,
+  prix_moyen_ht numeric(12, 2) default 0,
+  montant_ht numeric(14, 2) default 0,
+  created_at timestamptz not null default now()
+);
+
+comment on table prodnet_products is 'Produits finis Prodnet : stock, prix moyen pondéré HT, valeur';
+
+create index if not exists prodnet_products_designation_idx on prodnet_products (lower(designation));
+create unique index if not exists prodnet_products_reference_unique
+  on prodnet_products (reference)
+  where reference is not null and reference <> '';
+
+alter table prodnet_products enable row level security;
+create policy "Lecture publique prodnet_products" on prodnet_products for select using (true);
+create policy "Ajout prodnet_products" on prodnet_products for insert with check (true);
+create policy "Modification prodnet_products" on prodnet_products for update using (true) with check (true);
+create policy "Suppression prodnet_products" on prodnet_products for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table prodnet_products;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- prodnet_matieres
+-- ------------------------------------------------------------
+create table if not exists prodnet_matieres (
+  id uuid primary key default gen_random_uuid(),
+  designation text not null,
+  position_tarifaire text,
+  unite text default 'U',
+  quantite numeric(12, 2) not null default 0,
+  prix_moyen numeric(12, 2) default 0,
+  valeur_totale numeric(14, 2) default 0,
+  created_at timestamptz not null default now()
+);
+
+comment on table prodnet_matieres is 'Matières premières Prodnet : stock consommé par les fabrications';
+comment on column prodnet_matieres.quantite is 'Décrémentée par prodnet_record_fabrication ; jamais négative (contrôle applicatif + RPC)';
+
+create index if not exists prodnet_matieres_designation_idx on prodnet_matieres (lower(designation));
+
+alter table prodnet_matieres enable row level security;
+create policy "Lecture publique prodnet_matieres" on prodnet_matieres for select using (true);
+create policy "Ajout prodnet_matieres" on prodnet_matieres for insert with check (true);
+create policy "Modification prodnet_matieres" on prodnet_matieres for update using (true) with check (true);
+create policy "Suppression prodnet_matieres" on prodnet_matieres for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table prodnet_matieres;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- prodnet_fabrications
+-- ------------------------------------------------------------
+create table if not exists prodnet_fabrications (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  product_id uuid references prodnet_products(id) on delete set null,
+  product_reference text,
+  product_designation text,
+  quantite_produite integer not null default 1,
+  matieres jsonb not null default '[]'::jsonb,
+  cout_total numeric(14, 2) not null default 0,
+  cout_unitaire numeric(14, 2) default 0,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table prodnet_fabrications is 'Historique des fabrications Prodnet (consommation matières -> produit fini)';
+comment on column prodnet_fabrications.matieres is 'Tableau [{matiere_id, designation, quantite_utilisee, prix_unitaire, total}]';
+
+create index if not exists prodnet_fabrications_entry_date_idx on prodnet_fabrications (entry_date desc);
+create index if not exists prodnet_fabrications_created_at_idx on prodnet_fabrications (created_at desc);
+create index if not exists prodnet_fabrications_product_id_idx on prodnet_fabrications (product_id);
+
+alter table prodnet_fabrications enable row level security;
+create policy "Lecture publique prodnet_fabrications" on prodnet_fabrications for select using (true);
+create policy "Ajout prodnet_fabrications" on prodnet_fabrications for insert with check (true);
+create policy "Modification prodnet_fabrications" on prodnet_fabrications for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression prodnet_fabrications" on prodnet_fabrications for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table prodnet_fabrications;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- prodnet_record_fabrication : enregistre atomiquement une fabrication.
+--   1. vérifie que chaque matière a un stock suffisant (sinon ERREUR, rollback)
+--   2. décrémente le stock de chaque matière + recalcule sa valeur_totale
+--   3. incrémente le stock du produit fini
+--   4. recalcule le prix moyen pondéré du produit
+--        nouveau_prix = (ancien_montant + cout_total) / (ancienne_qte + qte_produite)
+--   5. insère la ligne prodnet_fabrications
+-- ------------------------------------------------------------
+create or replace function prodnet_record_fabrication(p jsonb)
+returns prodnet_fabrications
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row prodnet_fabrications;
+  v_mat jsonb;
+  v_mid uuid;
+  v_qty numeric;
+  v_stock numeric;
+  v_desig text;
+  v_prod_id uuid := nullif(p->>'product_id', '')::uuid;
+  v_qte_produite integer := greatest(coalesce((p->>'quantite_produite')::int, 1), 1);
+  v_cout_total numeric := coalesce((p->>'cout_total')::numeric, 0);
+begin
+  -- 1. contrôle des stocks (verrou de ligne)
+  for v_mat in select * from jsonb_array_elements(coalesce(p->'matieres', '[]'::jsonb))
+  loop
+    v_mid := nullif(v_mat->>'matiere_id', '')::uuid;
+    v_qty := coalesce((v_mat->>'quantite_utilisee')::numeric, 0);
+    v_desig := coalesce(v_mat->>'designation', '?');
+    if v_mid is null then
+      raise exception 'Matière première non identifiée (%).', v_desig;
+    end if;
+    select quantite into v_stock from prodnet_matieres where id = v_mid for update;
+    if v_stock is null then
+      raise exception 'Matière première introuvable : %.', v_desig;
+    end if;
+    if v_stock < v_qty then
+      raise exception 'Stock insuffisant pour « % » (disponible : %, demandé : %).', v_desig, v_stock, v_qty;
+    end if;
+  end loop;
+
+  -- 2. décrément des matières + recalcul valeur_totale
+  for v_mat in select * from jsonb_array_elements(coalesce(p->'matieres', '[]'::jsonb))
+  loop
+    v_mid := nullif(v_mat->>'matiere_id', '')::uuid;
+    v_qty := coalesce((v_mat->>'quantite_utilisee')::numeric, 0);
+    update prodnet_matieres
+      set quantite = quantite - v_qty,
+          valeur_totale = (quantite - v_qty) * prix_moyen
+      where id = v_mid;
+  end loop;
+
+  -- 3 + 4. produit fini : stock += qte produite, prix moyen pondéré recalculé
+  if v_prod_id is not null then
+    update prodnet_products
+      set quantite = quantite + v_qte_produite,
+          montant_ht = montant_ht + v_cout_total,
+          prix_moyen_ht = case
+            when (quantite + v_qte_produite) > 0
+              then (montant_ht + v_cout_total) / (quantite + v_qte_produite)
+            else 0
+          end
+      where id = v_prod_id;
+  end if;
+
+  -- 5. insertion de la fabrication
+  insert into prodnet_fabrications (
+    entry_date, entry_time, product_id, product_reference, product_designation,
+    quantite_produite, matieres, cout_total, cout_unitaire, observations, entered_by_user
+  ) values (
+    coalesce((p->>'entry_date')::date, current_date),
+    (p->>'entry_time')::time,
+    v_prod_id,
+    nullif(trim(coalesce(p->>'product_reference', '')), ''),
+    nullif(trim(coalesce(p->>'product_designation', '')), ''),
+    v_qte_produite,
+    coalesce(p->'matieres', '[]'::jsonb),
+    v_cout_total,
+    coalesce((p->>'cout_unitaire')::numeric, case when v_qte_produite > 0 then v_cout_total / v_qte_produite else 0 end),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function prodnet_record_fabrication(jsonb) from public;
+grant execute on function prodnet_record_fabrication(jsonb) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Code admin : déblocage après le verrou de 72h.
+-- NOTE : admin_update_prodnet_fabrication ne modifie que la date et les
+-- observations (les stocks matières / produit ont déjà été impactés à la
+-- création et ne sont pas recalculés). admin_delete_prodnet_fabrication ne
+-- restaure pas les stocks non plus (correction manuelle via les onglets
+-- Produits Finis / Matières Premières).
+-- ------------------------------------------------------------
+create or replace function admin_update_prodnet_fabrication(p_id uuid, p_admin_code text, p jsonb)
+returns prodnet_fabrications
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result prodnet_fabrications;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update prodnet_fabrications set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Fabrication introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_prodnet_fabrication(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from prodnet_fabrications where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_prodnet_product(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from prodnet_products where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_prodnet_matiere(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from prodnet_matieres where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_prodnet_fabrication(uuid, text, jsonb) from public;
+revoke all on function admin_delete_prodnet_fabrication(uuid, text) from public;
+revoke all on function admin_delete_prodnet_product(uuid, text) from public;
+revoke all on function admin_delete_prodnet_matiere(uuid, text) from public;
+grant execute on function admin_update_prodnet_fabrication(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_prodnet_fabrication(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_prodnet_product(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_prodnet_matiere(uuid, text) to anon, authenticated;

@@ -3,6 +3,7 @@ import EntryForm from './components/EntryForm'
 import Registry from './components/Registry'
 import MaintenancePage from './components/MaintenancePage'
 import ProductionPage from './components/ProductionPage'
+import ProdnetPage from './components/ProdnetPage'
 import FuelPage from './components/FuelPage'
 import SandPage from './components/SandPage'
 import InvoicesPage from './components/InvoicesPage'
@@ -21,6 +22,7 @@ const TITLES = {
   registry: 'Registre de chargement',
   maintenance: 'Maintenance',
   production: 'Production',
+  prodnet: 'Prodnet',
   fuel: 'Carburant',
   sand: 'Sable',
   invoices: 'Factures',
@@ -117,6 +119,7 @@ function App() {
         {tab === 'registry' && <Registry />}
         {tab === 'maintenance' && <MaintenancePage />}
         {tab === 'production' && <ProductionPage />}
+        {tab === 'prodnet' && <ProdnetPage />}
         {tab === 'fuel' && <FuelPage />}
         {tab === 'sand' && <SandPage />}
         {tab === 'invoices' && <InvoicesPage />}
