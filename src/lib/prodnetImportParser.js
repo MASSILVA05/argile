@@ -155,55 +155,42 @@ export function parseProdnetProductsFile(arrayBuffer) {
 }
 
 // ============================================================
-// Matières premières — 2 structures d'onglet distinctes
+// Matières premières — mapping POSITIONNEL (les en-têtes ne sont PAS fiables :
+// « Prix Unitaire Pondéré (DZD) », « Valeur Totale (DZD) », « Prix moyen
+// pondéré »… ne matchent aucun libellé standard). On détecte l'onglet par son
+// nom et on lit les colonnes par position, en ignorant les en-têtes.
+//
+//   onglet « MATIERE PREMIERE … » :
+//     A designation | B position_tarifaire | C quantite | D prix_moyen | E valeur_totale   (unite = 'U')
+//   onglet « STOCK AU … » (ou tout autre) :
+//     A designation | B quantite | C unite | D prix_moyen | E valeur_totale               (pas de position tarifaire)
 // ============================================================
-const MATIERE_KEYWORDS = {
-  DESIGNATION: 'designation',
-  DESIGNATIONS: 'designation',
-  ARTICLE: 'designation',
-  'POSITION TARIFAIRE': 'position_tarifaire',
-  'POSITION TARIF': 'position_tarifaire',
-  POSITION: 'position_tarifaire',
-  'NOMENCLATURE': 'position_tarifaire',
-  UNITE: 'unite',
-  UM: 'unite',
-  'UNITE DE MESURE': 'unite',
-  QUANTITE: 'quantite',
-  'QUANTITE TOTALE': 'quantite',
-  QTE: 'quantite',
-  'PRIX MOYEN PONDERE': 'prix_moyen',
-  'PRIX UNITAIRE PONDERE': 'prix_moyen',
-  'PRIX MOYEN': 'prix_moyen',
-  'PRIX UNITAIRE': 'prix_moyen',
-  'PRIX PONDERE': 'prix_moyen',
-  'VALEUR TOTALE': 'valeur_totale',
-  VALEUR: 'valeur_totale',
-  'VALEUR STOCK': 'valeur_totale',
-}
-
-// Structures connues des 2 onglets (repli positionnel si l'en-tête d'une
-// colonne numérique n'est pas reconnue).
-const MATIERE_LAYOUTS = [
-  {
-    id: 'stock',
-    // onglet « STOCK AU 31122025 » : A désignation, B qté, C unité,
-    // D prix moyen, E valeur totale — PAS de position tarifaire.
-    matches: (sheetName, headerCells) =>
-      /STOCK/i.test(sheetName) ||
-      (headerCells.includes('UNITE') && !headerCells.includes('POSITION TARIFAIRE')),
-    positions: { designation: 0, quantite: 1, unite: 2, prix_moyen: 3, valeur_totale: 4 },
-    defaultUnite: null,
-  },
-  {
-    id: 'matiere',
-    // onglet « MATIERE PREMIERE AU 30062026 » : A désignation,
-    // B position tarifaire, C qté, D prix unitaire pondéré, E valeur totale.
-    matches: (sheetName, headerCells) =>
-      /MATIERE\s*PREMIERE/i.test(sheetName) || headerCells.includes('POSITION TARIFAIRE'),
-    positions: { designation: 0, position_tarifaire: 1, quantite: 2, prix_moyen: 3, valeur_totale: 4 },
+const MATIERE_LAYOUTS = {
+  // onglet MATIERE PREMIERE
+  matiere: {
+    designation: 0,
+    position_tarifaire: 1,
+    quantite: 2,
+    prix_moyen: 3,
+    valeur_totale: 4,
+    unite: null,
     defaultUnite: 'U',
   },
-]
+  // onglet STOCK AU … (défaut)
+  stock: {
+    designation: 0,
+    quantite: 1,
+    unite: 2,
+    prix_moyen: 3,
+    valeur_totale: 4,
+    position_tarifaire: null,
+    defaultUnite: null,
+  },
+}
+
+function pickLayout(sheetName) {
+  return /MATIERE\s*PREMIERE/i.test(sheetName) ? MATIERE_LAYOUTS.matiere : MATIERE_LAYOUTS.stock
+}
 
 // Onglets + parseur d'un onglet donné (choix par l'utilisateur).
 export function readProdnetMatieresWorkbook(arrayBuffer) {
@@ -213,35 +200,35 @@ export function readProdnetMatieresWorkbook(arrayBuffer) {
     parseSheet(sheetName) {
       if (!workbook.Sheets[sheetName]) throw new Error(`Onglet « ${sheetName} » introuvable.`)
       const rows = sheetRows(workbook, sheetName)
+      const layout = pickLayout(sheetName)
 
-      const header = detectHeader(rows, MATIERE_KEYWORDS)
-      const headerCells = header?.headerCells ?? []
-      const layout =
-        MATIERE_LAYOUTS.find((l) => l.matches(sheetName, headerCells)) ??
-        MATIERE_LAYOUTS[headerCells.includes('POSITION TARIFAIRE') ? 1 : 0]
+      // Ligne d'en-tête = 1re ligne non vide (souvent la ligne 1, parfois
+      // précédée d'un titre). Les données commencent juste après ; on saute
+      // les lignes vides intercalaires.
+      let headerIndex = 0
+      for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); i++) {
+        if (!isBlankRow(rows[i])) {
+          headerIndex = i
+          break
+        }
+      }
 
-      // Colonnes : mot-clé détecté prioritaire, sinon position connue de la
-      // structure. Garantit prix_moyen / valeur_totale même si l'en-tête
-      // porte un suffixe « (DZD) » non reconnu.
-      const col = { ...layout.positions, ...(header?.columns ?? {}) }
-      const headerIndex = header ? header.index : firstDataHeaderIndex(rows)
-
-      const get = (row, field) => (col[field] === undefined ? null : row[col[field]])
+      const at = (row, pos) => (pos == null ? null : row[pos])
       const results = []
       for (let i = headerIndex + 1; i < rows.length; i++) {
         const row = rows[i]
         if (isBlankRow(row)) continue
-        const designation = firstNonBlank(get(row, 'designation'))
+        const designation = firstNonBlank(at(row, layout.designation))
         if (!designation) continue
         if (/^TOTAL\b/i.test(designation)) continue
-        const quantite = toNumber(get(row, 'quantite'))
-        const prix = toNumber(get(row, 'prix_moyen'))
-        let valeur = toNumber(get(row, 'valeur_totale'))
+        const quantite = toNumber(at(row, layout.quantite))
+        const prix = toNumber(at(row, layout.prix_moyen))
+        let valeur = toNumber(at(row, layout.valeur_totale))
         if (!valeur && quantite && prix) valeur = quantite * prix
         results.push({
           designation,
-          position_tarifaire: firstNonBlank(get(row, 'position_tarifaire')),
-          unite: firstNonBlank(get(row, 'unite')) || layout.defaultUnite || 'U',
+          position_tarifaire: firstNonBlank(at(row, layout.position_tarifaire)),
+          unite: firstNonBlank(at(row, layout.unite)) || layout.defaultUnite || 'U',
           quantite,
           prix_moyen: prix,
           valeur_totale: valeur,
@@ -253,11 +240,4 @@ export function readProdnetMatieresWorkbook(arrayBuffer) {
       return results
     },
   }
-}
-
-function firstDataHeaderIndex(rows) {
-  for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); i++) {
-    if (!isBlankRow(rows[i])) return i
-  }
-  return 0
 }
