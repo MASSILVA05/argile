@@ -12,7 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -36,6 +36,7 @@ export default function SandRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [supplierPaidFilter, setSupplierPaidFilter] = useState('')
   const [transporterPaidFilter, setTransporterPaidFilter] = useState('')
@@ -109,13 +110,13 @@ export default function SandRegistry() {
     return { count: filtered.length, quantity, amount }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (supplierPaidFilter) filterParts.push(`Statut fourn. : ${supplierPaidFilter}`)
     if (transporterPaidFilter) filterParts.push(`Statut transp. : ${transporterPaidFilter}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre Sable',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -145,7 +146,7 @@ export default function SandRegistry() {
         quantity_tons: totals.quantity.toFixed(2),
         total_general: formatDA(totals.amount),
       },
-    })
+    }
   }
 
   function sheetNameOptions(typeId) {
@@ -403,11 +404,12 @@ export default function SandRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

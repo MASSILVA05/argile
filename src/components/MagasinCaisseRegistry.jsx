@@ -19,7 +19,7 @@ import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const SHEET_TYPES = [
   { id: 'beneficiary', label: 'Fournisseur / Bénéficiaire', nameLabel: 'Fournisseur / Bénéficiaire' },
@@ -40,6 +40,7 @@ export default function MagasinCaisseRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -110,7 +111,7 @@ export default function MagasinCaisseRegistry() {
     return { encaissements, decaissements, depenses, solde: encaissements - decaissements - depenses }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const parts = []
     if (query.trim()) parts.push(`Recherche : "${query.trim()}"`)
     if (typeFilter) parts.push(`Type : ${typeFilter}`)
@@ -118,7 +119,7 @@ export default function MagasinCaisseRegistry() {
     if (dateFilter) parts.push(`Date : ${dateFilter}`)
     if (paymentFilter) parts.push(`Paiement : ${paymentFilter}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre Caisse — Magasin Bejaia',
       orientation: 'landscape',
       filters: parts.join(' — '),
@@ -150,7 +151,7 @@ export default function MagasinCaisseRegistry() {
         { bon_number: 'TOTAL DÉPENSES', signed_amount: totals.depenses },
         { bon_number: 'SOLDE', signed_amount: totals.solde },
       ],
-    })
+    }
   }
 
   function sheetNameOptions(typeId) {
@@ -356,9 +357,10 @@ export default function MagasinCaisseRegistry() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={handlePrint} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
+          <button type="button" onClick={() => setPrintOpen(true)} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           <button
             type="button"
             onClick={() => { setExportError(''); setExportModalOpen(true) }}

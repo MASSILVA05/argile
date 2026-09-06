@@ -11,7 +11,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const OPERATION_TYPES = ['Remplissage', 'Approvisionnement']
 
@@ -29,6 +29,7 @@ export default function FuelRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
@@ -88,14 +89,14 @@ export default function FuelRegistry() {
     })
   }, [entries, query, typeFilter])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (typeFilter) filterParts.push(`Type : ${typeFilter}`)
 
     const volumeSum = filtered.reduce((sum, e) => sum + (Number(e.volume_liters) || 0), 0)
 
-    printRegistry({
+    return {
       subtitle: 'Registre Carburant',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -115,7 +116,7 @@ export default function FuelRegistry() {
       ],
       rows: filtered,
       totals: { bon_number: 'TOTAL', volume_liters: volumeSum.toLocaleString('fr-FR') },
-    })
+    }
   }
 
   function startEdit(entry) {
@@ -326,11 +327,12 @@ export default function FuelRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

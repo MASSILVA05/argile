@@ -20,7 +20,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const CAISSE_SHEET_TYPES = [
   { id: 'beneficiary', label: 'Fournisseur / Bénéficiaire', nameLabel: 'Fournisseur / Bénéficiaire' },
@@ -43,6 +43,7 @@ export default function CaisseRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -118,7 +119,7 @@ export default function CaisseRegistry() {
     return { encaissements, decaissements, depenses, solde: encaissements - decaissements - depenses }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (typeFilter) filterParts.push(`Type : ${typeFilter}`)
@@ -126,7 +127,7 @@ export default function CaisseRegistry() {
     if (dateFilter) filterParts.push(`Date : ${dateFilter}`)
     if (paymentFilter) filterParts.push(`Paiement : ${paymentFilter}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre Caisse',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -159,7 +160,7 @@ export default function CaisseRegistry() {
         { bon_number: 'TOTAL DÉPENSES', signed_amount: totals.depenses },
         { bon_number: 'SOLDE', signed_amount: totals.solde },
       ],
-    })
+    }
   }
 
   function sheetNameOptions(typeId) {
@@ -418,11 +419,12 @@ export default function CaisseRegistry() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

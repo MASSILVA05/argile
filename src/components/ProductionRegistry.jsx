@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 import { downloadProductionExcel } from '../lib/productionExcel'
 import {
   EQUIPES,
@@ -28,6 +28,7 @@ export default function ProductionRegistry() {
   const [all, setAll] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [dateFilter, setDateFilter] = useState('')
   const [equipeFilter, setEquipeFilter] = useState('')
   const [posteFilter, setPosteFilter] = useState('')
@@ -94,13 +95,13 @@ export default function ProductionRegistry() {
     }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const parts = []
     if (dateFilter) parts.push(`Date : ${dateFilter}`)
     if (equipeFilter) parts.push(`Équipe : ${equipeFilter}`)
     if (posteFilter) parts.push(`Poste : ${posteLabel(posteFilter)}`)
     if (produitFilter) parts.push(`Produit : ${produitFilter}`)
-    printRegistry({
+    return {
       subtitle: 'Registre de production — Briqueterie',
       orientation: 'landscape',
       filters: parts.join(' — '),
@@ -137,7 +138,7 @@ export default function ProductionRegistry() {
           taux_casse: formatPercent(totals.taux),
         },
       ],
-    })
+    }
   }
 
   async function handleExport() {
@@ -251,9 +252,10 @@ export default function ProductionRegistry() {
           </select>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={handlePrint} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
+          <button type="button" onClick={() => setPrintOpen(true)} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           <button type="button" onClick={handleExport} disabled={exporting} className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre hover:bg-ocre/10 disabled:opacity-50">
             {exporting ? 'Génération…' : 'Exporter Excel'}
           </button>

@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { formatDA, formatQty, toNum } from '../lib/prodnet'
 import { downloadProdnetProductsExcel } from '../lib/prodnetExcel'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const emptyDraft = { reference: '', designation: '', quantite: '', prix_moyen_ht: '', montant_ht: '' }
 
@@ -31,6 +31,7 @@ export default function ProdnetProducts() {
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [printOpen, setPrintOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -128,8 +129,8 @@ export default function ProdnetProducts() {
     setError('')
   }
 
-  function handlePrint() {
-    printRegistry({
+  function buildPrintConfig() {
+    return {
       title: 'SARL DPR AXXAM',
       subtitle: 'Liste des Produits Finis',
       orientation: 'landscape',
@@ -142,8 +143,8 @@ export default function ProdnetProducts() {
         { key: 'montant_ht', label: 'Montant HT (DA)', align: 'right', format: (v) => formatDA(v) },
       ],
       rows: filtered,
-      totals: [{ designation: 'TOTAL', montant_ht: totalMontant }],
-    })
+      totals: [{ reference: 'TOTAL', montant_ht: totalMontant }],
+    }
   }
 
   async function handleExport() {
@@ -178,7 +179,7 @@ export default function ProdnetProducts() {
         </button>
         <button
           type="button"
-          onClick={handlePrint}
+          onClick={() => setPrintOpen(true)}
           className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted"
         >
           Imprimer
@@ -263,6 +264,8 @@ export default function ProdnetProducts() {
           </div>
         </>
       )}
+
+      <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
     </div>
   )
 }

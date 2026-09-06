@@ -11,7 +11,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const PAID_OPTIONS = ['Non', 'Oui', 'En attente']
 
@@ -28,6 +28,7 @@ export default function MaintenanceRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [paidFilter, setPaidFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
@@ -88,14 +89,14 @@ export default function MaintenanceRegistry() {
     })
   }, [entries, query, paidFilter])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (paidFilter) filterParts.push(`Statut : ${paidFilter}`)
 
     const amountSum = filtered.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
 
-    printRegistry({
+    return {
       subtitle: 'Registre Maintenance',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -119,7 +120,7 @@ export default function MaintenanceRegistry() {
       ],
       rows: filtered,
       totals: { fiche_number: 'TOTAL', amount: formatDA(amountSum) },
-    })
+    }
   }
 
   function startEdit(entry) {
@@ -339,11 +340,12 @@ export default function MaintenanceRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

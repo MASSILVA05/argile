@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { downloadStockExcel } from '../lib/stockExcel'
 import { formatDateTime } from '../lib/dateFormat'
 import PrintHeader from './PrintHeader'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const PRODUCTS = ['B8', 'B12']
 const MOVEMENT_TYPES = ['Production', 'Vente', 'Ajustement']
@@ -16,6 +16,7 @@ export default function StockMovementsTab() {
   const [movements, setMovements] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [productFilter, setProductFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
@@ -83,7 +84,7 @@ export default function StockMovementsTab() {
     }
   }
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (productFilter) filterParts.push(`Produit : ${productFilter}`)
@@ -91,7 +92,7 @@ export default function StockMovementsTab() {
     if (startDate) filterParts.push(`Du ${startDate}`)
     if (endDate) filterParts.push(`Au ${endDate}`)
 
-    printRegistry({
+    return {
       subtitle: 'Mouvements de stock',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -131,7 +132,7 @@ export default function StockMovementsTab() {
           quantity_display: `${Number(m.quantity) > 0 ? '+' : ''}${formatQty(m.quantity)}`,
         }
       }),
-    })
+    }
   }
 
   return (
@@ -187,11 +188,12 @@ export default function StockMovementsTab() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           <button
             type="button"
             onClick={handleExport}

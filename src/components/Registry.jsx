@@ -12,7 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -28,6 +28,7 @@ export default function Registry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [editingId, setEditingId] = useState(null)
@@ -93,12 +94,12 @@ export default function Registry() {
     return { count: filtered.length, weight }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (typeFilter) filterParts.push(`Type : ${typeFilter}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre de Chargement',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -121,7 +122,7 @@ export default function Registry() {
         bon_number: `${totals.count} bon${totals.count > 1 ? 's' : ''}`,
         weight_tons: totals.weight.toFixed(2),
       },
-    })
+    }
   }
 
   function sheetNameOptions(typeId) {
@@ -345,11 +346,12 @@ export default function Registry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

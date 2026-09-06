@@ -4,11 +4,11 @@ import { useAuth } from '../lib/auth'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
-import { printRegistry } from '../lib/printRegistry'
 import { downloadProdnetFabricationsExcel } from '../lib/prodnetExcel'
 import { formatDA, formatQty, matieresSummary, matieresText } from '../lib/prodnet'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const fmtTime = (v) => (v ? v.slice(0, 5) : '—')
 
@@ -27,6 +27,7 @@ export default function ProdnetFabricationRegistry() {
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [printOpen, setPrintOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -77,11 +78,11 @@ export default function ProdnetFabricationRegistry() {
     return { coutTotal, qte }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const parts = []
     if (productFilter) parts.push(`Produit : ${productFilter}`)
     if (dateFilter) parts.push(`Date : ${dateFilter}`)
-    printRegistry({
+    return {
       title: 'SARL DPR AXXAM',
       subtitle: 'Registre de Fabrication',
       orientation: 'landscape',
@@ -100,7 +101,7 @@ export default function ProdnetFabricationRegistry() {
       ],
       rows: filtered.map((f) => ({ ...f, matieres_text: matieresText(f.matieres) })),
       totals: [{ entry_date: 'TOTAUX', quantite_produite: totals.qte, cout_total: totals.coutTotal }],
-    })
+    }
   }
 
   async function handleExport() {
@@ -198,7 +199,7 @@ export default function ProdnetFabricationRegistry() {
           <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={filterClass} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={handlePrint} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
+          <button type="button" onClick={() => setPrintOpen(true)} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
             Imprimer
           </button>
           <button type="button" onClick={handleExport} disabled={exporting} className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre hover:bg-ocre/10 disabled:opacity-50">
@@ -278,6 +279,8 @@ export default function ProdnetFabricationRegistry() {
         onConfirm={confirmAdminCode}
         onCancel={closeAdminPrompt}
       />
+
+      <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
     </div>
   )
 }

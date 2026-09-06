@@ -10,7 +10,7 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 import PrintHeader from './PrintHeader'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -27,6 +27,7 @@ export default function TVAPayerRegistry({ entityFilter }) {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [clientFilter, setClientFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -121,7 +122,7 @@ export default function TVAPayerRegistry({ entityFilter }) {
     )
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (clientFilter) filterParts.push(`Client : ${clientFilter}`)
@@ -129,7 +130,7 @@ export default function TVAPayerRegistry({ entityFilter }) {
     if (startDate) filterParts.push(`Du ${startDate}`)
     if (endDate) filterParts.push(`Au ${endDate}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre TVA à payer',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -163,7 +164,7 @@ export default function TVAPayerRegistry({ entityFilter }) {
         stamp_duty: formatDA(totals.stampDuty),
         total_net: formatDA(totals.totalNet),
       },
-    })
+    }
   }
 
   function startEdit(entry) {
@@ -356,11 +357,12 @@ export default function TVAPayerRegistry({ entityFilter }) {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

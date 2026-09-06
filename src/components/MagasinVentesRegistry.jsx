@@ -6,7 +6,7 @@ import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
 import { PAYMENT_MODES, formatDA, itemsSummary, itemsText, computeVenteTotals, buildMagasinClientSheet } from '../lib/magasin'
 import { downloadMagasinVentesExcel } from '../lib/magasinVentesExcel'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import EntitySheetModal from './EntitySheetModal'
@@ -28,6 +28,7 @@ export default function MagasinVentesRegistry() {
   const [all, setAll] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [dateFilter, setDateFilter] = useState('')
   const [paymentFilter, setPaymentFilter] = useState('')
@@ -98,13 +99,13 @@ export default function MagasinVentesRegistry() {
     return { totalHt, remise, total }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (dateFilter) filterParts.push(`Date : ${dateFilter}`)
     if (paymentFilter) filterParts.push(`Paiement : ${paymentFilter}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre des ventes — Magasin Bejaia',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -124,7 +125,7 @@ export default function MagasinVentesRegistry() {
       totals: [
         { bon_number: 'TOTAUX', total_ht: totals.totalHt, remise: totals.remise, total: totals.total },
       ],
-    })
+    }
   }
 
   function sheetNameOptions() {
@@ -307,11 +308,12 @@ export default function MagasinVentesRegistry() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           <button
             type="button"
             onClick={() => {

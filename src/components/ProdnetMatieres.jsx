@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { MATIERE_UNITES, formatDA, formatQty, toNum } from '../lib/prodnet'
 import { downloadProdnetMatieresExcel } from '../lib/prodnetExcel'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 const emptyDraft = { designation: '', position_tarifaire: '', unite: 'U', quantite: '', prix_moyen: '', valeur_totale: '' }
 
@@ -33,6 +33,7 @@ export default function ProdnetMatieres() {
   const [editingId, setEditingId] = useState(null)
   const [editDraft, setEditDraft] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [printOpen, setPrintOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -152,11 +153,11 @@ export default function ProdnetMatieres() {
     setError('')
   }
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const parts = []
     if (query.trim()) parts.push(`Recherche : "${query.trim()}"`)
     if (onlyEmpty) parts.push('Stock épuisé uniquement')
-    printRegistry({
+    return {
       title: 'SARL DPR AXXAM',
       subtitle: 'Stock Matières Premières',
       orientation: 'landscape',
@@ -171,7 +172,7 @@ export default function ProdnetMatieres() {
       ],
       rows: filtered,
       totals: [{ designation: 'TOTAL', valeur_totale: totalValeur }],
-    })
+    }
   }
 
   async function handleExport() {
@@ -210,7 +211,7 @@ export default function ProdnetMatieres() {
         </button>
         <button
           type="button"
-          onClick={handlePrint}
+          onClick={() => setPrintOpen(true)}
           className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted"
         >
           Imprimer
@@ -315,6 +316,8 @@ export default function ProdnetMatieres() {
           </div>
         </>
       )}
+
+      <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
     </div>
   )
 }

@@ -12,7 +12,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -27,6 +27,7 @@ export default function InvoiceRegistry() {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [paymentFilter, setPaymentFilter] = useState('')
   const [startDate, setStartDate] = useState('')
@@ -129,14 +130,14 @@ export default function InvoiceRegistry() {
     )
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (paymentFilter) filterParts.push(`Paiement : ${paymentFilter}`)
     if (startDate) filterParts.push(`Du ${startDate}`)
     if (endDate) filterParts.push(`Au ${endDate}`)
 
-    printRegistry({
+    return {
       subtitle: 'Registre Factures',
       orientation: 'landscape',
       filters: filterParts.join(' — '),
@@ -188,7 +189,7 @@ export default function InvoiceRegistry() {
         stamp_duty: formatDA(totals.stampDuty),
         total_net: formatDA(totals.totalNet),
       },
-    })
+    }
   }
 
   function startEdit(entry) {
@@ -489,11 +490,12 @@ export default function InvoiceRegistry() {
         <div className="flex shrink-0 gap-2">
           <button
             type="button"
-            onClick={handlePrint}
+            onClick={() => setPrintOpen(true)}
             className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted"
           >
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           {!isViewer && (
             <button
               type="button"

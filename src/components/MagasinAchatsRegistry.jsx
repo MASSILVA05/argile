@@ -13,7 +13,7 @@ import {
   buildMagasinFournisseurSheet,
 } from '../lib/magasin'
 import { downloadMagasinAchatsExcel } from '../lib/magasinAchatsExcel'
-import { printRegistry } from '../lib/printRegistry'
+import PrintSelectionModal from './PrintSelectionModal'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import EntitySheetModal from './EntitySheetModal'
@@ -32,6 +32,7 @@ export default function MagasinAchatsRegistry() {
   const [all, setAll] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [dateFilter, setDateFilter] = useState('')
   const [destFilter, setDestFilter] = useState('')
@@ -95,13 +96,13 @@ export default function MagasinAchatsRegistry() {
     return { total, marge }
   }, [filtered])
 
-  function handlePrint() {
+  function buildPrintConfig() {
     const parts = []
     if (query.trim()) parts.push(`Recherche : "${query.trim()}"`)
     if (dateFilter) parts.push(`Date : ${dateFilter}`)
     if (destFilter) parts.push(`Destination : ${destFilter}`)
     if (paymentFilter) parts.push(`Paiement : ${paymentFilter}`)
-    printRegistry({
+    return {
       subtitle: 'Registre des achats fournisseurs — Magasin Bejaia',
       orientation: 'landscape',
       filters: parts.join(' — '),
@@ -121,7 +122,7 @@ export default function MagasinAchatsRegistry() {
       ],
       rows: filtered.map((a) => ({ ...a, articles: achatItemsText(a.items), payment: paymentLabel(a) })),
       totals: [{ bon_number: 'TOTAUX', total: totals.total, marge: totals.marge }],
-    })
+    }
   }
 
   function startEdit(a) {
@@ -269,9 +270,10 @@ export default function MagasinAchatsRegistry() {
           <input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={filterClass} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={handlePrint} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
+          <button type="button" onClick={() => setPrintOpen(true)} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted">
             Imprimer
           </button>
+          <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
           <button type="button" onClick={handleExport} disabled={exporting} className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre hover:bg-ocre/10 disabled:opacity-50">
             {exporting ? 'Génération…' : 'Exporter Excel'}
           </button>

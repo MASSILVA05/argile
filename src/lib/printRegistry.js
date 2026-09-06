@@ -1,13 +1,15 @@
-// Impression : ouvre une fenêtre séparée contenant un document HTML autonome
-// (fond blanc, mise en page « PDF » propre) puis déclenche window.print()
-// dessus -- la page principale de l'app n'est jamais imprimée.
+// Impression : construit un document HTML COMPLET et autonome (<!DOCTYPE html>
+// + <head><style> + <body>) puis l'ouvre dans une fenêtre séparée via une URL
+// Blob de type text/html (garantit le rendu HTML -- pas de "HTML brut" affiché
+// comme du texte), et déclenche window.print() une fois la page chargée.
+// Repli sur un <iframe> caché si les pop-up sont bloquées.
 //
-// Utilisé par le bouton « Imprimer » de chaque registre (table complète
-// filtrée à l'écran, paysage) ET par EntitySheetModal (fiches par entité :
-// fournisseur / client / chauffeur…, portrait). Le format ci-dessous
-// s'applique aux deux : en-tête société, filtre/période, tableau à bordures
-// complètes avec en-têtes gris et lignes alternées, totaux en gras séparés
-// par un filet, et « Page X / Y » en pied via les compteurs CSS de @page.
+// Utilisé par le bouton « Imprimer » de chaque registre ET par
+// EntitySheetModal (fiches par entité, portrait).
+//
+// NB : seules les VALEURS de cellules sont échappées (escapeHtml) pour éviter
+// qu'un contenu contenant « < » casse le tableau ; la structure HTML du
+// document n'est jamais échappée.
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -20,9 +22,8 @@ function formatPrintedAt(date) {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} à ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-// Les lignes de totaux peuvent être passées à plat ({clé: valeur}) ou sous la
-// forme { cells: {...}, highlight } (fiches / PrintableSheet) : on accepte les
-// deux pour réutiliser sheet.totalRows tel quel.
+// Les lignes de totaux : à plat ({clé: valeur}) ou { cells: {...}, highlight }
+// (fiches / PrintableSheet) -- on accepte les deux.
 function normalizeRow(row) {
   return row && typeof row === 'object' && 'cells' in row ? row.cells : row
 }
@@ -48,25 +49,7 @@ function buildRowHtml(columns, row, { total = false } = {}) {
     .join('')}</tr>`
 }
 
-export function printRegistry({
-  title = 'SARL DPR AXXAM BRIQUETERIE',
-  subtitle = '',
-  columns,
-  rows,
-  totals,
-  filters,
-  orientation = 'landscape',
-}) {
-  const win = window.open('', '_blank')
-  if (!win) {
-    window.alert("Impossible d'ouvrir la fenêtre d'impression (bloqueur de pop-up ?). Autorisez les pop-up pour ce site puis réessayez.")
-    return
-  }
-
-  const totalsRows = Array.isArray(totals) ? totals : totals ? [totals] : []
-
-  // Réduction automatique de la police quand le tableau a beaucoup de colonnes
-  // (pour tenir en A4) : 8pt par défaut, 7pt à partir de 13 colonnes.
+function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters, orientation }) {
   const dataFontPt = columns.length >= 13 ? 7 : 8
 
   const headerHtml = columns
@@ -79,10 +62,11 @@ export function printRegistry({
 
   const totalsHtml = totalsRows.map((t) => buildRowHtml(columns, t, { total: true })).join('')
 
-  const html = `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="utf-8" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(subtitle || title)}</title>
 <style>
   * { box-sizing: border-box; }
@@ -90,20 +74,15 @@ export function printRegistry({
   body {
     font-family: Calibri, Arial, Helvetica, sans-serif;
     font-size: ${dataFontPt}pt;
+    padding: 10px 14px;
   }
 
   @page {
     size: A4 ${orientation};
-    margin: 2cm 1.5cm;
-    @bottom-center {
-      content: "Page " counter(page) " / " counter(pages);
-      font-family: Arial, sans-serif;
-      font-size: 9pt;
-      color: #555555;
-    }
+    margin: 1.5cm;
   }
 
-  .doc-header { text-align: center; margin-bottom: 6px; }
+  .doc-header { text-align: center; margin: 0 0 4px; }
   .doc-company { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
   .doc-subtitle { font-size: 12pt; font-weight: bold; margin: 3px 0 0; }
   .doc-meta-line {
@@ -131,7 +110,7 @@ export function printRegistry({
     word-break: break-word;
   }
   th {
-    background: #e2e2e2;
+    background: #e0e0e0;
     font-weight: bold;
     font-size: ${dataFontPt + 1}pt;
   }
@@ -144,9 +123,13 @@ export function printRegistry({
     background: #f0f0f0;
     border-top: 1.5px solid #000000;
   }
-  tr.totals-strong td { background: #e2e2e2; }
+  tr.totals-strong td { background: #e0e0e0; }
 
   td.empty { text-align: center; padding: 16px; color: #555555; font-style: italic; }
+
+  @media print {
+    body { padding: 0; }
+  }
 </style>
 </head>
 <body>
@@ -158,7 +141,7 @@ export function printRegistry({
     <span class="left">${filters ? escapeHtml(filters) : ''}</span>
     <span class="right">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</span>
   </div>
-  <hr class="doc-rule" />
+  <hr class="doc-rule">
   <table>
     <thead><tr>${headerHtml}</tr></thead>
     <tbody>${bodyHtml}</tbody>
@@ -166,17 +149,75 @@ export function printRegistry({
   </table>
 </body>
 </html>`
+}
 
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
-  win.focus()
+function printViaHiddenIframe(html) {
+  const prev = document.getElementById('__dpr_print_frame__')
+  if (prev) prev.remove()
 
-  // Laisser un tick au moteur de rendu avant print() (sinon dialogue sur une
-  // page pas encore peinte dans certains navigateurs).
+  const iframe = document.createElement('iframe')
+  iframe.id = '__dpr_print_frame__'
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;'
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(html)
+  doc.close()
+
+  const cleanup = () => setTimeout(() => iframe.remove(), 1000)
+  iframe.contentWindow.onafterprint = cleanup
   setTimeout(() => {
-    win.print()
-  }, 200)
+    try {
+      iframe.contentWindow.focus()
+      iframe.contentWindow.print()
+    } catch (err) {
+      console.error('Impression iframe impossible :', err)
+    }
+    cleanup()
+  }, 350)
+}
 
-  win.onafterprint = () => win.close()
+export function printRegistry({
+  title = 'SARL DPR AXXAM BRIQUETERIE',
+  subtitle = '',
+  columns,
+  rows,
+  totals,
+  filters,
+  orientation = 'landscape',
+}) {
+  const totalsRows = Array.isArray(totals) ? totals : totals ? [totals] : []
+  const html = buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters, orientation })
+
+  const blob = new Blob([html], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const win = window.open(url, '_blank')
+
+  if (!win) {
+    URL.revokeObjectURL(url)
+    printViaHiddenIframe(html)
+    return
+  }
+
+  let printed = false
+  const triggerPrint = () => {
+    if (printed) return
+    printed = true
+    try {
+      win.focus()
+      win.print()
+    } catch (err) {
+      console.error('Impression fenêtre impossible :', err)
+    }
+  }
+
+  win.addEventListener('load', triggerPrint)
+  // Repli si « load » a déjà eu lieu (blob parfois rendu instantanément).
+  setTimeout(triggerPrint, 700)
+  win.addEventListener('afterprint', () => {
+    try { win.close() } catch { /* ignore */ }
+  })
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
