@@ -55,6 +55,7 @@ export default function PrintSelectionModal({
   totals,
   filters,
   orientation = 'landscape',
+  fontSizePt,
 }) {
   const [checked, setChecked] = useState(() => new Set())
   const [query, setQuery] = useState('')
@@ -103,12 +104,13 @@ export default function PrintSelectionModal({
       totals: autoTotals(columns, selectedRows),
       filters: [filters, `${selectedRows.length} ligne(s) sélectionnée(s)`].filter(Boolean).join(' — '),
       orientation,
+      fontSizePt,
     })
     onClose()
   }
 
   function printAll() {
-    printRegistry({ title, subtitle, columns, rows, totals, filters, orientation })
+    printRegistry({ title, subtitle, columns, rows, totals, filters, orientation, fontSizePt })
     onClose()
   }
 

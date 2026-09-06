@@ -5,12 +5,18 @@ import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
 import { downloadProdnetFabricationsExcel } from '../lib/prodnetExcel'
-import { formatDA, formatQty, matieresSummary, matieresText } from '../lib/prodnet'
+import { formatDA, formatQty, matieresSummary, matieresPrintLines } from '../lib/prodnet'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import PrintSelectionModal from './PrintSelectionModal'
 
 const fmtTime = (v) => (v ? v.slice(0, 5) : '—')
+
+// 'YYYY-MM-DD' -> 'DD/MM/YY' (compact pour l'impression)
+function dateCourt(iso) {
+  const [y, m, d] = String(iso ?? '').split('-')
+  return d && m && y ? `${d}/${m}/${y.slice(2)}` : (iso ?? '')
+}
 
 export default function ProdnetFabricationRegistry() {
   const { isAdmin } = useAuth()
@@ -88,19 +94,21 @@ export default function ProdnetFabricationRegistry() {
       orientation: 'landscape',
       filters: parts.join(' — '),
       columns: [
-        { key: 'entry_date', label: 'Date' },
-        { key: 'entry_time', label: 'Heure', format: fmtTime },
-        { key: 'product_reference', label: 'Réf.' },
-        { key: 'product_designation', label: 'Produit fini' },
-        { key: 'quantite_produite', label: 'Qté produite', align: 'right', format: (v) => formatQty(v) },
-        { key: 'matieres_text', label: 'Matières consommées' },
-        { key: 'cout_total', label: 'Coût total (DA)', align: 'right', format: (v) => formatDA(v) },
-        { key: 'cout_unitaire', label: 'Coût unitaire (DA)', align: 'right', format: (v) => formatDA(v) },
-        { key: 'entered_by_user', label: 'Saisi par' },
-        { key: 'observations', label: 'Observations' },
+        { key: 'date_court', label: 'Date', width: '7%' },
+        { key: 'product_reference', label: 'Réf. produit', width: '9%' },
+        { key: 'product_designation', label: 'Produit fini', width: '17%' },
+        { key: 'quantite_produite', label: 'Qté produite', align: 'right', width: '8%', format: (v) => formatQty(v) },
+        { key: 'matieres_lines', label: 'Matières consommées', width: '34%' },
+        { key: 'cout_total', label: 'Coût total (DA)', align: 'right', width: '9%', format: (v) => formatDA(v) },
+        { key: 'cout_unitaire', label: 'Coût unitaire (DA)', align: 'right', width: '9%', format: (v) => formatDA(v) },
+        { key: 'entered_by_user', label: 'Saisi par', width: '8%' },
       ],
-      rows: filtered.map((f) => ({ ...f, matieres_text: matieresText(f.matieres) })),
-      totals: [{ entry_date: 'TOTAUX', quantite_produite: totals.qte, cout_total: totals.coutTotal }],
+      rows: filtered.map((f) => ({
+        ...f,
+        date_court: dateCourt(f.entry_date),
+        matieres_lines: matieresPrintLines(f.matieres),
+      })),
+      totals: [{ date_court: 'TOTAUX', quantite_produite: totals.qte, cout_total: totals.coutTotal }],
     }
   }
 

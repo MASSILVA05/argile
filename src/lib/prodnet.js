@@ -50,6 +50,19 @@ export function matieresText(matieres) {
     .join(' ; ')
 }
 
+// Détail des matières consommées, une par ligne avec tiret, pour l'impression
+// du registre de fabrication :
+//   — LAME MT : 4 × 25 209,82 = 100 839,28 DA
+export function matieresPrintLines(matieres) {
+  if (!Array.isArray(matieres) || matieres.length === 0) return '—'
+  return matieres
+    .map(
+      (m) =>
+        `— ${m.designation} : ${formatQty(m.quantite_utilisee)} × ${formatDA(m.prix_unitaire)} = ${formatDA(m.total)} DA`
+    )
+    .join('\n')
+}
+
 export function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }

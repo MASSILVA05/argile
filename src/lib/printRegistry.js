@@ -49,8 +49,20 @@ function buildRowHtml(columns, row, { total = false } = {}) {
     .join('')}</tr>`
 }
 
-function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters, orientation }) {
-  const dataFontPt = columns.length >= 13 ? 7 : 8
+function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters, orientation, fontSizePt }) {
+  const dataFontPt = fontSizePt ?? (columns.length >= 12 ? 7 : 8)
+
+  // Largeurs de colonnes explicites (ex. `width: '34%'`) -> table-layout fixed
+  // + <colgroup>, ce qui garde la colonne « Matières » large et les autres
+  // compactes. Sinon layout automatique (comportement des autres registres).
+  const hasWidths = columns.some((c) => c.width)
+  // Tableau « large » (beaucoup de colonnes, sans largeurs explicites) : on
+  // laisse les en-têtes se replier aux espaces plutôt que d'imposer une
+  // largeur mini qui ferait déborder la page.
+  const wideTable = !hasWidths && columns.length >= 12
+  const colgroupHtml = hasWidths
+    ? `<colgroup>${columns.map((c) => `<col${c.width ? ` style="width:${escapeHtml(c.width)}"` : ''}>`).join('')}</colgroup>`
+    : ''
 
   const headerHtml = columns
     .map((c) => `<th class="${c.align === 'right' ? 'right' : 'left'}">${escapeHtml(c.label ?? c.header)}</th>`)
@@ -98,7 +110,11 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
   .doc-meta-line .right { text-align: right; white-space: nowrap; }
   .doc-rule { border: none; border-top: 1.5px solid #000000; margin: 4px 0 10px; }
 
-  table { width: 100%; border-collapse: collapse; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    ${hasWidths ? 'table-layout: fixed;' : ''}
+  }
   thead { display: table-header-group; }
   tfoot { display: table-footer-group; }
   th, td {
@@ -107,12 +123,25 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
     font-size: ${dataFontPt}pt;
     text-align: left;
     vertical-align: top;
-    word-break: break-word;
+    ${wideTable ? '' : 'min-width: 60px;'}
   }
+  /* En-têtes : ${wideTable
+    ? 'retour à la ligne uniquement aux espaces (jamais mot par mot ni vertical).'
+    : 'jamais de retour à la ligne (évite l\'affichage vertical).'} */
   th {
     background: #e0e0e0;
     font-weight: bold;
     font-size: ${dataFontPt + 1}pt;
+    white-space: ${wideTable ? 'normal' : 'nowrap'};
+    word-break: keep-all;
+    overflow-wrap: normal;
+  }
+  /* Cellules de données : respectent les \\n (matières une par ligne),
+     pas de nowrap, coupe les mots trop longs pour ne pas déborder. */
+  td {
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    word-break: normal;
   }
   th.right, td.right { text-align: right; }
   tbody tr { page-break-inside: avoid; }
@@ -143,6 +172,7 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
   </div>
   <hr class="doc-rule">
   <table>
+    ${colgroupHtml}
     <thead><tr>${headerHtml}</tr></thead>
     <tbody>${bodyHtml}</tbody>
     ${totalsHtml ? `<tfoot>${totalsHtml}</tfoot>` : ''}
@@ -187,9 +217,10 @@ export function printRegistry({
   totals,
   filters,
   orientation = 'landscape',
+  fontSizePt,
 }) {
   const totalsRows = Array.isArray(totals) ? totals : totals ? [totals] : []
-  const html = buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters, orientation })
+  const html = buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters, orientation, fontSizePt })
 
   const blob = new Blob([html], { type: 'text/html' })
   const url = URL.createObjectURL(blob)
