@@ -5,14 +5,15 @@ import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
 import { downloadProdnetFabricationsExcel } from '../lib/prodnetExcel'
-import { formatDA, formatQty, matieresSummary, matieresPrintLines } from '../lib/prodnet'
+import { printFabrications } from '../lib/printRegistry'
+import { formatDA, formatQty, matieresSummary } from '../lib/prodnet'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import PrintSelectionModal from './PrintSelectionModal'
 
 const fmtTime = (v) => (v ? v.slice(0, 5) : '—')
 
-// 'YYYY-MM-DD' -> 'DD/MM/YY' (compact pour l'impression)
+// 'YYYY-MM-DD' -> 'DD/MM/YY' (compact pour la liste de sélection)
 function dateCourt(iso) {
   const [y, m, d] = String(iso ?? '').split('-')
   return d && m && y ? `${d}/${m}/${y.slice(2)}` : (iso ?? '')
@@ -84,31 +85,24 @@ export default function ProdnetFabricationRegistry() {
     return { coutTotal, qte }
   }, [filtered])
 
+  // Le registre de fabrication n'utilise PAS le tableau standard : chaque
+  // fabrication est imprimée comme une fiche (en-tête + tableau des matières).
+  // On fournit ici seulement les colonnes/lignes pour la LISTE DE SÉLECTION
+  // de PrintSelectionModal, et `onPrint` qui reçoit les fabrications cochées.
   function buildPrintConfig() {
-    const parts = []
-    if (productFilter) parts.push(`Produit : ${productFilter}`)
-    if (dateFilter) parts.push(`Date : ${dateFilter}`)
     return {
       title: 'SARL DPR AXXAM',
-      subtitle: 'Registre de Fabrication',
-      orientation: 'landscape',
-      filters: parts.join(' — '),
+      subtitle: 'Fiches de Fabrication',
       columns: [
-        { key: 'date_court', label: 'Date', width: '7%' },
-        { key: 'product_reference', label: 'Réf. produit', width: '9%' },
-        { key: 'product_designation', label: 'Produit fini', width: '17%' },
-        { key: 'quantite_produite', label: 'Qté produite', align: 'right', width: '8%', format: (v) => formatQty(v) },
-        { key: 'matieres_lines', label: 'Matières consommées', width: '34%' },
-        { key: 'cout_total', label: 'Coût total (DA)', align: 'right', width: '9%', format: (v) => formatDA(v) },
-        { key: 'cout_unitaire', label: 'Coût unitaire (DA)', align: 'right', width: '9%', format: (v) => formatDA(v) },
-        { key: 'entered_by_user', label: 'Saisi par', width: '8%' },
+        { key: 'date_court', label: 'Date' },
+        { key: 'product_reference', label: 'Réf.' },
+        { key: 'product_designation', label: 'Produit fini' },
+        { key: 'quantite_produite', label: 'Qté', align: 'right', format: (v) => formatQty(v) },
+        { key: 'matieres', label: 'Nb matières', align: 'right', format: (v) => (Array.isArray(v) ? v.length : 0) },
+        { key: 'cout_total', label: 'Coût total (DA)', align: 'right', format: (v) => formatDA(v) },
       ],
-      rows: filtered.map((f) => ({
-        ...f,
-        date_court: dateCourt(f.entry_date),
-        matieres_lines: matieresPrintLines(f.matieres),
-      })),
-      totals: [{ date_court: 'TOTAUX', quantite_produite: totals.qte, cout_total: totals.coutTotal }],
+      rows: filtered.map((f) => ({ ...f, date_court: dateCourt(f.entry_date) })),
+      onPrint: (fabs) => printFabrications(fabs),
     }
   }
 

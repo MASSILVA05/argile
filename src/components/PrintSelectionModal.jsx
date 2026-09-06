@@ -56,6 +56,10 @@ export default function PrintSelectionModal({
   filters,
   orientation = 'landscape',
   fontSizePt,
+  // Optionnel : si fourni, remplace printRegistry — reçoit les lignes brutes
+  // à imprimer (utilisé par le registre de fabrication pour son format « une
+  // fiche par fabrication »).
+  onPrint,
 }) {
   const [checked, setChecked] = useState(() => new Set())
   const [query, setQuery] = useState('')
@@ -96,21 +100,29 @@ export default function PrintSelectionModal({
 
   function printSelection() {
     if (selectedRows.length === 0) return
-    printRegistry({
-      title,
-      subtitle,
-      columns,
-      rows: selectedRows,
-      totals: autoTotals(columns, selectedRows),
-      filters: [filters, `${selectedRows.length} ligne(s) sélectionnée(s)`].filter(Boolean).join(' — '),
-      orientation,
-      fontSizePt,
-    })
+    if (onPrint) {
+      onPrint(selectedRows)
+    } else {
+      printRegistry({
+        title,
+        subtitle,
+        columns,
+        rows: selectedRows,
+        totals: autoTotals(columns, selectedRows),
+        filters: [filters, `${selectedRows.length} ligne(s) sélectionnée(s)`].filter(Boolean).join(' — '),
+        orientation,
+        fontSizePt,
+      })
+    }
     onClose()
   }
 
   function printAll() {
-    printRegistry({ title, subtitle, columns, rows, totals, filters, orientation, fontSizePt })
+    if (onPrint) {
+      onPrint(rows)
+    } else {
+      printRegistry({ title, subtitle, columns, rows, totals, filters, orientation, fontSizePt })
+    }
     onClose()
   }
 
