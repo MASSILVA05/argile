@@ -131,9 +131,9 @@ export default function ProductionRegistry() {
       totals: [
         {
           entry_date: 'TOTAUX',
-          presse_total_pieces: formatInt(totals.pieces),
-          defourn_conformes: formatInt(totals.conformes),
-          four_gaz: formatNum(totals.gaz),
+          presse_total_pieces: totals.pieces,
+          defourn_conformes: totals.conformes,
+          four_gaz: totals.gaz,
           taux_casse: formatPercent(totals.taux),
         },
       ],

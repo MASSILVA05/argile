@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { MATIERE_UNITES, formatDA, formatQty, toNum } from '../lib/prodnet'
 import { downloadProdnetMatieresExcel } from '../lib/prodnetExcel'
+import { printRegistry } from '../lib/printRegistry'
 
 const emptyDraft = { designation: '', position_tarifaire: '', unite: 'U', quantite: '', prix_moyen: '', valeur_totale: '' }
 
@@ -151,6 +152,28 @@ export default function ProdnetMatieres() {
     setError('')
   }
 
+  function handlePrint() {
+    const parts = []
+    if (query.trim()) parts.push(`Recherche : "${query.trim()}"`)
+    if (onlyEmpty) parts.push('Stock épuisé uniquement')
+    printRegistry({
+      title: 'SARL DPR AXXAM',
+      subtitle: 'Stock Matières Premières',
+      orientation: 'landscape',
+      filters: parts.join(' — '),
+      columns: [
+        { key: 'designation', label: 'Désignation' },
+        { key: 'position_tarifaire', label: 'Position tarifaire' },
+        { key: 'unite', label: 'Unité' },
+        { key: 'quantite', label: 'Quantité', align: 'right', format: (v) => formatQty(v) },
+        { key: 'prix_moyen', label: 'Prix moyen (DA)', align: 'right', format: (v) => formatDA(v) },
+        { key: 'valeur_totale', label: 'Valeur totale (DA)', align: 'right', format: (v) => formatDA(v) },
+      ],
+      rows: filtered,
+      totals: [{ designation: 'TOTAL', valeur_totale: totalValeur }],
+    })
+  }
+
   async function handleExport() {
     setExporting(true)
     try {
@@ -184,6 +207,13 @@ export default function ProdnetMatieres() {
           className="min-h-11 rounded-lg border border-terracotta px-4 py-2 font-display text-terracotta hover:bg-terracotta/10"
         >
           {adding ? 'Annuler' : 'Ajouter une matière'}
+        </button>
+        <button
+          type="button"
+          onClick={handlePrint}
+          className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted"
+        >
+          Imprimer
         </button>
         <button
           type="button"

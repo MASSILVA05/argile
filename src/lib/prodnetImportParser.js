@@ -67,82 +67,47 @@ function sheetRows(workbook, sheetName) {
   return utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: true, defval: null })
 }
 
-// Trouve la ligne d'en-tête (celle qui contient le plus de mots-clés connus)
-// et renvoie { index, headerCells (normalisées), columns par mot-clé }.
-function detectHeader(rows, keywordMap) {
-  let best = { index: -1, score: 0, headerCells: [], columns: {} }
-  for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); i++) {
-    const row = rows[i]
-    if (isBlankRow(row)) continue
-    const headerCells = row.map(normalizeHeader)
-    const columns = {}
-    let score = 0
-    headerCells.forEach((cell, colIndex) => {
-      const field = keywordMap[cell]
-      if (field && columns[field] === undefined) {
-        columns[field] = colIndex
-        score += 1
-      }
-    })
-    if (score > best.score) best = { index: i, score, headerCells, columns }
-  }
-  return best.index === -1 ? null : best
-}
+// ============================================================
+// Produits finis — mapping POSITIONNEL (col A = Référence SANS en-tête).
+//   A reference | B designation (Famille de produits) | C quantite
+//   D prix_moyen_ht | E montant_ht
+// La ligne d'en-tête est celle qui contient « Famille » ou « Désignation » ;
+// les données commencent juste en dessous.
+// ============================================================
+const PRODUCT_COLS = { reference: 0, designation: 1, quantite: 2, prix_moyen_ht: 3, montant_ht: 4 }
 
-// ============================================================
-// Produits finis
-// ============================================================
-const PRODUCT_KEYWORDS = {
-  REFERENCE: 'reference',
-  REF: 'reference',
-  CODE: 'reference',
-  'CODE ARTICLE': 'reference',
-  'FAMILLE DE PRODUITS': 'designation',
-  'FAMILLE DE PRODUIT': 'designation',
-  FAMILLE: 'designation',
-  DESIGNATION: 'designation',
-  'PRODUIT FINI': 'designation',
-  PRODUIT: 'designation',
-  QUANTITE: 'quantite',
-  'QUANTITE TOTALE': 'quantite',
-  QTE: 'quantite',
-  STOCK: 'quantite',
-  'PRIX MOYEN HT': 'prix_moyen_ht',
-  'PRIX MOYEN': 'prix_moyen_ht',
-  'PRIX MOYEN PONDERE': 'prix_moyen_ht',
-  'PRIX UNITAIRE': 'prix_moyen_ht',
-  'MONTANT HT': 'montant_ht',
-  MONTANT: 'montant_ht',
-  'VALEUR HT': 'montant_ht',
-  'VALEUR TOTALE': 'montant_ht',
+function findProductHeaderIndex(rows) {
+  for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); i++) {
+    if (isBlankRow(rows[i])) continue
+    const cells = rows[i].map(normalizeHeader)
+    if (cells.some((c) => c.includes('FAMILLE') || c.includes('DESIGNATION'))) return i
+  }
+  // Repli : 1re ligne non vide.
+  for (let i = 0; i < rows.length; i++) if (!isBlankRow(rows[i])) return i
+  return 0
 }
 
 export function parseProdnetProductsFile(arrayBuffer) {
   const workbook = read(arrayBuffer, { type: 'array' })
   for (const name of workbook.SheetNames) {
     const rows = sheetRows(workbook, name)
-    const header = detectHeader(rows, PRODUCT_KEYWORDS)
-    if (!header || header.columns.designation === undefined) continue
+    if (rows.length === 0) continue
+    const headerIndex = findProductHeaderIndex(rows)
 
-    const col = { ...header.columns }
-    // La référence est souvent dans une colonne sans en-tête, juste avant la
-    // désignation (colonne A). Repli si non détectée par mot-clé.
-    if (col.reference === undefined && col.designation > 0) col.reference = col.designation - 1
-
-    const get = (row, field) => (col[field] === undefined ? null : row[col[field]])
+    const at = (row, pos) => row[pos]
     const results = []
-    for (let i = header.index + 1; i < rows.length; i++) {
+    for (let i = headerIndex + 1; i < rows.length; i++) {
       const row = rows[i]
       if (isBlankRow(row)) continue
-      const designation = firstNonBlank(get(row, 'designation'))
+      const designation = firstNonBlank(at(row, PRODUCT_COLS.designation))
       if (!designation) continue
       if (/^TOTAL\b/i.test(designation)) continue
-      const quantite = toNumber(get(row, 'quantite'))
-      const prix = toNumber(get(row, 'prix_moyen_ht'))
-      let montant = toNumber(get(row, 'montant_ht'))
+      const quantite = toNumber(at(row, PRODUCT_COLS.quantite))
+      const prix = toNumber(at(row, PRODUCT_COLS.prix_moyen_ht))
+      let montant = toNumber(at(row, PRODUCT_COLS.montant_ht))
       if (!montant && quantite && prix) montant = quantite * prix
       results.push({
-        reference: firstNonBlank(get(row, 'reference')),
+        reference: firstNonBlank(at(row, PRODUCT_COLS.reference)),
         designation,
         quantite,
         prix_moyen_ht: prix,

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { formatDA, formatQty, toNum } from '../lib/prodnet'
 import { downloadProdnetProductsExcel } from '../lib/prodnetExcel'
+import { printRegistry } from '../lib/printRegistry'
 
 const emptyDraft = { reference: '', designation: '', quantite: '', prix_moyen_ht: '', montant_ht: '' }
 
@@ -127,6 +128,24 @@ export default function ProdnetProducts() {
     setError('')
   }
 
+  function handlePrint() {
+    printRegistry({
+      title: 'SARL DPR AXXAM',
+      subtitle: 'Liste des Produits Finis',
+      orientation: 'landscape',
+      filters: query.trim() ? `Recherche : "${query.trim()}"` : '',
+      columns: [
+        { key: 'reference', label: 'Référence' },
+        { key: 'designation', label: 'Désignation' },
+        { key: 'quantite', label: 'Quantité', align: 'right', format: (v) => formatQty(v) },
+        { key: 'prix_moyen_ht', label: 'Prix moyen HT (DA)', align: 'right', format: (v) => formatDA(v) },
+        { key: 'montant_ht', label: 'Montant HT (DA)', align: 'right', format: (v) => formatDA(v) },
+      ],
+      rows: filtered,
+      totals: [{ designation: 'TOTAL', montant_ht: totalMontant }],
+    })
+  }
+
   async function handleExport() {
     setExporting(true)
     try {
@@ -156,6 +175,13 @@ export default function ProdnetProducts() {
           className="min-h-11 rounded-lg border border-terracotta px-4 py-2 font-display text-terracotta hover:bg-terracotta/10"
         >
           {adding ? 'Annuler' : 'Ajouter un produit'}
+        </button>
+        <button
+          type="button"
+          onClick={handlePrint}
+          className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted hover:border-ink-muted"
+        >
+          Imprimer
         </button>
         <button
           type="button"

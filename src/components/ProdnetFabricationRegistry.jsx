@@ -82,7 +82,8 @@ export default function ProdnetFabricationRegistry() {
     if (productFilter) parts.push(`Produit : ${productFilter}`)
     if (dateFilter) parts.push(`Date : ${dateFilter}`)
     printRegistry({
-      subtitle: 'Registre des fabrications — Prodnet',
+      title: 'SARL DPR AXXAM',
+      subtitle: 'Registre de Fabrication',
       orientation: 'landscape',
       filters: parts.join(' — '),
       columns: [
@@ -98,7 +99,7 @@ export default function ProdnetFabricationRegistry() {
         { key: 'observations', label: 'Observations' },
       ],
       rows: filtered.map((f) => ({ ...f, matieres_text: matieresText(f.matieres) })),
-      totals: [{ entry_date: 'TOTAUX', quantite_produite: formatQty(totals.qte), cout_total: formatDA(totals.coutTotal) }],
+      totals: [{ entry_date: 'TOTAUX', quantite_produite: totals.qte, cout_total: totals.coutTotal }],
     })
   }
 
