@@ -362,7 +362,23 @@ function FragmentRow({ row, expanded, onToggle, onEditConstitution, onEdit, onDe
   )
 }
 
+function fmtDateFR(iso) {
+  const [y, m, d] = String(iso ?? '').split('-')
+  return d && m && y ? `${d}/${m}/${y}` : String(iso ?? '')
+}
+
+// { [matiere_id]: quantiteString } depuis les matieres d'une fabrication.
+function fabToSelected(matieres) {
+  const out = {}
+  for (const m of Array.isArray(matieres) ? matieres : []) {
+    if (m.matiere_id) out[m.matiere_id] = String(m.quantite_utilisee ?? '')
+  }
+  return out
+}
+
 function ConstitutionModal({ product, onSave, onCancel }) {
+  const hasConstitution = constitutionArray(product.constitution).length > 0
+
   // selected : { [matiere_id]: quantiteString }
   const [selected, setSelected] = useState(() => {
     const init = {}
@@ -372,6 +388,9 @@ function ConstitutionModal({ product, onSave, onCancel }) {
     return init
   })
   const [catalogue, setCatalogue] = useState([])
+  const [fabrications, setFabrications] = useState([])
+  const [prefillNote, setPrefillNote] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -388,6 +407,30 @@ function ConstitutionModal({ product, onSave, onCancel }) {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    let active = true
+    supabase
+      .from('prodnet_fabrications')
+      .select('id, entry_date, cout_total, cout_unitaire, matieres, created_at')
+      .eq('product_id', product.id)
+      .order('entry_date', { ascending: false })
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (!active) return
+        const list = data ?? []
+        setFabrications(list)
+        // Aucune constitution + au moins une fabrication -> pré-remplir depuis
+        // la dernière fabrication.
+        if (!hasConstitution && list.length > 0) {
+          setSelected(fabToSelected(list[0].matieres))
+          setPrefillNote('Constitution pré-remplie depuis la dernière fabrication — modifiable.')
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [product.id, hasConstitution])
 
   const selectedRows = useMemo(
     () => catalogue.filter((m) => selected[m.id] !== undefined),
@@ -410,6 +453,12 @@ function ConstitutionModal({ product, onSave, onCancel }) {
 
   function setQte(id, value) {
     setSelected((cur) => ({ ...cur, [id]: value }))
+  }
+
+  function importFromFab(fab) {
+    setSelected(fabToSelected(fab.matieres))
+    setImportOpen(false)
+    setPrefillNote(`Matières remplacées depuis la fabrication du ${fmtDateFR(fab.entry_date)} — modifiable.`)
   }
 
   async function submit() {
@@ -435,9 +484,47 @@ function ConstitutionModal({ product, onSave, onCancel }) {
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-1 font-display text-lg text-ink">Constitution du produit</h2>
-        <p className="mb-3 text-sm text-ink-muted">
+        <p className="mb-2 text-sm text-ink-muted">
           {product.reference ? `${product.designation} [${product.reference}]` : product.designation}
         </p>
+
+        {fabrications.length > 0 && (
+          <div className="mb-3">
+            <button
+              type="button"
+              onClick={() => setImportOpen((v) => !v)}
+              className="min-h-10 rounded-lg border border-ocre px-3 py-2 text-sm font-display text-ocre hover:bg-ocre/10"
+            >
+              {importOpen ? 'Masquer' : 'Importer depuis une fabrication'}
+            </button>
+            {importOpen && (
+              <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-border bg-bg-soft">
+                {fabrications.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => importFromFab(f)}
+                    className="flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-bg"
+                  >
+                    <span className="text-sm text-ink">
+                      {fmtDateFR(f.entry_date)}
+                      <span className="ml-2 text-xs text-ink-muted">
+                        {Array.isArray(f.matieres) ? f.matieres.length : 0} matière(s)
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs text-ink-muted">
+                      coût {formatDA(f.cout_total)} DA
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {prefillNote && (
+          <p className="mb-3 rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2 text-sm text-ocre">{prefillNote}</p>
+        )}
 
         <MatieresPicker
           catalogue={catalogue}

@@ -497,13 +497,24 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
           </label>
         </div>
 
-        <p className="mb-1 text-sm text-ink-muted">Matières premières consommées</p>
+        {/* 1. Picker : cocher/décocher pour AJOUTER/RETIRER une matière */}
+        <p className="mb-1 text-sm text-ink-muted">Sélectionner les matières premières (cocher = ajouter)</p>
+        <MatieresPicker
+          catalogue={catalogue}
+          isSelected={(id) => lines.some((l) => l.matiere_id === id)}
+          onToggle={toggleMatiere}
+          stockOf={(m) => toNum(m.quantite) + toNum(lines.find((l) => l.matiere_id === m.id)?.original_qte)}
+        />
+
+        {/* 2. Tableau éditable : quantité consommée pour chaque matière cochée */}
+        <p className="mt-4 mb-1 text-sm text-ink-muted">Quantités consommées</p>
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[560px] border-collapse text-[11px] sm:text-sm">
+          <table className="w-full min-w-[620px] border-collapse text-[11px] sm:text-sm">
             <thead>
               <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                 <th className="px-2 py-1.5">Désignation</th>
-                <th className="px-2 py-1.5">Qté utilisée</th>
+                <th className="px-2 py-1.5 text-right">Stock disponible</th>
+                <th className="px-2 py-1.5">Quantité à utiliser</th>
                 <th className="px-2 py-1.5 text-right">Prix unitaire</th>
                 <th className="px-2 py-1.5 text-right">Total</th>
                 <th className="px-2 py-1.5" />
@@ -511,11 +522,14 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={5} className="px-2 py-3 text-center text-ink-muted">Aucune matière. Ajoutez-en ci-dessous.</td></tr>
+                <tr><td colSpan={6} className="px-2 py-3 text-center text-ink-muted">Aucune matière sélectionnée. Cochez-en une ci-dessus.</td></tr>
               ) : (
                 rows.map((r) => (
                   <tr key={r.key} className="border-b border-border last:border-0">
                     <td className="px-2 py-1.5">{r.designation}</td>
+                    <td className={`px-2 py-1.5 text-right ${r.insufficient ? 'text-terracotta' : 'text-ink-muted'}`}>
+                      {r.base != null ? formatQty(r.base) : '—'}
+                    </td>
                     <td className="px-2 py-1.5">
                       <input
                         type="number"
@@ -524,14 +538,12 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
                         min="0"
                         value={r.quantite_utilisee}
                         onChange={(e) => setQte(r.key, e.target.value)}
-                        className={`w-24 rounded border bg-bg px-2 py-1 text-ink outline-none focus:border-terracotta ${
+                        className={`w-28 rounded border bg-bg px-2 py-1 text-ink outline-none focus:border-terracotta ${
                           r.insufficient ? 'border-terracotta bg-terracotta/10 text-terracotta' : 'border-border'
                         }`}
                       />
-                      {r.base != null && (
-                        <span className={`ml-2 text-xs ${r.insufficient ? 'text-terracotta' : 'text-ink-muted'}`}>
-                          dispo {formatQty(r.base)}
-                        </span>
+                      {r.insufficient && (
+                        <p className="mt-1 text-xs font-medium text-terracotta">Stock insuffisant ! Dispo : {formatQty(r.base)}</p>
                       )}
                     </td>
                     <td className="px-2 py-1.5 text-right">{formatDA(r.prix_unitaire)}</td>
@@ -547,14 +559,6 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
             </tbody>
           </table>
         </div>
-
-        <p className="mt-3 mb-1 text-sm text-ink-muted">Ajouter / retirer des matières</p>
-        <MatieresPicker
-          catalogue={catalogue}
-          isSelected={(id) => lines.some((l) => l.matiere_id === id)}
-          onToggle={toggleMatiere}
-          stockOf={(m) => toNum(m.quantite) + toNum(lines.find((l) => l.matiere_id === m.id)?.original_qte)}
-        />
 
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div className="rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2">
