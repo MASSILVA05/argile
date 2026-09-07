@@ -12,6 +12,7 @@ import {
   constitutionArray,
   todayISO,
 } from '../lib/prodnet'
+import MatieresPicker from './MatieresPicker'
 
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
 
@@ -33,7 +34,6 @@ export default function ProdnetFabricationForm() {
   const [matieres, setMatieres] = useState([])
   // { [matiere_id]: quantiteUtiliséeString }
   const [selected, setSelected] = useState({})
-  const [search, setSearch] = useState('')
   const [prefillNote, setPrefillNote] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -100,12 +100,6 @@ export default function ProdnetFabricationForm() {
   function setQuantite(id, value) {
     setSelected((cur) => ({ ...cur, [id]: value }))
   }
-
-  const filteredMatieres = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return matieres
-    return matieres.filter((m) => m.designation.toLowerCase().includes(q))
-  }, [matieres, search])
 
   // Lignes de fabrication (matières cochées, dans l'ordre du catalogue).
   const selectedRows = useMemo(() => {
@@ -197,7 +191,6 @@ export default function ProdnetFabricationForm() {
     )
     setDraft({ ...emptyDraft, entry_date: draft.entry_date })
     setSelected({})
-    setSearch('')
     setPrefillNote(false)
     loadRefs()
   }
@@ -243,46 +236,14 @@ export default function ProdnetFabricationForm() {
         </p>
       )}
 
-      {/* Sélection des matières : recherche + liste à cocher */}
+      {/* Sélection des matières : liste complète à cocher (recherche = filtre) */}
       <div className="flex flex-col gap-2">
         <span className="text-sm text-ink-muted">Matières premières à consommer</span>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className={inputClass}
-          placeholder="Rechercher une matière…"
+        <MatieresPicker
+          catalogue={matieres}
+          isSelected={(id) => selected[id] !== undefined}
+          onToggle={toggleMatiere}
         />
-        <div className="max-h-64 overflow-y-auto rounded-lg border border-border bg-bg-soft">
-          {filteredMatieres.length === 0 ? (
-            <p className="px-3 py-3 text-sm text-ink-muted">Aucune matière première ne correspond.</p>
-          ) : (
-            filteredMatieres.map((m) => {
-              const checked = selected[m.id] !== undefined
-              return (
-                <label
-                  key={m.id}
-                  className={`flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 last:border-0 hover:bg-bg ${
-                    checked ? 'bg-terracotta/10' : ''
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(e) => toggleMatiere(m.id, e.target.checked)}
-                    className="h-4 w-4 shrink-0 accent-terracotta"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink" title={m.designation}>
-                    {m.designation}
-                  </span>
-                  <span className="shrink-0 text-xs text-ink-muted">
-                    stock {formatQty(m.quantite)} {m.unite || ''} · {formatDA(m.prix_moyen)} DA
-                  </span>
-                </label>
-              )
-            })
-          )}
-        </div>
       </div>
 
       {/* Tableau de fabrication : matières cochées (visible même en recherche) */}

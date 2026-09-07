@@ -10,6 +10,7 @@ import { formatDA, formatQty, matieresSummary, toNum, ligneTotal, computeCoutTot
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import PrintSelectionModal from './PrintSelectionModal'
+import MatieresPicker from './MatieresPicker'
 
 const fmtTime = (v) => (v ? v.slice(0, 5) : '—')
 
@@ -371,7 +372,6 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
     }))
   )
   const [catalogue, setCatalogue] = useState([])
-  const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -416,15 +416,6 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
   const coutUnitaire = computeCoutUnitaire(coutTotal, entry.quantite_produite)
   const hasInsufficient = rows.some((r) => r.insufficient)
 
-  const addable = useMemo(() => {
-    const used = new Set(lines.map((l) => l.matiere_id))
-    const q = search.trim().toLowerCase()
-    return catalogue
-      .filter((m) => !used.has(m.id))
-      .filter((m) => !q || m.designation.toLowerCase().includes(q))
-      .slice(0, 40)
-  }, [catalogue, lines, search])
-
   function setQte(key, value) {
     setLines((cur) => cur.map((l) => (l.key === key ? { ...l, quantite_utilisee: value } : l)))
   }
@@ -433,19 +424,28 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
     setLines((cur) => cur.filter((l) => l.key !== key))
   }
 
-  function addMatiere(m) {
-    setLines((cur) => [
-      ...cur,
-      {
-        key: `e${++editLineSeq}`,
-        matiere_id: m.id,
-        designation: m.designation,
-        quantite_utilisee: '',
-        prix_unitaire: toNum(m.prix_moyen),
-        original_qte: 0,
-      },
-    ])
-    setSearch('')
+  function toggleMatiere(id, checked) {
+    if (checked) {
+      const m = catalogueById.get(id)
+      if (!m) return
+      setLines((cur) =>
+        cur.some((l) => l.matiere_id === id)
+          ? cur
+          : [
+              ...cur,
+              {
+                key: `e${++editLineSeq}`,
+                matiere_id: m.id,
+                designation: m.designation,
+                quantite_utilisee: '',
+                prix_unitaire: toNum(m.prix_moyen),
+                original_qte: 0,
+              },
+            ]
+      )
+    } else {
+      setLines((cur) => cur.filter((l) => l.matiere_id !== id))
+    }
   }
 
   async function submit() {
@@ -548,34 +548,13 @@ function EditModal({ entry, adminMode, onSave, onCancel }) {
           </table>
         </div>
 
-        <div className="mt-3">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Ajouter une matière première : rechercher…"
-            className={ic}
-          />
-          {search.trim() && (
-            <div className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-border bg-bg-soft">
-              {addable.length === 0 ? (
-                <p className="px-3 py-2 text-sm text-ink-muted">Aucune matière disponible.</p>
-              ) : (
-                addable.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => addMatiere(m)}
-                    className="flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-bg"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{m.designation}</span>
-                    <span className="shrink-0 text-xs text-ink-muted">stock {formatQty(m.quantite)} · {formatDA(m.prix_moyen)} DA</span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
+        <p className="mt-3 mb-1 text-sm text-ink-muted">Ajouter / retirer des matières</p>
+        <MatieresPicker
+          catalogue={catalogue}
+          isSelected={(id) => lines.some((l) => l.matiere_id === id)}
+          onToggle={toggleMatiere}
+          stockOf={(m) => toNum(m.quantite) + toNum(lines.find((l) => l.matiere_id === m.id)?.original_qte)}
+        />
 
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div className="rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2">

@@ -12,6 +12,7 @@ import {
 import { downloadProdnetProductsExcel } from '../lib/prodnetExcel'
 import { printProductsConstitution } from '../lib/printRegistry'
 import PrintSelectionModal from './PrintSelectionModal'
+import MatieresPicker from './MatieresPicker'
 
 const emptyDraft = { reference: '', designation: '', quantite: '', prix_moyen_ht: '', montant_ht: '' }
 
@@ -371,7 +372,6 @@ function ConstitutionModal({ product, onSave, onCancel }) {
     return init
   })
   const [catalogue, setCatalogue] = useState([])
-  const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -388,12 +388,6 @@ function ConstitutionModal({ product, onSave, onCancel }) {
       active = false
     }
   }, [])
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return catalogue
-    return catalogue.filter((m) => m.designation.toLowerCase().includes(q))
-  }, [catalogue, search])
 
   const selectedRows = useMemo(
     () => catalogue.filter((m) => selected[m.id] !== undefined),
@@ -445,37 +439,11 @@ function ConstitutionModal({ product, onSave, onCancel }) {
           {product.reference ? `${product.designation} [${product.reference}]` : product.designation}
         </p>
 
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Rechercher une matière première…"
-          className={inputClass}
+        <MatieresPicker
+          catalogue={catalogue}
+          isSelected={(id) => selected[id] !== undefined}
+          onToggle={toggle}
         />
-        <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border bg-bg-soft">
-          {filtered.length === 0 ? (
-            <p className="px-3 py-3 text-sm text-ink-muted">Aucune matière première ne correspond.</p>
-          ) : (
-            filtered.map((m) => {
-              const checked = selected[m.id] !== undefined
-              return (
-                <label
-                  key={m.id}
-                  className={`flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 last:border-0 hover:bg-bg ${checked ? 'bg-terracotta/10' : ''}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(e) => toggle(m.id, e.target.checked)}
-                    className="h-4 w-4 shrink-0 accent-terracotta"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink" title={m.designation}>{m.designation}</span>
-                  <span className="shrink-0 text-xs text-ink-muted">{formatDA(m.prix_moyen)} DA</span>
-                </label>
-              )
-            })
-          )}
-        </div>
 
         {selectedRows.length > 0 && (
           <div className="mt-3 overflow-x-auto rounded-lg border border-border">

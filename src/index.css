@@ -46,6 +46,19 @@
     font-family: var(--font-mono);
   }
 
+  /* Masquer les flèches (spinners) des champs number dans toute l'app :
+     les champs restent type="number" (validation native) mais sans flèches. */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
   #root {
     min-height: 100svh;
   }
