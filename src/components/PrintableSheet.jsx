@@ -8,6 +8,8 @@
 // `column.format` est appliqué au rendu, aussi bien pour les lignes de
 // données que pour les lignes de totaux (`totalRows[].cells`), qui suivent
 // exactement la même forme que `rows` (clé de colonne -> valeur brute).
+import { COMPANY_INFO } from '../lib/printRegistry'
+
 export default function PrintableSheet({ title, subtitle, periodLabel, extra, columns, rows, totalRows, emptyMessage }) {
   function formatCell(column, value) {
     if (value == null || value === '') return ''
@@ -17,7 +19,12 @@ export default function PrintableSheet({ title, subtitle, periodLabel, extra, co
   return (
     <div className="printable-sheet">
       <div className="printable-sheet-header">
-        <p className="printable-sheet-company">SARL DPR AXXAM</p>
+        <p className="printable-sheet-company">{COMPANY_INFO.name}</p>
+        <p className="printable-sheet-activity">{COMPANY_INFO.activity}</p>
+        <p className="printable-sheet-activity">{COMPANY_INFO.address}</p>
+        <p className="printable-sheet-legal">
+          RC {COMPANY_INFO.rc} — NIF {COMPANY_INFO.nif} — NIS {COMPANY_INFO.nis}
+        </p>
         <h1 className="printable-sheet-title">{title}</h1>
         {subtitle && <p className="printable-sheet-subtitle">{subtitle}</p>}
         {periodLabel && <p className="printable-sheet-period">{periodLabel}</p>}

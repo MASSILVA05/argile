@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
-import { ALL_BORDERS, DATA_ROW_HEIGHT, todayISO } from './excelHelpers'
+import { ALL_BORDERS, DATA_ROW_HEIGHT, todayISO, writeCompanyHeader } from './excelHelpers'
 
 const GRAY_FILL = 'FFD9D9D9'
 const HIGHLIGHT_FILL = 'FFD4A24E'
@@ -17,12 +17,12 @@ export async function downloadSheetExcel({ sheetName, title, subtitle, periodLab
   const colCount = columns.length
   sheet.columns = columns.map(({ key, width }) => ({ key, width: width || 18 }))
 
-  let rowIndex = 1
+  let rowIndex = writeCompanyHeader(sheet, colCount, 1)
   for (const text of [title, subtitle, periodLabel].filter(Boolean)) {
     sheet.mergeCells(rowIndex, 1, rowIndex, colCount)
     const cell = sheet.getCell(rowIndex, 1)
     cell.value = text
-    cell.font = text === title ? { bold: true, size: 14 } : { size: 11 }
+    cell.font = text === title ? { bold: true, size: 12 } : { size: 11 }
     cell.alignment = { horizontal: 'center' }
     rowIndex += 1
   }

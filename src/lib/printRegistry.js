@@ -30,13 +30,35 @@ const dateFR = (iso) => {
   return d && m && y ? `${d}/${m}/${y}` : String(iso ?? '')
 }
 
-// Coordonnées société, en-tête des documents officiels (fiches de fabrication).
-const COMPANY_INFO = {
-  name: 'SARL DPR AXXAM BRIQUETERIE',
-  address: 'Vge TIZI Cne SMAOUN (W) DE BEJAIA',
-  rc: '08 B 0188888-00/06',
-  nif: '000806018888831',
-  art: '0612 0034 612',
+// Coordonnées société — en-tête de TOUS les documents imprimés.
+export const COMPANY_INFO = {
+  name: 'SARL DPR AXXAM',
+  activity: 'Construction de carrosseries automobiles, remorques et bennes • Briqueterie',
+  address: 'Village Tissa, Lieu-dit Tizi — Commune de Smaoun — Wilaya de Béjaïa',
+  rc: '08 B 0185858-00/06',
+  nif: '000806018585831',
+  nis: '000806120009464',
+}
+
+// En-tête société standard (4 lignes centrées + filet), commun à printRegistry,
+// printFabrications et printProductsConstitution.
+const COMPANY_HEADER_CSS = `
+  .company-header { text-align: center; margin: 0 0 6px; }
+  .ch-name { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
+  .ch-activity { font-size: 9pt; margin: 2px 0 0; }
+  .ch-address { font-size: 9pt; margin: 1px 0 0; }
+  .ch-legal { font-size: 8pt; margin: 1px 0 0; }
+  .company-rule { border: none; border-top: 1.5px solid #000000; margin: 6px 0 10px; }
+`
+
+function companyHeaderHtml() {
+  return `<div class="company-header">
+    <p class="ch-name">${escapeHtml(COMPANY_INFO.name)}</p>
+    <p class="ch-activity">${escapeHtml(COMPANY_INFO.activity)}</p>
+    <p class="ch-address">${escapeHtml(COMPANY_INFO.address)}</p>
+    <p class="ch-legal">RC ${escapeHtml(COMPANY_INFO.rc)} — NIF ${escapeHtml(COMPANY_INFO.nif)} — NIS ${escapeHtml(COMPANY_INFO.nis)}</p>
+  </div>
+  <hr class="company-rule">`
 }
 
 // Les lignes de totaux : à plat ({clé: valeur}) ou { cells: {...}, highlight }
@@ -111,9 +133,8 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
     margin: 1.5cm;
   }
 
-  .doc-header { text-align: center; margin: 0 0 4px; }
-  .doc-company { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
-  .doc-subtitle { font-size: 12pt; font-weight: bold; margin: 3px 0 0; }
+  ${COMPANY_HEADER_CSS}
+  .doc-title { text-align: center; font-size: 12pt; font-weight: bold; margin: 0 0 4px; }
   .doc-meta-line {
     display: flex;
     justify-content: space-between;
@@ -179,10 +200,8 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
 </style>
 </head>
 <body>
-  <div class="doc-header">
-    <p class="doc-company">${escapeHtml(title)}</p>
-    ${subtitle ? `<p class="doc-subtitle">${escapeHtml(subtitle)}</p>` : ''}
-  </div>
+  ${companyHeaderHtml()}
+  ${subtitle ? `<p class="doc-title">${escapeHtml(subtitle)}</p>` : title ? `<p class="doc-title">${escapeHtml(title)}</p>` : ''}
   <div class="doc-meta-line">
     <span class="left">${filters ? escapeHtml(filters) : ''}</span>
     <span class="right">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</span>
@@ -261,7 +280,7 @@ function openAndPrint(html) {
 }
 
 export function printRegistry({
-  title = 'SARL DPR AXXAM BRIQUETERIE',
+  title = '',
   subtitle = '',
   columns,
   rows,
@@ -305,11 +324,7 @@ function ficheFabricationHtml(fab, index) {
   const noFiche = String(index).padStart(3, '0')
 
   return `<section class="fiche">
-  <div class="fiche-company">
-    <p class="c-name">${escapeHtml(COMPANY_INFO.name)}</p>
-    <p class="c-addr">${escapeHtml(COMPANY_INFO.address)}</p>
-    <p class="c-legal">RC: ${escapeHtml(COMPANY_INFO.rc)} &nbsp;·&nbsp; NIF: ${escapeHtml(COMPANY_INFO.nif)} &nbsp;·&nbsp; ART: ${escapeHtml(COMPANY_INFO.art)}</p>
-  </div>
+  ${companyHeaderHtml()}
 
   <p class="fiche-title">FICHE DE FABRICATION N° ${escapeHtml(noFiche)} — Date : ${escapeHtml(dateFR(fab.entry_date))}</p>
 
@@ -388,10 +403,7 @@ export function printFabrications(fabrications) {
   .fiche { page-break-after: always; }
   .fiche:last-child { page-break-after: auto; }
 
-  .fiche-company { text-align: center; margin-bottom: 6px; }
-  .c-name { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
-  .c-addr { font-size: 10pt; margin: 2px 0 0; }
-  .c-legal { font-size: 9pt; margin: 2px 0 0; }
+  ${COMPANY_HEADER_CSS}
 
   .fiche-title {
     text-align: center;
@@ -515,9 +527,8 @@ export function printProductsConstitution(products) {
 
   @page { size: A4 portrait; margin: 1.5cm; }
 
-  .doc-header { text-align: center; margin: 0 0 4px; }
-  .doc-company { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
-  .doc-subtitle { font-size: 12pt; font-weight: bold; margin: 3px 0 0; }
+  ${COMPANY_HEADER_CSS}
+  .doc-title { text-align: center; font-size: 12pt; font-weight: bold; margin: 0 0 4px; }
   .doc-meta-line { text-align: right; font-size: 9pt; color: #333333; margin-top: 6px; }
   .doc-rule { border: none; border-top: 1.5px solid #000000; margin: 4px 0 12px; }
 
@@ -541,10 +552,8 @@ export function printProductsConstitution(products) {
 </style>
 </head>
 <body>
-  <div class="doc-header">
-    <p class="doc-company">SARL DPR AXXAM</p>
-    <p class="doc-subtitle">Produits finis — Constitution</p>
-  </div>
+  ${companyHeaderHtml()}
+  <p class="doc-title">Produits finis — Constitution</p>
   <div class="doc-meta-line">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</div>
   <hr class="doc-rule">
   ${blocks}

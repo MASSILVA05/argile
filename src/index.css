@@ -98,10 +98,20 @@
   margin: 0;
 }
 
+.printable-sheet-activity {
+  font-size: 9pt;
+  margin: 1px 0 0;
+}
+
+.printable-sheet-legal {
+  font-size: 8pt;
+  margin: 1px 0 0;
+}
+
 .printable-sheet-title {
   font-size: 12pt;
   font-weight: 700;
-  margin: 3px 0 0;
+  margin: 8px 0 0;
 }
 
 .printable-sheet-subtitle,

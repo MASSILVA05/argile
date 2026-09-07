@@ -1,5 +1,31 @@
+import { COMPANY_INFO } from './printRegistry'
+
 export const HEADER_FILL = 'FFC4653A' // terracotta
 export const AMOUNT_ROW_FILL = 'FFD4A24E' // ocre
+
+// En-tête société (4 lignes fusionnées, centrées) pour les exports Excel qui
+// portent un bandeau entreprise. Renvoie l'index de la 1re ligne libre.
+export function writeCompanyHeader(sheet, colCount, startRow = 1) {
+  const lines = [
+    { text: COMPANY_INFO.name, font: { bold: true, size: 14 } },
+    { text: COMPANY_INFO.activity, font: { size: 9 } },
+    { text: COMPANY_INFO.address, font: { size: 9 } },
+    {
+      text: `RC ${COMPANY_INFO.rc} — NIF ${COMPANY_INFO.nif} — NIS ${COMPANY_INFO.nis}`,
+      font: { size: 8 },
+    },
+  ]
+  let r = startRow
+  for (const { text, font } of lines) {
+    sheet.mergeCells(r, 1, r, colCount)
+    const cell = sheet.getCell(r, 1)
+    cell.value = text
+    cell.font = font
+    cell.alignment = { horizontal: 'center' }
+    r += 1
+  }
+  return r
+}
 
 const THIN_BORDER = { style: 'thin', color: { argb: 'FF33344F' } }
 export const ALL_BORDERS = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, right: THIN_BORDER }

@@ -1,8 +1,21 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
-import { DATA_ROW_HEIGHT, AMOUNT_ROW_FILL, todayISO, styleHeaderRow, styleDataRow, styleTotalsRow } from './excelHelpers'
+import {
+  DATA_ROW_HEIGHT,
+  AMOUNT_ROW_FILL,
+  todayISO,
+  styleHeaderRow,
+  styleDataRow,
+  styleTotalsRow,
+  writeCompanyHeader,
+} from './excelHelpers'
 import { formatDateTime } from './dateFormat'
 import { matieresText, toNum } from './prodnet'
+
+function fmtDateFR(iso) {
+  const [y, m, d] = String(iso ?? '').split('-')
+  return d && m && y ? `${d}/${m}/${y}` : String(iso ?? '')
+}
 
 async function save(workbook, filename) {
   const buffer = await workbook.xlsx.writeBuffer()
@@ -123,4 +136,73 @@ export async function downloadProdnetFabricationsExcel(rows, { filename } = {}) 
   styleTotalsRow(total, AMOUNT_ROW_FILL)
 
   await save(workbook, filename || `Prodnet_Fabrications_${todayISO()}.xlsx`)
+}
+
+// Historique d'utilisation d'une matière première : chaque ligne = une
+// utilisation dans une fabrication.
+const HISTORY_COLUMNS = [
+  { header: 'Date fabrication', key: 'entry_date', width: 16 },
+  { header: 'Réf. produit', key: 'product_reference', width: 14 },
+  { header: 'Produit fabriqué', key: 'product_designation', width: 34 },
+  { header: 'Quantité utilisée', key: 'quantite_utilisee', width: 15 },
+  { header: 'Prix unitaire (DA)', key: 'prix_unitaire', width: 16 },
+  { header: 'Total (DA)', key: 'total', width: 15 },
+  { header: 'Saisi par', key: 'entered_by_user', width: 14 },
+]
+
+export async function downloadMatiereHistoryExcel(matiere, entries, { filename } = {}) {
+  const workbook = new ExcelJS.Workbook()
+  const sheet = workbook.addWorksheet('Historique matière')
+  const colCount = HISTORY_COLUMNS.length
+  sheet.columns = HISTORY_COLUMNS.map(({ key, width }) => ({ key, width }))
+
+  let r = writeCompanyHeader(sheet, colCount, 1)
+  const put = (text, font) => {
+    sheet.mergeCells(r, 1, r, colCount)
+    const c = sheet.getCell(r, 1)
+    c.value = text
+    c.font = font
+    c.alignment = { horizontal: 'center' }
+    r += 1
+  }
+  put(`Historique d'utilisation — ${matiere.designation}`, { bold: true, size: 12 })
+  put(
+    `Stock actuel : ${toNum(matiere.quantite).toLocaleString('fr-FR')} ${matiere.unite || ''} · Prix moyen : ${toNum(matiere.prix_moyen).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} DA`,
+    { size: 10 }
+  )
+
+  const headerRow = sheet.getRow(r)
+  headerRow.values = HISTORY_COLUMNS.map((c) => c.header)
+  styleHeaderRow(headerRow)
+  headerRow.height = DATA_ROW_HEIGHT
+  r += 1
+
+  for (const e of entries) {
+    const row = sheet.addRow({
+      entry_date: fmtDateFR(e.entry_date),
+      product_reference: e.product_reference ?? '',
+      product_designation: e.product_designation ?? '',
+      quantite_utilisee: toNum(e.quantite_utilisee),
+      prix_unitaire: toNum(e.prix_unitaire),
+      total: toNum(e.total),
+      entered_by_user: e.entered_by_user ?? '',
+    })
+    styleDataRow(row)
+    row.height = DATA_ROW_HEIGHT
+  }
+
+  const totalQte = entries.reduce((s, e) => s + toNum(e.quantite_utilisee), 0)
+  const totalMontant = entries.reduce((s, e) => s + toNum(e.total), 0)
+  const totalRow = sheet.addRow({
+    entry_date: 'TOTAUX',
+    quantite_utilisee: totalQte,
+    total: totalMontant,
+  })
+  styleTotalsRow(totalRow, AMOUNT_ROW_FILL)
+  totalRow.height = DATA_ROW_HEIGHT
+
+  await save(
+    workbook,
+    filename || `Historique_Matiere_${String(matiere.designation).replace(/\s+/g, '_')}_${todayISO()}.xlsx`
+  )
 }

@@ -16,6 +16,7 @@ import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
 import { getSession, clearSession, allowedTabsForRole } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
+import { COMPANY_INFO } from './lib/printRegistry'
 
 const TITLES = {
   form: 'Suivi de chargement',
@@ -91,7 +92,7 @@ function App() {
     <div className="mx-auto flex min-h-svh max-w-4xl flex-col px-4 py-6 pb-24">
       <header className="mb-6 flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs tracking-widest text-ocre uppercase">SARL DPR AXXAM</p>
+          <p className="text-xs tracking-widest text-ocre uppercase">{COMPANY_INFO.name}</p>
           <h1 className="font-display text-2xl font-semibold text-ink">{TITLES[tab]}</h1>
         </div>
         <div className="flex flex-col items-end gap-2">

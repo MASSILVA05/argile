@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
-import { ALL_BORDERS, DATA_ROW_HEIGHT } from './excelHelpers'
+import { ALL_BORDERS, DATA_ROW_HEIGHT, writeCompanyHeader } from './excelHelpers'
 
 const GRAY_FILL = 'FFD9D9D9'
 const NUMBER_FORMAT = '#,##0.00'
@@ -52,25 +52,23 @@ export async function downloadTvaPayerExcel(entries, { startDate, endDate } = {}
 
   sheet.columns = COLUMNS.map(({ key, width }) => ({ key, width }))
 
-  sheet.mergeCells(1, 1, 1, colCount)
-  const titleCell = sheet.getCell(1, 1)
-  titleCell.value = 'SARL DPR AXXAM'
-  titleCell.font = { bold: true, size: 14 }
-  titleCell.alignment = { horizontal: 'center' }
+  let r = writeCompanyHeader(sheet, colCount, 1)
 
-  sheet.mergeCells(2, 1, 2, colCount)
-  const subtitleCell = sheet.getCell(2, 1)
+  sheet.mergeCells(r, 1, r, colCount)
+  const subtitleCell = sheet.getCell(r, 1)
   subtitleCell.value = 'Relevé des Factures de Ventes'
   subtitleCell.font = { bold: true, size: 12 }
   subtitleCell.alignment = { horizontal: 'center' }
+  r += 1
 
-  sheet.mergeCells(3, 1, 3, colCount)
-  const periodCell = sheet.getCell(3, 1)
+  sheet.mergeCells(r, 1, r, colCount)
+  const periodCell = sheet.getCell(r, 1)
   periodCell.value = `Période du ${formatDateFR(startDate)} Au ${formatDateFR(endDate)}`
   periodCell.font = { size: 11 }
   periodCell.alignment = { horizontal: 'center' }
+  r += 1
 
-  const headerRow = sheet.getRow(4)
+  const headerRow = sheet.getRow(r)
   headerRow.values = COLUMNS.map((c) => c.header)
   headerRow.eachCell({ includeEmpty: true }, (cell) => {
     cell.font = { bold: true }
