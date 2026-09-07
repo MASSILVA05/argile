@@ -15,6 +15,7 @@ const TOPIC_TVA = import.meta.env.VITE_NTFY_TOPIC_TVA || NTFY_TOPIC
 const TOPIC_CAISSE = import.meta.env.VITE_NTFY_TOPIC_CAISSE || NTFY_TOPIC
 const TOPIC_MAGASIN = import.meta.env.VITE_NTFY_TOPIC_MAGASIN || NTFY_TOPIC
 const TOPIC_PRODUCTION = import.meta.env.VITE_NTFY_TOPIC_PRODUCTION || NTFY_TOPIC
+const TOPIC_RESIDENCE = import.meta.env.VITE_NTFY_TOPIC_RESIDENCE || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -346,6 +347,49 @@ export function notifyMagasinAchat(achat) {
   if (achat.observations) lines.push(`Obs : ${achat.observations}`)
   if (achat.entered_by_user) lines.push(`Saisi par : ${achat.entered_by_user}`)
   return sendNtfy(TOPIC_MAGASIN, 'Magasin — Nouvel achat fournisseur', lines, 'package')
+}
+
+export function notifyResidenceReservation(resa) {
+  const lines = [
+    `Logement : ${resa.unit_nom} (${resa.unit_code}) — ${resa.residence}`,
+    `Client : ${resa.client_name}${resa.client_phone ? ` — ${resa.client_phone}` : ''}`,
+    `Personnes : ${resa.nb_personnes}`,
+    `Arrivée : ${resa.date_arrivee}`,
+    `Départ : ${resa.date_depart}`,
+    `Nuits : ${resa.nb_nuits ?? '—'}`,
+    `Prix / nuit : ${formatDA(resa.prix_nuit)} DA`,
+    `Montant total : ${formatDA(resa.montant_total)} DA`,
+  ]
+  if (Number(resa.arrhes)) lines.push(`Arrhes : ${formatDA(resa.arrhes)} DA`)
+  lines.push(`Reste à payer : ${formatDA(resa.reste_a_payer)} DA`)
+  lines.push(`Mode de paiement : ${resa.payment_mode}`)
+  lines.push(`Statut : ${resa.statut}`)
+  if (resa.observations) lines.push(`Obs : ${resa.observations}`)
+  if (resa.entered_by_user) lines.push(`Saisi par : ${resa.entered_by_user}`)
+  return sendNtfy(TOPIC_RESIDENCE, 'Résidence — Nouvelle réservation', lines, 'house')
+}
+
+export function notifyResidenceCaisseEntry(entry) {
+  const category =
+    entry.category === 'Autre' && entry.category_other ? entry.category_other : entry.category
+  const lines = [
+    `Bon n° ${entry.bon_number}`,
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Type : ${entry.operation_type}`,
+    `Motif : ${entry.description}`,
+    `Montant : ${formatDA(entry.amount)} DA`,
+  ]
+  if (entry.beneficiary) lines.push(`Fournisseur/Bénéficiaire : ${entry.beneficiary}`)
+  if (entry.client_name) lines.push(`Client : ${entry.client_name}`)
+  lines.push(`Mode de paiement : ${entry.payment_mode}`)
+  if (entry.payment_mode === 'Chèque' && entry.cheque_number) {
+    lines.push(`Chèque n° ${entry.cheque_number}${entry.cheque_bank ? ` — ${entry.cheque_bank}` : ''}`)
+  }
+  if (entry.piece_number) lines.push(`N° Pièce : ${entry.piece_number}`)
+  lines.push(`Catégorie : ${category}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_RESIDENCE, `Résidence — Caisse : ${entry.operation_type}`, lines, 'moneybag')
 }
 
 export function notifyClientAdvance(advance) {

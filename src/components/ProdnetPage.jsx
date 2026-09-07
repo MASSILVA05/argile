@@ -2,12 +2,14 @@ import { useState } from 'react'
 import ProdnetProducts from './ProdnetProducts'
 import ProdnetMatieres from './ProdnetMatieres'
 import ProdnetFabrication from './ProdnetFabrication'
+import ProdnetHistorique from './ProdnetHistorique'
 import ProdnetImport from './ProdnetImport'
 
 const TABS = [
   { id: 'products', label: 'Produits Finis' },
   { id: 'matieres', label: 'Matières Premières' },
   { id: 'fabrication', label: 'Fabrication' },
+  { id: 'historique', label: 'Historique' },
   { id: 'import', label: 'Import' },
 ]
 
@@ -36,6 +38,7 @@ export default function ProdnetPage() {
       {view === 'products' && <ProdnetProducts />}
       {view === 'matieres' && <ProdnetMatieres />}
       {view === 'fabrication' && <ProdnetFabrication />}
+      {view === 'historique' && <ProdnetHistorique />}
       {view === 'import' && <ProdnetImport />}
     </div>
   )

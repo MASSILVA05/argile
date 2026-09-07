@@ -46,3 +46,9 @@ export function uploadCaissePhoto(file, bonNumber) {
 export function uploadMagasinPhoto(file, ref) {
   return uploadPhoto(file, 'magasin-photos', String(ref))
 }
+
+// Résidence (location saisonnière) : photos des bons / reçus de réservation
+// et des justificatifs de la caisse résidence (bucket public "residence-photos").
+export function uploadResidencePhoto(file, ref) {
+  return uploadPhoto(file, 'residence-photos', String(ref))
+}

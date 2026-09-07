@@ -4632,3 +4632,513 @@ grant execute on function prodnet_update_fabrication_matieres(uuid, text, jsonb,
 -- de fabrication. JSON : [{matiere_id, matiere_designation, quantite, prix_unitaire}]
 -- ------------------------------------------------------------
 alter table prodnet_products add column if not exists constitution jsonb not null default '[]'::jsonb;
+
+
+-- ============================================================
+-- MODULE RÉSIDENCE (2026-09-07) : gestion de location saisonnière
+-- Onglet "Résidence". Accès : rôle 'admin' (Ahcene, Massilva, Mazigh) et
+-- rôle 'magasin_only' (Aziz). Voir ROLE_TABS dans src/lib/auth.js.
+--
+-- Sous-onglets : Disponibilité / Réservations / Clients / Caisse Résidence.
+--
+-- 4 tables :
+--   residence_units        : catalogue des logements (Boulimat / 4 Chemins)
+--   residence_reservations : bons de réservation (arrhes, reste à payer...)
+--   residence_clients      : fiches clients (nb séjours, montant total)
+--   residence_caisse       : caisse propre à la résidence (solde indépendant)
+--
+-- Notifications ntfy : topic VITE_NTFY_TOPIC_RESIDENCE (Argile_Residence).
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- Nouvel utilisateur Mazigh — rôle 'admin' (comme Ahcene / Massilva).
+-- requires_verification = false : pas de code OTP, aucune restriction
+-- d'horaire ni de jour (voir ADMIN_USERNAMES / UNRESTRICTED_HOURS_USERS
+-- dans src/lib/auth.js). request_login_code lit v_user.role tel quel :
+-- aucune modification de fonction nécessaire.
+-- ------------------------------------------------------------
+insert into app_users (username, password_hash, requires_verification, role)
+values ('Mazigh', encode(digest('Mazigh@DPR2024!', 'sha256'), 'hex'), false, 'admin')
+on conflict (username) do nothing;
+
+-- ------------------------------------------------------------
+-- Bucket photos de la résidence (bons / reçus de réservation, justificatifs
+-- caisse). Les photos passent en pratique par le serveur de photos
+-- (VITE_PHOTO_SERVER_URL, bucket "residence-photos") ; ce bucket Supabase
+-- est créé par cohérence avec les autres modules.
+-- ------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('residence-photos', 'residence-photos', true)
+on conflict (id) do nothing;
+
+do $$ begin
+  create policy "Lecture publique photos residence" on storage.objects for select
+    using (bucket_id = 'residence-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Ajout photos residence" on storage.objects for insert
+    with check (bucket_id = 'residence-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Suppression photos residence" on storage.objects for delete
+    using (bucket_id = 'residence-photos');
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- residence_units : les logements
+-- ------------------------------------------------------------
+create table if not exists residence_units (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  nom text not null,
+  type text not null,
+  capacite integer not null default 0,
+  capacite_note text,
+  residence text not null check (residence in ('Boulimat', '4 Chemins')),
+  prix_nuit numeric(10, 2) default 0,
+  statut text default 'Disponible'
+    check (statut in ('Disponible', 'Occupé', 'Maintenance', 'Hors service')),
+  observations text,
+  created_at timestamptz not null default now()
+);
+
+comment on table residence_units is 'Logements de la résidence (Boulimat / 4 Chemins) — location saisonnière';
+comment on column residence_units.statut is 'Statut courant, rafraîchi par residence_refresh_statuses() : Occupé pendant un séjour confirmé/en cours, sinon Disponible (sauf Maintenance / Hors service posés manuellement)';
+
+create index if not exists residence_units_residence_idx on residence_units (residence);
+create index if not exists residence_units_statut_idx on residence_units (statut);
+
+alter table residence_units enable row level security;
+
+create policy "Lecture publique residence_units" on residence_units for select using (true);
+create policy "Ajout residence_units" on residence_units for insert with check (true);
+create policy "Modification residence_units" on residence_units for update using (true) with check (true);
+create policy "Suppression residence_units" on residence_units for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table residence_units;
+exception when duplicate_object then null;
+end $$;
+
+-- Logements Boulimat
+insert into residence_units (code, nom, type, capacite, capacite_note, residence) values
+  ('BOU-DUP1', 'Duplex 1', 'Duplex', 7, null, 'Boulimat'),
+  ('BOU-DUP2', 'Duplex 2', 'Duplex', 7, null, 'Boulimat'),
+  ('BOU-DUP3', 'Duplex 3', 'Duplex', 7, null, 'Boulimat'),
+  ('BOU-DUP4', 'Duplex 4', 'Duplex', 7, null, 'Boulimat'),
+  ('BOU-DUP5', 'Duplex 5', 'Duplex', 7, null, 'Boulimat'),
+  ('BOU-DUP6', 'Duplex 6', 'Duplex', 7, null, 'Boulimat'),
+  ('BOU-F2-1', 'F2 N°1', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-F2-2', 'F2 N°2', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-F2-3', 'F2 N°3', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-F2-4', 'F2 N°4', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-F2-5', 'F2 N°5', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-F2-6', 'F2 N°6', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-F2-7', 'F2 N°7', 'F2', 3, '4ème payant', 'Boulimat'),
+  ('BOU-TRI', 'Triplex', 'Triplex', 12, null, 'Boulimat')
+on conflict (code) do nothing;
+
+-- Logements 4 Chemins
+insert into residence_units (code, nom, type, capacite, capacite_note, residence) values
+  ('4C-201', '201', 'F5', 8, null, '4 Chemins'),
+  ('4C-202', '202 Vitrine', 'F3', 4, null, '4 Chemins'),
+  ('4C-203', '203 Intérieur', 'F3', 5, 'avec canapé', '4 Chemins'),
+  ('4C-204', '204 Façade', 'F3', 4, null, '4 Chemins'),
+  ('4C-301', '301', 'F5', 9, null, '4 Chemins'),
+  ('4C-302', '302 Vitrine', 'F3', 4, null, '4 Chemins'),
+  ('4C-303', '303 Intérieur', 'F3', 5, null, '4 Chemins'),
+  ('4C-304', '304 Façade', 'F3', 4, null, '4 Chemins'),
+  ('4C-401', '401', 'F5', 9, null, '4 Chemins'),
+  ('4C-402', '402 Vitrine', 'F3', 5, null, '4 Chemins'),
+  ('4C-403', '403 Femme de ménage', 'Service', 0, null, '4 Chemins'),
+  ('4C-404', '404 Façade', 'F3', 4, null, '4 Chemins'),
+  ('4C-501', '501 Vitrine', 'F3', 5, null, '4 Chemins'),
+  ('4C-502', '502 Façade', 'F3', 4, null, '4 Chemins'),
+  ('4C-503', '503', 'F5', 8, null, '4 Chemins'),
+  ('4C-504', '504', 'F2', 2, null, '4 Chemins'),
+  ('4C-601', '601 Vitrine', 'F3', 5, null, '4 Chemins'),
+  ('4C-602', '602 Terrasse', 'F3', 5, null, '4 Chemins'),
+  ('4C-701', '701', 'F3', 5, null, '4 Chemins'),
+  ('4C-702', '702', 'F3', 5, null, '4 Chemins')
+on conflict (code) do nothing;
+
+-- ------------------------------------------------------------
+-- residence_clients : fiches clients
+-- ------------------------------------------------------------
+create table if not exists residence_clients (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  phone text,
+  nb_sejours integer default 0,
+  montant_total numeric(14, 2) default 0,
+  observations text,
+  created_at timestamptz not null default now()
+);
+
+comment on table residence_clients is 'Clients de la résidence — cumul nb séjours + montant total, maj automatique par residence_record_reservation';
+
+alter table residence_clients enable row level security;
+
+create policy "Lecture publique residence_clients" on residence_clients for select using (true);
+create policy "Ajout residence_clients" on residence_clients for insert with check (true);
+create policy "Modification residence_clients" on residence_clients for update using (true) with check (true);
+create policy "Suppression residence_clients" on residence_clients for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table residence_clients;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- residence_reservations : bons de réservation
+-- ------------------------------------------------------------
+create table if not exists residence_reservations (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid references residence_units(id),
+  unit_code text not null,
+  unit_nom text not null,
+  residence text not null,
+  client_name text not null,
+  client_phone text,
+  nb_personnes integer not null,
+  date_arrivee date not null,
+  date_depart date not null,
+  nb_nuits integer generated always as (date_depart - date_arrivee) stored,
+  prix_nuit numeric(10, 2) not null,
+  montant_total numeric(12, 2) generated always as ((date_depart - date_arrivee) * prix_nuit) stored,
+  arrhes numeric(10, 2) default 0,
+  reste_a_payer numeric(12, 2) generated always as ((date_depart - date_arrivee) * prix_nuit - coalesce(arrhes, 0)) stored,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Virement', 'BaridiMob')),
+  statut text default 'Confirmée'
+    check (statut in ('En attente', 'Confirmée', 'En cours', 'Terminée', 'Annulée')),
+  photo_url text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table residence_reservations is 'Bons de réservation de la résidence (montant / arrhes / reste à payer calculés)';
+
+create index if not exists residence_reservations_created_at_idx on residence_reservations (created_at desc);
+create index if not exists residence_reservations_unit_id_idx on residence_reservations (unit_id);
+create index if not exists residence_reservations_residence_idx on residence_reservations (residence);
+create index if not exists residence_reservations_statut_idx on residence_reservations (statut);
+create index if not exists residence_reservations_dates_idx on residence_reservations (date_arrivee, date_depart);
+create index if not exists residence_reservations_client_idx on residence_reservations (client_name);
+
+alter table residence_reservations enable row level security;
+
+create policy "Lecture publique residence_reservations" on residence_reservations for select using (true);
+create policy "Ajout residence_reservations" on residence_reservations for insert with check (true);
+create policy "Modification residence_reservations" on residence_reservations for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression residence_reservations" on residence_reservations for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table residence_reservations;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- residence_caisse : caisse propre à la résidence (solde indépendant)
+-- ------------------------------------------------------------
+create table if not exists residence_caisse (
+  id uuid primary key default gen_random_uuid(),
+  bon_number integer not null unique,
+  entry_date date not null default current_date,
+  entry_time time,
+  operation_type text not null
+    check (operation_type in ('Encaissement', 'Décaissement', 'Dépense')),
+  description text not null,
+  amount numeric(12, 2) not null,
+  beneficiary text,
+  client_name text,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Virement', 'BaridiMob')),
+  cheque_number text,
+  cheque_bank text,
+  piece_number text,
+  photo_url text,
+  category text default 'Autre'
+    check (category in ('Client', 'Ménage', 'Entretien', 'Réparation', 'Frais généraux', 'Autre')),
+  category_other text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table residence_caisse is 'Caisse de la résidence (séparée des autres caisses) : encaissements / décaissements / dépenses';
+comment on column residence_caisse.amount is 'Montant en valeur absolue (DA) ; le signe est déduit de operation_type côté application';
+
+create index if not exists residence_caisse_created_at_idx on residence_caisse (created_at desc);
+create index if not exists residence_caisse_entry_date_idx on residence_caisse (entry_date desc);
+create index if not exists residence_caisse_bon_number_idx on residence_caisse (bon_number desc);
+create index if not exists residence_caisse_operation_type_idx on residence_caisse (operation_type);
+create index if not exists residence_caisse_category_idx on residence_caisse (category);
+create index if not exists residence_caisse_beneficiary_idx on residence_caisse (beneficiary);
+create index if not exists residence_caisse_client_name_idx on residence_caisse (client_name);
+
+alter table residence_caisse enable row level security;
+
+create policy "Lecture publique residence_caisse" on residence_caisse for select using (true);
+create policy "Ajout residence_caisse" on residence_caisse for insert with check (true);
+create policy "Modification residence_caisse" on residence_caisse for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression residence_caisse" on residence_caisse for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table residence_caisse;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- residence_record_reservation : enregistre atomiquement une réservation,
+-- crée / met à jour la fiche client (nb_sejours + montant_total) et pose le
+-- statut du logement ('Occupé' si la réservation est Confirmée ou En cours,
+-- sinon inchangé). Appelée par ResidenceReservationForm.
+-- ------------------------------------------------------------
+create or replace function residence_record_reservation(p jsonb)
+returns residence_reservations
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row residence_reservations;
+  v_client text := nullif(trim(coalesce(p->>'client_name', '')), '');
+  v_phone text := nullif(trim(coalesce(p->>'client_phone', '')), '');
+  v_statut text := coalesce(p->>'statut', 'Confirmée');
+begin
+  insert into residence_reservations (
+    unit_id, unit_code, unit_nom, residence, client_name, client_phone,
+    nb_personnes, date_arrivee, date_depart, prix_nuit, arrhes,
+    payment_mode, statut, photo_url, observations, entered_by_user
+  ) values (
+    nullif(p->>'unit_id', '')::uuid,
+    p->>'unit_code',
+    p->>'unit_nom',
+    p->>'residence',
+    v_client,
+    v_phone,
+    coalesce((p->>'nb_personnes')::int, 1),
+    (p->>'date_arrivee')::date,
+    (p->>'date_depart')::date,
+    coalesce((p->>'prix_nuit')::numeric, 0),
+    coalesce((p->>'arrhes')::numeric, 0),
+    coalesce(p->>'payment_mode', 'Espèces'),
+    v_statut,
+    nullif(trim(coalesce(p->>'photo_url', '')), ''),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  if v_client is not null then
+    insert into residence_clients (name, phone) values (v_client, v_phone)
+      on conflict (name) do update set phone = coalesce(excluded.phone, residence_clients.phone);
+
+    update residence_clients
+      set nb_sejours = coalesce(nb_sejours, 0) + 1,
+          montant_total = coalesce(montant_total, 0) + coalesce(v_row.montant_total, 0)
+      where name = v_client;
+  end if;
+
+  if v_statut in ('Confirmée', 'En cours') and v_row.unit_id is not null then
+    update residence_units set statut = 'Occupé'
+      where id = v_row.unit_id and statut not in ('Maintenance', 'Hors service');
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function residence_record_reservation(jsonb) from public;
+grant execute on function residence_record_reservation(jsonb) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- residence_refresh_statuses : appelée au chargement de la page Résidence.
+--   - réservations dont date_depart <= aujourd'hui et statut actif  -> 'Terminée'
+--   - chaque logement (hors Maintenance / Hors service) : 'Occupé' s'il a une
+--     réservation Confirmée / En cours couvrant la date du jour, sinon 'Disponible'
+-- ------------------------------------------------------------
+create or replace function residence_refresh_statuses()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update residence_reservations
+    set statut = 'Terminée'
+    where statut in ('Confirmée', 'En cours')
+      and date_depart <= current_date;
+
+  update residence_units u set statut = case
+    when exists (
+      select 1 from residence_reservations r
+      where r.unit_id = u.id
+        and r.statut in ('Confirmée', 'En cours')
+        and r.date_arrivee <= current_date
+        and r.date_depart > current_date
+    ) then 'Occupé'
+    else 'Disponible'
+  end
+  where u.statut not in ('Maintenance', 'Hors service');
+end;
+$$;
+
+revoke all on function residence_refresh_statuses() from public;
+grant execute on function residence_refresh_statuses() to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Code admin : édition / suppression après le verrou de 72h.
+-- ------------------------------------------------------------
+create or replace function admin_update_residence_reservation(p_id uuid, p_admin_code text, p jsonb)
+returns residence_reservations
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result residence_reservations;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update residence_reservations set
+    unit_id = coalesce(nullif(p->>'unit_id', '')::uuid, unit_id),
+    unit_code = coalesce(p->>'unit_code', unit_code),
+    unit_nom = coalesce(p->>'unit_nom', unit_nom),
+    residence = coalesce(p->>'residence', residence),
+    client_name = coalesce(nullif(trim(coalesce(p->>'client_name', '')), ''), client_name),
+    client_phone = nullif(trim(coalesce(p->>'client_phone', '')), ''),
+    nb_personnes = coalesce((p->>'nb_personnes')::int, nb_personnes),
+    date_arrivee = coalesce((p->>'date_arrivee')::date, date_arrivee),
+    date_depart = coalesce((p->>'date_depart')::date, date_depart),
+    prix_nuit = coalesce((p->>'prix_nuit')::numeric, prix_nuit),
+    arrhes = coalesce((p->>'arrhes')::numeric, arrhes),
+    payment_mode = coalesce(p->>'payment_mode', payment_mode),
+    statut = coalesce(p->>'statut', statut),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Réservation introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_residence_reservation(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from residence_reservations where id = p_id;
+end;
+$$;
+
+create or replace function admin_update_residence_caisse(p_id uuid, p_admin_code text, p jsonb)
+returns residence_caisse
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result residence_caisse;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update residence_caisse set
+    bon_number = coalesce((p->>'bon_number')::int, bon_number),
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    operation_type = coalesce(p->>'operation_type', operation_type),
+    description = coalesce(nullif(trim(coalesce(p->>'description', '')), ''), description),
+    amount = coalesce((p->>'amount')::numeric, amount),
+    beneficiary = nullif(trim(coalesce(p->>'beneficiary', '')), ''),
+    client_name = nullif(trim(coalesce(p->>'client_name', '')), ''),
+    payment_mode = coalesce(p->>'payment_mode', payment_mode),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    piece_number = nullif(trim(coalesce(p->>'piece_number', '')), ''),
+    category = coalesce(p->>'category', category),
+    category_other = nullif(trim(coalesce(p->>'category_other', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Opération de caisse résidence introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_residence_caisse(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from residence_caisse where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_residence_client(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from residence_clients where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_residence_reservation(uuid, text, jsonb) from public;
+revoke all on function admin_delete_residence_reservation(uuid, text) from public;
+revoke all on function admin_update_residence_caisse(uuid, text, jsonb) from public;
+revoke all on function admin_delete_residence_caisse(uuid, text) from public;
+revoke all on function admin_delete_residence_client(uuid, text) from public;
+grant execute on function admin_update_residence_reservation(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_residence_reservation(uuid, text) to anon, authenticated;
+grant execute on function admin_update_residence_caisse(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_residence_caisse(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_residence_client(uuid, text) to anon, authenticated;

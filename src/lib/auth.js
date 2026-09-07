@@ -1,17 +1,17 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Mazigh', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane']
 
-// Ahcene et Massilva (admin) n'ont aucune restriction d'horaire ni de jour.
-export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
+// Ahcene, Massilva et Mazigh (admin) n'ont aucune restriction d'horaire ni de jour.
+export const ADMIN_USERNAMES = ['Ahcene', 'Massilva', 'Mazigh']
 
 // Comptes non soumis à la plage horaire 8h-17h : les admins (déjà exemptés
 // de toute restriction) + Karim, Sofiane et Abderhmane, qui peuvent se
 // connecter à toute heure de la journée. Ils restent soumis au jour de repos
 // (vendredi) et au code OTP du samedi (requires_verification en base,
 // inchangé), et n'ont pas le code admin.
-export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Karim', 'Sofiane', 'Abderhmane']
+export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Mazigh', 'Karim', 'Sofiane', 'Abderhmane']
 
 const SESSION_KEY = 'dpr-session'
 const ALGERIA_TZ = 'Africa/Algiers'
@@ -136,9 +136,15 @@ export function clearSession() {
 //                    pas de code admin. Dans Factures, limité aux sous-onglets
 //                    Saisie + Registre (pas Avances/Stock/Mouvements/G50) --
 //                    voir InvoicesPage.jsx.
-// magasin_only (Aziz) : uniquement la page Magasin (Bejaia) -- stock, ventes,
-//                    crédits clients, import. Aucune autre page, pas de code
-//                    admin. Les admins y ont aussi accès ; personne d'autre.
+// magasin_only (Aziz) : la page Magasin (Bejaia) -- stock, ventes, crédits
+//                    clients, import -- ET la page Résidence (location
+//                    saisonnière). Aucune autre page, pas de code admin. Les
+//                    admins y ont aussi accès ; personne d'autre.
+//
+// residence : onglet "Résidence" (location saisonnière Boulimat / 4 Chemins) --
+//                    disponibilité, réservations, clients, caisse résidence.
+//                    Accès : rôle 'admin' (Ahcene, Massilva, Mazigh) et rôle
+//                    'magasin_only' (Aziz).
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
@@ -147,13 +153,13 @@ export function clearSession() {
 // Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, AVADOU + Tahar/
 // tva_only) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin'],
+  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence'],
   editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
   tva_only: ['tva', 'tva-payer'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
-  magasin_only: ['magasin'],
+  magasin_only: ['magasin', 'residence'],
 }
 
 export function allowedTabsForRole(role) {

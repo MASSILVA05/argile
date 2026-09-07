@@ -145,6 +145,17 @@ function StoreIcon(props) {
   )
 }
 
+function BuildingIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <path d="M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16" />
+      <path d="M14 9h4a2 2 0 0 1 2 2v10" />
+      <path d="M3 21h18" />
+      <path d="M8 7h2M8 11h2M8 15h2" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
@@ -158,6 +169,7 @@ const TABS = [
   { id: 'tva-payer', label: 'TVA à payer', Icon: CalculatorIcon },
   { id: 'caisse', label: 'Caisse', Icon: WalletIcon },
   { id: 'magasin', label: 'Magasin', Icon: StoreIcon },
+  { id: 'residence', label: 'Résidence', Icon: BuildingIcon },
 ]
 
 export default function BottomNav({ active, onChange, allowedTabs }) {
