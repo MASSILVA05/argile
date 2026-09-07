@@ -4625,3 +4625,10 @@ $$;
 
 revoke all on function prodnet_update_fabrication_matieres(uuid, text, jsonb, date, text) from public;
 grant execute on function prodnet_update_fabrication_matieres(uuid, text, jsonb, date, text) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Constitution (nomenclature) d'un produit fini : liste des matières
+-- premières qui le composent. Sert de modèle pré-rempli dans le formulaire
+-- de fabrication. JSON : [{matiere_id, matiere_designation, quantite, prix_unitaire}]
+-- ------------------------------------------------------------
+alter table prodnet_products add column if not exists constitution jsonb not null default '[]'::jsonb;

@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
-import { formatDA, formatQty, toNum } from '../lib/prodnet'
+import {
+  formatDA,
+  formatQty,
+  toNum,
+  constitutionArray,
+  constitutionSummary,
+  constitutionCost,
+} from '../lib/prodnet'
 import { downloadProdnetProductsExcel } from '../lib/prodnetExcel'
+import { printProductsConstitution } from '../lib/printRegistry'
 import PrintSelectionModal from './PrintSelectionModal'
 
 const emptyDraft = { reference: '', designation: '', quantite: '', prix_moyen_ht: '', montant_ht: '' }
@@ -32,6 +40,8 @@ export default function ProdnetProducts() {
   const [editDraft, setEditDraft] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [printOpen, setPrintOpen] = useState(false)
+  const [expandedId, setExpandedId] = useState(null)
+  const [constitProduct, setConstitProduct] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -129,21 +139,33 @@ export default function ProdnetProducts() {
     setError('')
   }
 
+  async function saveConstitution(productId, constitution) {
+    const { data, error: updateError } = await supabase
+      .from('prodnet_products')
+      .update({ constitution })
+      .eq('id', productId)
+      .select()
+      .single()
+    if (updateError) return updateError.message
+    setRows((current) => current.map((r) => (r.id === data.id ? data : r)))
+    setConstitProduct(null)
+    setError('')
+    return null
+  }
+
   function buildPrintConfig() {
     return {
       title: 'SARL DPR AXXAM',
-      subtitle: 'Liste des Produits Finis',
-      orientation: 'landscape',
-      filters: query.trim() ? `Recherche : "${query.trim()}"` : '',
+      subtitle: 'Produits finis — Constitution',
       columns: [
         { key: 'reference', label: 'Référence' },
         { key: 'designation', label: 'Désignation' },
         { key: 'quantite', label: 'Quantité', align: 'right', format: (v) => formatQty(v) },
-        { key: 'prix_moyen_ht', label: 'Prix moyen HT (DA)', align: 'right', format: (v) => formatDA(v) },
-        { key: 'montant_ht', label: 'Montant HT (DA)', align: 'right', format: (v) => formatDA(v) },
+        { key: 'constitution', label: 'Constitution', format: (v) => constitutionSummary(v) },
+        { key: 'constitution_cost', label: 'Coût revient estimé (DA)', align: 'right', format: (v) => formatDA(v) },
       ],
-      rows: filtered,
-      totals: [{ reference: 'TOTAL', montant_ht: totalMontant }],
+      rows: filtered.map((r) => ({ ...r, constitution_cost: constitutionCost(r.constitution) })),
+      onPrint: (products) => printProductsConstitution(products),
     }
   }
 
@@ -216,7 +238,7 @@ export default function ProdnetProducts() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[800px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[980px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th>Référence</Th>
@@ -224,6 +246,7 @@ export default function ProdnetProducts() {
                   <Th>Quantité</Th>
                   <Th>Prix moyen HT</Th>
                   <Th>Montant HT</Th>
+                  <Th>Constitution</Th>
                   <Th>Actions</Th>
                 </tr>
               </thead>
@@ -236,6 +259,7 @@ export default function ProdnetProducts() {
                       <Td><input type="number" step="0.01" value={editDraft.quantite} onChange={(e) => setEditDraft({ ...editDraft, quantite: e.target.value })} className={editInputClass} /></Td>
                       <Td><input type="number" step="0.01" value={editDraft.prix_moyen_ht} onChange={(e) => setEditDraft({ ...editDraft, prix_moyen_ht: e.target.value })} className={editInputClass} /></Td>
                       <Td><input type="number" step="0.01" value={editDraft.montant_ht} onChange={(e) => setEditDraft({ ...editDraft, montant_ht: e.target.value })} className={editInputClass} placeholder="auto" /></Td>
+                      <Td>—</Td>
                       <Td>
                         <div className="flex gap-2">
                           <button type="button" onClick={saveEdit} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">Enregistrer</button>
@@ -244,19 +268,12 @@ export default function ProdnetProducts() {
                       </Td>
                     </tr>
                   ) : (
-                    <tr key={row.id} className="border-b border-border last:border-0">
-                      <Td>{row.reference || '—'}</Td>
-                      <Td className="max-w-[320px] truncate" title={row.designation}>{row.designation}</Td>
-                      <Td>{formatQty(row.quantite)}</Td>
-                      <Td className="text-right">{formatDA(row.prix_moyen_ht)}</Td>
-                      <Td className="text-right">{formatDA(row.montant_ht)}</Td>
-                      <Td>
-                        <div className="flex gap-1">
-                          <button type="button" onClick={() => startEdit(row)} className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre">Modifier</button>
-                          <button type="button" onClick={() => handleDelete(row)} className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10">Suppr.</button>
-                        </div>
-                      </Td>
-                    </tr>
+                    <FragmentRow key={row.id} row={row} expanded={expandedId === row.id}
+                      onToggle={() => setExpandedId((id) => (id === row.id ? null : row.id))}
+                      onEditConstitution={() => setConstitProduct(row)}
+                      onEdit={() => startEdit(row)}
+                      onDelete={() => handleDelete(row)}
+                    />
                   )
                 )}
               </tbody>
@@ -266,6 +283,253 @@ export default function ProdnetProducts() {
       )}
 
       <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
+
+      {constitProduct && (
+        <ConstitutionModal
+          product={constitProduct}
+          onSave={saveConstitution}
+          onCancel={() => setConstitProduct(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function FragmentRow({ row, expanded, onToggle, onEditConstitution, onEdit, onDelete }) {
+  const cons = constitutionArray(row.constitution)
+  return (
+    <>
+      <tr className="border-b border-border last:border-0">
+        <Td>{row.reference || '—'}</Td>
+        <Td className="max-w-[320px] truncate" title={row.designation}>{row.designation}</Td>
+        <Td>{formatQty(row.quantite)}</Td>
+        <Td className="text-right">{formatDA(row.prix_moyen_ht)}</Td>
+        <Td className="text-right">{formatDA(row.montant_ht)}</Td>
+        <Td>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre"
+          >
+            {constitutionSummary(row.constitution)}{cons.length > 0 ? ` · ${expanded ? 'masquer' : 'voir'}` : ''}
+          </button>
+        </Td>
+        <Td>
+          <div className="flex gap-1">
+            <button type="button" onClick={onEditConstitution} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">Constitution</button>
+            <button type="button" onClick={onEdit} className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre">Modifier</button>
+            <button type="button" onClick={onDelete} className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10">Suppr.</button>
+          </div>
+        </Td>
+      </tr>
+      {expanded && cons.length > 0 && (
+        <tr className="border-b border-border bg-bg-soft last:border-0">
+          <td colSpan={7} className="px-3 py-3">
+            <p className="mb-2 font-display text-ink">Constitution — {row.reference ? `${row.designation} [${row.reference}]` : row.designation}</p>
+            <table className="w-full border-collapse text-[11px] sm:text-sm">
+              <thead>
+                <tr className="text-left text-ink-muted">
+                  <th className="py-1 pr-4">Matière première</th>
+                  <th className="py-1 pr-4 text-right">Quantité</th>
+                  <th className="py-1 pr-4 text-right">Prix unitaire</th>
+                  <th className="py-1 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cons.map((c, i) => (
+                  <tr key={i}>
+                    <td className="py-1 pr-4">{c.matiere_designation}</td>
+                    <td className="py-1 pr-4 text-right">{formatQty(c.quantite)}</td>
+                    <td className="py-1 pr-4 text-right">{formatDA(c.prix_unitaire)}</td>
+                    <td className="py-1 text-right">{formatDA(toNum(c.quantite) * toNum(c.prix_unitaire))}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="font-medium">
+                  <td className="py-1 pr-4">Coût de revient estimé</td>
+                  <td></td>
+                  <td></td>
+                  <td className="py-1 text-right text-ocre">{formatDA(constitutionCost(row.constitution))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+function ConstitutionModal({ product, onSave, onCancel }) {
+  // selected : { [matiere_id]: quantiteString }
+  const [selected, setSelected] = useState(() => {
+    const init = {}
+    for (const c of constitutionArray(product.constitution)) {
+      if (c.matiere_id) init[c.matiere_id] = String(c.quantite ?? '')
+    }
+    return init
+  })
+  const [catalogue, setCatalogue] = useState([])
+  const [search, setSearch] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    supabase
+      .from('prodnet_matieres')
+      .select('id, designation, quantite, prix_moyen, unite')
+      .order('designation')
+      .then(({ data }) => {
+        if (active) setCatalogue(data ?? [])
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return catalogue
+    return catalogue.filter((m) => m.designation.toLowerCase().includes(q))
+  }, [catalogue, search])
+
+  const selectedRows = useMemo(
+    () => catalogue.filter((m) => selected[m.id] !== undefined),
+    [catalogue, selected]
+  )
+
+  const coutEstime = selectedRows.reduce(
+    (s, m) => s + toNum(selected[m.id]) * toNum(m.prix_moyen),
+    0
+  )
+
+  function toggle(id, checked) {
+    setSelected((cur) => {
+      const next = { ...cur }
+      if (checked) next[id] = next[id] ?? ''
+      else delete next[id]
+      return next
+    })
+  }
+
+  function setQte(id, value) {
+    setSelected((cur) => ({ ...cur, [id]: value }))
+  }
+
+  async function submit() {
+    setError('')
+    const constitution = selectedRows
+      .filter((m) => toNum(selected[m.id]) > 0)
+      .map((m) => ({
+        matiere_id: m.id,
+        matiere_designation: m.designation,
+        quantite: toNum(selected[m.id]),
+        prix_unitaire: toNum(m.prix_moyen),
+      }))
+    setBusy(true)
+    const msg = await onSave(product.id, constitution)
+    setBusy(false)
+    if (msg) setError(msg)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 sm:flex sm:items-center sm:justify-center sm:p-4" onClick={onCancel}>
+      <div
+        className="flex h-full w-full flex-col overflow-y-auto bg-bg-card p-5 sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-2xl sm:rounded-xl sm:border sm:border-border"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="mb-1 font-display text-lg text-ink">Constitution du produit</h2>
+        <p className="mb-3 text-sm text-ink-muted">
+          {product.reference ? `${product.designation} [${product.reference}]` : product.designation}
+        </p>
+
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Rechercher une matière première…"
+          className={inputClass}
+        />
+        <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border bg-bg-soft">
+          {filtered.length === 0 ? (
+            <p className="px-3 py-3 text-sm text-ink-muted">Aucune matière première ne correspond.</p>
+          ) : (
+            filtered.map((m) => {
+              const checked = selected[m.id] !== undefined
+              return (
+                <label
+                  key={m.id}
+                  className={`flex cursor-pointer items-center gap-3 border-b border-border px-3 py-2 last:border-0 hover:bg-bg ${checked ? 'bg-terracotta/10' : ''}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => toggle(m.id, e.target.checked)}
+                    className="h-4 w-4 shrink-0 accent-terracotta"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink" title={m.designation}>{m.designation}</span>
+                  <span className="shrink-0 text-xs text-ink-muted">{formatDA(m.prix_moyen)} DA</span>
+                </label>
+              )
+            })
+          )}
+        </div>
+
+        {selectedRows.length > 0 && (
+          <div className="mt-3 overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[480px] border-collapse text-[11px] sm:text-sm">
+              <thead>
+                <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                  <th className="px-2 py-1.5">Matière</th>
+                  <th className="px-2 py-1.5">Quantité</th>
+                  <th className="px-2 py-1.5 text-right">Prix unitaire</th>
+                  <th className="px-2 py-1.5 text-right">Total</th>
+                  <th className="px-2 py-1.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {selectedRows.map((m) => (
+                  <tr key={m.id} className="border-b border-border last:border-0">
+                    <td className="px-2 py-1.5">{m.designation}</td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.001"
+                        min="0"
+                        value={selected[m.id]}
+                        onChange={(e) => setQte(m.id, e.target.value)}
+                        className="w-24 rounded border border-border bg-bg px-2 py-1 text-ink outline-none focus:border-terracotta"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{formatDA(m.prix_moyen)}</td>
+                    <td className="px-2 py-1.5 text-right font-medium">{formatDA(toNum(selected[m.id]) * toNum(m.prix_moyen))}</td>
+                    <td className="px-2 py-1.5">
+                      <button type="button" onClick={() => toggle(m.id, false)} className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10">Retirer</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="mt-3 rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2">
+          <p className="text-xs text-ink-muted">Coût de revient estimé ({selectedRows.length} matière(s))</p>
+          <p className="font-display text-lg text-ocre">{formatDA(coutEstime)} DA</p>
+        </div>
+
+        {error && <p className="mt-3 rounded-lg border border-terracotta/50 bg-terracotta/10 px-3 py-2 text-sm text-terracotta">{error}</p>}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm text-ink-muted">Annuler</button>
+          <button type="button" onClick={submit} disabled={busy} className="min-h-11 rounded-lg bg-terracotta px-3 py-2 text-sm font-display text-ink hover:bg-terracotta-hover disabled:opacity-50">
+            {busy ? 'Enregistrement…' : 'Enregistrer la constitution'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

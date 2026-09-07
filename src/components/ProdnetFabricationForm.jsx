@@ -9,6 +9,7 @@ import {
   ligneTotal,
   computeCoutTotal,
   computeCoutUnitaire,
+  constitutionArray,
   todayISO,
 } from '../lib/prodnet'
 
@@ -33,6 +34,7 @@ export default function ProdnetFabricationForm() {
   // { [matiere_id]: quantiteUtiliséeString }
   const [selected, setSelected] = useState({})
   const [search, setSearch] = useState('')
+  const [prefillNote, setPrefillNote] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -45,7 +47,7 @@ export default function ProdnetFabricationForm() {
 
   async function loadRefs() {
     const [{ data: prodRows }, { data: matRows }] = await Promise.all([
-      supabase.from('prodnet_products').select('id, reference, designation, quantite, prix_moyen_ht, montant_ht').order('designation'),
+      supabase.from('prodnet_products').select('id, reference, designation, quantite, prix_moyen_ht, montant_ht, constitution').order('designation'),
       supabase.from('prodnet_matieres').select('id, designation, quantite, prix_moyen, unite').order('designation'),
     ])
     setProducts(prodRows ?? [])
@@ -71,6 +73,19 @@ export default function ProdnetFabricationForm() {
   function handleProductSearch(value) {
     const match = productByLabel.get(value)
     setDraft((d) => ({ ...d, product_search: value, product_id: match ? match.id : '' }))
+
+    // Pré-remplissage depuis la constitution (nomenclature) du produit fini.
+    const cons = constitutionArray(match?.constitution)
+    if (match && cons.length > 0) {
+      const next = {}
+      for (const c of cons) {
+        if (c.matiere_id) next[c.matiere_id] = String(c.quantite ?? '')
+      }
+      setSelected(next)
+      setPrefillNote(true)
+    } else {
+      setPrefillNote(false)
+    }
   }
 
   function toggleMatiere(id, checked) {
@@ -183,6 +198,7 @@ export default function ProdnetFabricationForm() {
     setDraft({ ...emptyDraft, entry_date: draft.entry_date })
     setSelected({})
     setSearch('')
+    setPrefillNote(false)
     loadRefs()
   }
 
@@ -220,6 +236,12 @@ export default function ProdnetFabricationForm() {
           </p>
         )}
       </Field>
+
+      {prefillNote && draft.product_id && (
+        <p className="rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-2 text-sm text-ocre">
+          Constitution pré-remplie — modifiable avant enregistrement.
+        </p>
+      )}
 
       {/* Sélection des matières : recherche + liste à cocher */}
       <div className="flex flex-col gap-2">

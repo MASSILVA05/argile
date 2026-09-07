@@ -53,3 +53,33 @@ export function matieresText(matieres) {
 export function todayISO() {
   return new Date().toISOString().slice(0, 10)
 }
+
+// --- Constitution (nomenclature) d'un produit fini -------------------------
+// JSON : [{ matiere_id, matiere_designation, quantite, prix_unitaire }]
+
+export function constitutionArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+export function constitutionSummary(constitution) {
+  const list = constitutionArray(constitution)
+  if (list.length === 0) return '—'
+  if (list.length === 1) return list[0].matiere_designation ?? '1 matière'
+  return `${list.length} matières`
+}
+
+// Coût de revient estimé = somme(quantite × prix_unitaire).
+export function constitutionCost(constitution) {
+  return constitutionArray(constitution).reduce(
+    (s, c) => s + toNum(c.quantite) * toNum(c.prix_unitaire),
+    0
+  )
+}
+
+// Lignes texte « — DÉSIGNATION : q × prix DA = total DA » (impression / détail).
+export function constitutionLines(constitution) {
+  return constitutionArray(constitution).map((c) => {
+    const total = toNum(c.quantite) * toNum(c.prix_unitaire)
+    return `— ${c.matiere_designation} : ${formatQty(c.quantite)} × ${formatDA(c.prix_unitaire)} DA = ${formatDA(total)} DA`
+  })
+}

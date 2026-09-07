@@ -463,3 +463,93 @@ export function printFabrications(fabrications) {
 
   openAndPrint(html)
 }
+
+// ============================================================
+// Impression de la liste des produits finis AVEC leur constitution
+// (nomenclature). Un bloc par produit : identité + lignes de constitution +
+// coût de revient estimé.
+// ============================================================
+export function printProductsConstitution(products) {
+  const list = Array.isArray(products) ? products : []
+
+  const blocks = list.length
+    ? list
+        .map((p) => {
+          const cons = Array.isArray(p.constitution) ? p.constitution : []
+          const estime = cons.reduce(
+            (s, c) => s + (Number(c.quantite) || 0) * (Number(c.prix_unitaire) || 0),
+            0
+          )
+          const lignes = cons.length
+            ? cons
+                .map((c) => {
+                  const q = Number(c.quantite) || 0
+                  const pu = Number(c.prix_unitaire) || 0
+                  return `<li>— ${escapeHtml(c.matiere_designation)} : ${escapeHtml(nfQty(q))} × ${escapeHtml(nf2(pu))} DA = ${escapeHtml(nf2(q * pu))} DA</li>`
+                })
+                .join('')
+            : `<li class="none">Constitution non définie.</li>`
+          const titre = [p.reference, p.designation].filter(Boolean).join(' — ') || '—'
+          return `<div class="prod">
+      <p class="prod-title">${escapeHtml(titre)}
+        <span class="prod-meta">Stock : ${escapeHtml(nfQty(p.quantite))} · Prix moyen HT : ${escapeHtml(nf2(p.prix_moyen_ht))} DA</span>
+      </p>
+      <p class="prod-sub">Constitution :</p>
+      <ul>${lignes}</ul>
+      ${cons.length ? `<p class="prod-cost">Coût de revient estimé : ${escapeHtml(nf2(estime))} DA</p>` : ''}
+    </div>`
+        })
+        .join('')
+    : `<p class="empty">Aucun produit fini.</p>`
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Produits finis — constitution</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
+  body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 10pt; padding: 10px 14px; }
+
+  @page { size: A4 portrait; margin: 1.5cm; }
+
+  .doc-header { text-align: center; margin: 0 0 4px; }
+  .doc-company { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
+  .doc-subtitle { font-size: 12pt; font-weight: bold; margin: 3px 0 0; }
+  .doc-meta-line { text-align: right; font-size: 9pt; color: #333333; margin-top: 6px; }
+  .doc-rule { border: none; border-top: 1.5px solid #000000; margin: 4px 0 12px; }
+
+  .prod {
+    page-break-inside: avoid;
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #999999;
+  }
+  .prod-title { font-weight: bold; font-size: 11pt; margin: 0; }
+  .prod-meta { font-weight: normal; font-size: 9pt; color: #444444; margin-left: 8px; }
+  .prod-sub { font-style: italic; margin: 3px 0 2px; }
+  .prod ul { margin: 0 0 4px; padding-left: 14px; list-style: none; }
+  .prod li { margin: 1px 0; }
+  .prod li.none { font-style: italic; color: #555555; }
+  .prod-cost { font-weight: bold; margin: 2px 0 0; }
+
+  p.empty { text-align: center; color: #555555; font-style: italic; padding: 24px 0; }
+
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+  <div class="doc-header">
+    <p class="doc-company">SARL DPR AXXAM</p>
+    <p class="doc-subtitle">Produits finis — Constitution</p>
+  </div>
+  <div class="doc-meta-line">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</div>
+  <hr class="doc-rule">
+  ${blocks}
+</body>
+</html>`
+
+  openAndPrint(html)
+}
