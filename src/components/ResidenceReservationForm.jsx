@@ -19,8 +19,6 @@ const addDaysISO = (iso, n) => {
   d.setDate(d.getDate() + n)
   return d.toISOString().slice(0, 10)
 }
-const formatHHMM = (date) => date.toTimeString().slice(0, 5)
-
 const inputClass =
   'min-h-11 w-full rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta'
 

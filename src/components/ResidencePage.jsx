@@ -21,8 +21,6 @@ export default function ResidencePage() {
     let active = true
 
     async function loadSummary() {
-      // Rafraîchit les statuts (séjours terminés -> logement libéré) puis le résumé.
-      await supabase.rpc('residence_refresh_statuses')
       const [{ data: units }, { data: caisse }] = await Promise.all([
         supabase.from('residence_units').select('statut'),
         supabase.from('residence_caisse').select('operation_type, amount'),
@@ -38,7 +36,9 @@ export default function ResidencePage() {
       setSummary({ total, libres, occupes, solde })
     }
 
-    loadSummary()
+    // Rafraîchit les statuts (séjours terminés -> logement libéré, séjour en
+    // cours -> Occupé) une fois à l'ouverture de la page, puis charge le résumé.
+    supabase.rpc('residence_refresh_statuses').finally(loadSummary)
 
     const channel = supabase
       .channel('residence-summary')
