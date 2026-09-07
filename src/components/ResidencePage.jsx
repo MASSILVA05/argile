@@ -38,7 +38,17 @@ export default function ResidencePage() {
 
     // Rafraîchit les statuts (séjours terminés -> logement libéré, séjour en
     // cours -> Occupé) une fois à l'ouverture de la page, puis charge le résumé.
-    supabase.rpc('residence_refresh_statuses').finally(loadSummary)
+    // supabase.rpc() renvoie un « thenable », pas une Promise native : on
+    // enchaîne avec await plutôt que .finally().
+    async function refreshThenLoad() {
+      try {
+        await supabase.rpc('residence_refresh_statuses')
+      } catch (err) {
+        console.error('Erreur refresh statuts résidence:', err)
+      }
+      await loadSummary()
+    }
+    refreshThenLoad()
 
     const channel = supabase
       .channel('residence-summary')
