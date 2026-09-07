@@ -6,7 +6,7 @@ import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
 import { downloadProdnetFabricationsExcel } from '../lib/prodnetExcel'
 import { printFabrications } from '../lib/printRegistry'
-import { formatDA, formatQty, matieresSummary } from '../lib/prodnet'
+import { formatDA, formatQty, matieresSummary, toNum, ligneTotal, computeCoutTotal, computeCoutUnitaire } from '../lib/prodnet'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import PrintSelectionModal from './PrintSelectionModal'
@@ -119,20 +119,24 @@ export default function ProdnetFabricationRegistry() {
     }
   }
 
-  async function saveEdit(payload) {
-    const usingAdmin = editAdminCode != null
-    const { data, error: updateError } = usingAdmin
-      ? await supabase.rpc('admin_update_prodnet_fabrication', { p_id: editEntry.id, p_admin_code: editAdminCode, p: payload })
-      : await supabase.from('prodnet_fabrications').update(payload).eq('id', editEntry.id).select().single()
-    if (updateError) {
-      setError(`Erreur de mise à jour : ${updateError.message}`)
-      return
-    }
+  // Édition d'une fabrication : date + observations + MATIÈRES (avec
+  // réajustement atomique du stock via la RPC prodnet_update_fabrication_matieres).
+  // Renvoie un message d'erreur (affiché dans la modale) ou null si succès.
+  async function saveEdit({ entry_date, observations, matieres }) {
+    const { data, error: updateError } = await supabase.rpc('prodnet_update_fabrication_matieres', {
+      p_id: editEntry.id,
+      p_admin_code: editAdminCode ?? '',
+      p_matieres: matieres,
+      p_entry_date: entry_date,
+      p_observations: observations,
+    })
+    if (updateError) return updateError.message
     const row = Array.isArray(data) ? data[0] : data
     setAll((current) => current.map((f) => (f.id === row.id ? row : f)))
     setEditEntry(null)
     setEditAdminCode(null)
     setError('')
+    return null
   }
 
   function openAdminPrompt(action, entry) {
@@ -351,35 +355,259 @@ function FabRow({ fab, expanded, onToggle, onEdit, onDelete, onLockedAttempt }) 
   )
 }
 
+let editLineSeq = 0
+
 function EditModal({ entry, adminMode, onSave, onCancel }) {
   const [entryDate, setEntryDate] = useState(entry.entry_date)
   const [observations, setObservations] = useState(entry.observations ?? '')
+  const [lines, setLines] = useState(() =>
+    (Array.isArray(entry.matieres) ? entry.matieres : []).map((m) => ({
+      key: `e${++editLineSeq}`,
+      matiere_id: m.matiere_id ?? null,
+      designation: m.designation ?? '',
+      quantite_utilisee: String(m.quantite_utilisee ?? ''),
+      prix_unitaire: toNum(m.prix_unitaire),
+      original_qte: toNum(m.quantite_utilisee),
+    }))
+  )
+  const [catalogue, setCatalogue] = useState([])
+  const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
-  async function submit() {
-    setBusy(true)
-    await onSave({ entry_date: entryDate, observations: observations.trim() || null })
-    setBusy(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    supabase
+      .from('prodnet_matieres')
+      .select('id, designation, quantite, prix_moyen, unite')
+      .order('designation')
+      .then(({ data }) => {
+        if (active) setCatalogue(data ?? [])
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const catalogueById = useMemo(() => {
+    const map = new Map()
+    for (const m of catalogue) map.set(m.id, m)
+    return map
+  }, [catalogue])
+
+  // Stock « disponible » pour l'édition d'une ligne = stock actuel + ce que
+  // CETTE fabrication consommait déjà pour cette matière (car à la sauvegarde
+  // la RPC reverse l'ancien puis ré-applique le nouveau).
+  function stockBase(line) {
+    const cat = line.matiere_id ? catalogueById.get(line.matiere_id) : null
+    if (!cat) return null
+    return toNum(cat.quantite) + toNum(line.original_qte)
   }
+
+  const rows = lines.map((l) => {
+    const base = stockBase(l)
+    const qte = toNum(l.quantite_utilisee)
+    const total = ligneTotal(l.quantite_utilisee, l.prix_unitaire)
+    return { ...l, base, qte, total, insufficient: base != null && qte > base }
+  })
+
+  const validItems = rows.filter((r) => r.qte > 0)
+  const coutTotal = computeCoutTotal(validItems.map((r) => ({ total: r.total })))
+  const coutUnitaire = computeCoutUnitaire(coutTotal, entry.quantite_produite)
+  const hasInsufficient = rows.some((r) => r.insufficient)
+
+  const addable = useMemo(() => {
+    const used = new Set(lines.map((l) => l.matiere_id))
+    const q = search.trim().toLowerCase()
+    return catalogue
+      .filter((m) => !used.has(m.id))
+      .filter((m) => !q || m.designation.toLowerCase().includes(q))
+      .slice(0, 40)
+  }, [catalogue, lines, search])
+
+  function setQte(key, value) {
+    setLines((cur) => cur.map((l) => (l.key === key ? { ...l, quantite_utilisee: value } : l)))
+  }
+
+  function removeLine(key) {
+    setLines((cur) => cur.filter((l) => l.key !== key))
+  }
+
+  function addMatiere(m) {
+    setLines((cur) => [
+      ...cur,
+      {
+        key: `e${++editLineSeq}`,
+        matiere_id: m.id,
+        designation: m.designation,
+        quantite_utilisee: '',
+        prix_unitaire: toNum(m.prix_moyen),
+        original_qte: 0,
+      },
+    ])
+    setSearch('')
+  }
+
+  async function submit() {
+    setError('')
+    if (validItems.length === 0) {
+      setError('Renseignez une quantité pour au moins une matière première.')
+      return
+    }
+    if (hasInsufficient) {
+      const r = rows.find((x) => x.insufficient)
+      setError(`Stock insuffisant pour « ${r.designation} » (disponible : ${formatQty(r.base)}).`)
+      return
+    }
+    setBusy(true)
+    const matieres = validItems.map((r) => ({
+      matiere_id: r.matiere_id,
+      designation: r.designation,
+      quantite_utilisee: r.qte,
+      prix_unitaire: toNum(r.prix_unitaire),
+      total: r.total,
+    }))
+    const msg = await onSave({
+      entry_date: entryDate,
+      observations: observations.trim() || null,
+      matieres,
+    })
+    setBusy(false)
+    if (msg) setError(msg)
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/70 sm:flex sm:items-center sm:justify-center sm:p-4" onClick={onCancel}>
-      <div className="flex h-full w-full flex-col overflow-y-auto bg-bg-card p-5 sm:h-auto sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-border" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="flex h-full w-full flex-col overflow-y-auto bg-bg-card p-5 sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-3xl sm:rounded-xl sm:border sm:border-border"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2 className="mb-1 font-display text-lg text-ink">
           Modifier la fabrication {adminMode && <span className="ml-2 text-sm text-ocre">(code admin)</span>}
         </h2>
         <p className="mb-3 text-sm text-ink-muted">
-          Seules la date et les observations sont modifiables. Les matières et coûts sont figés (les stocks ont déjà été impactés).
+          Produit : <span className="text-ink">{entry.product_reference ? `${entry.product_designation} [${entry.product_reference}]` : entry.product_designation}</span>
+          {' — '}Quantité produite : <span className="text-ink">{formatQty(entry.quantite_produite)}</span> (non modifiable)
         </p>
-        <label className="mb-3 flex flex-col gap-1.5">
-          <span className="text-sm text-ink-muted">Date</span>
-          <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className={ic} />
-        </label>
-        <label className="mb-3 flex flex-col gap-1.5">
+
+        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm text-ink-muted">Date</span>
+            <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className={ic} />
+          </label>
+        </div>
+
+        <p className="mb-1 text-sm text-ink-muted">Matières premières consommées</p>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[560px] border-collapse text-[11px] sm:text-sm">
+            <thead>
+              <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                <th className="px-2 py-1.5">Désignation</th>
+                <th className="px-2 py-1.5">Qté utilisée</th>
+                <th className="px-2 py-1.5 text-right">Prix unitaire</th>
+                <th className="px-2 py-1.5 text-right">Total</th>
+                <th className="px-2 py-1.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={5} className="px-2 py-3 text-center text-ink-muted">Aucune matière. Ajoutez-en ci-dessous.</td></tr>
+              ) : (
+                rows.map((r) => (
+                  <tr key={r.key} className="border-b border-border last:border-0">
+                    <td className="px-2 py-1.5">{r.designation}</td>
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        step="0.001"
+                        min="0"
+                        value={r.quantite_utilisee}
+                        onChange={(e) => setQte(r.key, e.target.value)}
+                        className={`w-24 rounded border bg-bg px-2 py-1 text-ink outline-none focus:border-terracotta ${
+                          r.insufficient ? 'border-terracotta bg-terracotta/10 text-terracotta' : 'border-border'
+                        }`}
+                      />
+                      {r.base != null && (
+                        <span className={`ml-2 text-xs ${r.insufficient ? 'text-terracotta' : 'text-ink-muted'}`}>
+                          dispo {formatQty(r.base)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">{formatDA(r.prix_unitaire)}</td>
+                    <td className="px-2 py-1.5 text-right font-medium">{formatDA(r.total)}</td>
+                    <td className="px-2 py-1.5">
+                      <button type="button" onClick={() => removeLine(r.key)} className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10">
+                        Retirer
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Ajouter une matière première : rechercher…"
+            className={ic}
+          />
+          {search.trim() && (
+            <div className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-border bg-bg-soft">
+              {addable.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-ink-muted">Aucune matière disponible.</p>
+              ) : (
+                addable.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => addMatiere(m)}
+                    className="flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-bg"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{m.designation}</span>
+                    <span className="shrink-0 text-xs text-ink-muted">stock {formatQty(m.quantite)} · {formatDA(m.prix_moyen)} DA</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2">
+            <p className="text-xs text-ink-muted">Coût total (recalculé)</p>
+            <p className="font-display text-lg text-ocre">{formatDA(coutTotal)} DA</p>
+          </div>
+          <div className="rounded-lg border border-ocre/50 bg-ocre/10 px-3 py-2">
+            <p className="text-xs text-ink-muted">Coût unitaire (recalculé)</p>
+            <p className="font-display text-lg text-ocre">{formatDA(coutUnitaire)} DA</p>
+          </div>
+        </div>
+
+        <label className="mt-3 flex flex-col gap-1.5">
           <span className="text-sm text-ink-muted">Observations</span>
-          <textarea value={observations} onChange={(e) => setObservations(e.target.value)} className={`${ic} min-h-20 resize-y`} />
+          <textarea value={observations} onChange={(e) => setObservations(e.target.value)} className={`${ic} min-h-16 resize-y`} />
         </label>
-        <div className="mt-auto flex justify-end gap-2 pt-3">
+
+        {hasInsufficient && (
+          <p className="mt-3 rounded-lg border border-terracotta/50 bg-terracotta/10 px-3 py-2 text-sm font-medium text-terracotta">
+            ⚠ Stock insuffisant sur une matière — corrigez les quantités.
+          </p>
+        )}
+        {error && <p className="mt-3 rounded-lg border border-terracotta/50 bg-terracotta/10 px-3 py-2 text-sm text-terracotta">{error}</p>}
+
+        <div className="mt-4 flex justify-end gap-2">
           <button type="button" onClick={onCancel} className="min-h-11 rounded-lg border border-border px-3 py-2 text-sm text-ink-muted">Annuler</button>
-          <button type="button" onClick={submit} disabled={busy} className="min-h-11 rounded-lg bg-terracotta px-3 py-2 text-sm font-display text-ink hover:bg-terracotta-hover disabled:opacity-50">
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy || hasInsufficient}
+            className="min-h-11 rounded-lg bg-terracotta px-3 py-2 text-sm font-display text-ink hover:bg-terracotta-hover disabled:opacity-50"
+          >
             {busy ? 'Enregistrement…' : 'Enregistrer'}
           </button>
         </div>

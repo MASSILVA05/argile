@@ -4503,3 +4503,125 @@ grant execute on function admin_delete_prodnet_fabrication(uuid, text) to anon, 
 grant execute on function admin_delete_prodnet_product(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_prodnet_matiere(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_all_prodnet_matieres(text) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- prodnet_update_fabrication_matieres : édition des matières premières d'une
+-- fabrication existante, avec réajustement ATOMIQUE du stock.
+--   1. reverse le stock de TOUTES les anciennes matières (quantite += ...)
+--   2. contrôle le stock pour les nouvelles matières (ERREUR si insuffisant)
+--   3. décrémente le stock des nouvelles matières + recalcule le coût total
+--   4. ajuste le coût de revient du produit fini du delta de coût matières
+--   5. met à jour prodnet_fabrications.matieres / cout_total / cout_unitaire
+--      (+ date et observations)
+-- Code administrateur exigé si la fabrication a plus de 72h.
+-- ------------------------------------------------------------
+create or replace function prodnet_update_fabrication_matieres(
+  p_id uuid,
+  p_admin_code text,
+  p_matieres jsonb,
+  p_entry_date date default null,
+  p_observations text default null
+)
+returns prodnet_fabrications
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row prodnet_fabrications;
+  v_item jsonb;
+  v_mid uuid;
+  v_qty numeric;
+  v_stock numeric;
+  v_desig text;
+  v_code text;
+  v_new_cout numeric := 0;
+  v_delta numeric;
+  v_qte_produite integer;
+  v_cout_unit numeric;
+begin
+  select * into v_row from prodnet_fabrications where id = p_id for update;
+  if v_row.id is null then
+    raise exception 'Fabrication introuvable';
+  end if;
+
+  -- Code admin obligatoire au-delà du verrou de 72h.
+  if v_row.created_at <= now() - interval '72 hours' then
+    select value into v_code from app_settings where key = 'admin_code';
+    if v_code is null or coalesce(p_admin_code, '') <> v_code then
+      raise exception 'Code administrateur requis (fabrication de plus de 72h)';
+    end if;
+  end if;
+
+  v_qte_produite := greatest(coalesce(v_row.quantite_produite, 1), 1);
+
+  -- 1. Reverse le stock de toutes les anciennes matières.
+  for v_item in select * from jsonb_array_elements(coalesce(v_row.matieres, '[]'::jsonb))
+  loop
+    v_mid := nullif(v_item->>'matiere_id', '')::uuid;
+    v_qty := coalesce((v_item->>'quantite_utilisee')::numeric, 0);
+    if v_mid is not null then
+      update prodnet_matieres
+        set quantite = quantite + v_qty,
+            valeur_totale = (quantite + v_qty) * prix_moyen
+        where id = v_mid;
+    end if;
+  end loop;
+
+  -- 2. Contrôle du stock pour les nouvelles matières (après reverse).
+  for v_item in select * from jsonb_array_elements(coalesce(p_matieres, '[]'::jsonb))
+  loop
+    v_mid := nullif(v_item->>'matiere_id', '')::uuid;
+    v_qty := coalesce((v_item->>'quantite_utilisee')::numeric, 0);
+    v_desig := coalesce(v_item->>'designation', '?');
+    if v_mid is null then
+      raise exception 'Matière première non identifiée (%).', v_desig;
+    end if;
+    select quantite into v_stock from prodnet_matieres where id = v_mid for update;
+    if v_stock is null then
+      raise exception 'Matière première introuvable : %.', v_desig;
+    end if;
+    if v_stock < v_qty then
+      raise exception 'Stock insuffisant pour « % » (disponible : %, demandé : %).', v_desig, v_stock, v_qty;
+    end if;
+  end loop;
+
+  -- 3. Décrément des nouvelles matières + cumul du coût total.
+  for v_item in select * from jsonb_array_elements(coalesce(p_matieres, '[]'::jsonb))
+  loop
+    v_mid := nullif(v_item->>'matiere_id', '')::uuid;
+    v_qty := coalesce((v_item->>'quantite_utilisee')::numeric, 0);
+    update prodnet_matieres
+      set quantite = quantite - v_qty,
+          valeur_totale = (quantite - v_qty) * prix_moyen
+      where id = v_mid;
+    v_new_cout := v_new_cout + coalesce((v_item->>'total')::numeric, 0);
+  end loop;
+
+  v_cout_unit := case when v_qte_produite > 0 then v_new_cout / v_qte_produite else 0 end;
+
+  -- 4. Ajuste le coût de revient du produit fini (delta de coût matières).
+  v_delta := v_new_cout - coalesce(v_row.cout_total, 0);
+  if v_row.product_id is not null and v_delta <> 0 then
+    update prodnet_products
+      set montant_ht = montant_ht + v_delta,
+          prix_moyen_ht = case when quantite > 0 then (montant_ht + v_delta) / quantite else 0 end
+      where id = v_row.product_id;
+  end if;
+
+  -- 5. Met à jour la fabrication.
+  update prodnet_fabrications set
+    matieres = coalesce(p_matieres, '[]'::jsonb),
+    cout_total = v_new_cout,
+    cout_unitaire = v_cout_unit,
+    entry_date = coalesce(p_entry_date, entry_date),
+    observations = nullif(trim(coalesce(p_observations, '')), '')
+  where id = p_id
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function prodnet_update_fabrication_matieres(uuid, text, jsonb, date, text) from public;
+grant execute on function prodnet_update_fabrication_matieres(uuid, text, jsonb, date, text) to anon, authenticated;

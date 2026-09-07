@@ -30,6 +30,15 @@ const dateFR = (iso) => {
   return d && m && y ? `${d}/${m}/${y}` : String(iso ?? '')
 }
 
+// Coordonnées société, en-tête des documents officiels (fiches de fabrication).
+const COMPANY_INFO = {
+  name: 'SARL DPR AXXAM BRIQUETERIE',
+  address: 'Vge TIZI Cne SMAOUN (W) DE BEJAIA',
+  rc: '08 B 0188888-00/06',
+  nif: '000806018888831',
+  art: '0612 0034 612',
+}
+
 // Les lignes de totaux : à plat ({clé: valeur}) ou { cells: {...}, highlight }
 // (fiches / PrintableSheet) -- on accepte les deux.
 function normalizeRow(row) {
@@ -267,23 +276,23 @@ export function printRegistry({
 }
 
 // ============================================================
-// Impression dédiée au registre de fabrication : UNE FICHE PAR FABRICATION
-// (en-tête d'infos + tableau 4 colonnes des matières + total + coût unitaire),
-// séparées par un filet, saut de page automatique entre elles.
+// FICHE DE FABRICATION : un document officiel A4 portrait par fabrication
+// (en-tête société, produit fini, matières premières consommées, récapitulatif
+// des coûts, pied de page + signatures). Saut de page entre chaque fiche.
 // ============================================================
-function fabricationSectionHtml(fab, index) {
+function ficheFabricationHtml(fab, index) {
   const mats = Array.isArray(fab.matieres) ? fab.matieres : []
-  const totalQte = mats.reduce((s, m) => s + (Number(m.quantite_utilisee) || 0), 0)
   const totalCout =
     Number(fab.cout_total) || mats.reduce((s, m) => s + (Number(m.total) || 0), 0)
   const qteProduite = Number(fab.quantite_produite) || 0
   const coutUnit =
     Number(fab.cout_unitaire) || (qteProduite > 0 ? totalCout / qteProduite : 0)
 
-  const bodyRows = mats.length
+  const matRows = mats.length
     ? mats
         .map(
-          (m) => `<tr>
+          (m, i) => `<tr>
+        <td class="center">${i + 1}</td>
         <td>${escapeHtml(m.designation)}</td>
         <td class="right">${escapeHtml(nfQty(m.quantite_utilisee))}</td>
         <td class="right">${escapeHtml(nf2(m.prix_unitaire))}</td>
@@ -291,50 +300,76 @@ function fabricationSectionHtml(fab, index) {
       </tr>`
         )
         .join('')
-    : `<tr><td colspan="4" class="empty">Aucune matière première.</td></tr>`
+    : `<tr><td colspan="5" class="empty">Aucune matière première consommée.</td></tr>`
 
-  const produit = [fab.product_reference, fab.product_designation].filter(Boolean).join(' — ') || '—'
+  const noFiche = String(index).padStart(3, '0')
 
-  return `<section class="fab">
-    <div class="fab-head">
-      <p class="fab-title">FABRICATION N° ${index} — Date : ${escapeHtml(dateFR(fab.entry_date))}</p>
-      <p>Produit : ${escapeHtml(produit)}</p>
-      <p>Quantité produite : ${escapeHtml(nfQty(fab.quantite_produite))}</p>
-      <p>Saisi par : ${escapeHtml(fab.entered_by_user || '—')}</p>
-    </div>
-    <table class="fab-table">
-      <colgroup><col style="width:40%"><col style="width:15%"><col style="width:20%"><col style="width:25%"></colgroup>
-      <thead>
-        <tr>
-          <th>Matière première</th>
-          <th class="right">Qté utilisée</th>
-          <th class="right">Prix unitaire (DA)</th>
-          <th class="right">Total (DA)</th>
-        </tr>
-      </thead>
-      <tbody>${bodyRows}</tbody>
-      <tfoot>
-        <tr class="ft-total">
-          <td>TOTAL</td>
-          <td class="right">${escapeHtml(nfQty(totalQte))}</td>
-          <td></td>
-          <td class="right">${escapeHtml(nf2(totalCout))}</td>
-        </tr>
-        <tr class="ft-unit">
-          <td>Coût unitaire</td>
-          <td></td>
-          <td></td>
-          <td class="right">${escapeHtml(nf2(coutUnit))}</td>
-        </tr>
-      </tfoot>
-    </table>
-  </section>`
+  return `<section class="fiche">
+  <div class="fiche-company">
+    <p class="c-name">${escapeHtml(COMPANY_INFO.name)}</p>
+    <p class="c-addr">${escapeHtml(COMPANY_INFO.address)}</p>
+    <p class="c-legal">RC: ${escapeHtml(COMPANY_INFO.rc)} &nbsp;·&nbsp; NIF: ${escapeHtml(COMPANY_INFO.nif)} &nbsp;·&nbsp; ART: ${escapeHtml(COMPANY_INFO.art)}</p>
+  </div>
+
+  <p class="fiche-title">FICHE DE FABRICATION N° ${escapeHtml(noFiche)} — Date : ${escapeHtml(dateFR(fab.entry_date))}</p>
+
+  <p class="sec-label">PRODUIT FINI</p>
+  <table class="kv">
+    <colgroup><col style="width:32%"><col style="width:68%"></colgroup>
+    <tbody>
+      <tr><td class="k">Référence</td><td>${escapeHtml(fab.product_reference || '—')}</td></tr>
+      <tr><td class="k">Désignation</td><td>${escapeHtml(fab.product_designation || '—')}</td></tr>
+      <tr><td class="k">Quantité</td><td>${escapeHtml(nfQty(fab.quantite_produite))} unité(s)</td></tr>
+      <tr><td class="k">Destination</td><td>Stock produits finis</td></tr>
+    </tbody>
+  </table>
+
+  <p class="sec-label">MATIÈRES PREMIÈRES CONSOMMÉES</p>
+  <table class="mat">
+    <colgroup><col style="width:7%"><col style="width:43%"><col style="width:15%"><col style="width:17%"><col style="width:18%"></colgroup>
+    <thead>
+      <tr>
+        <th class="center">N°</th>
+        <th>Désignation</th>
+        <th class="right">Quantité</th>
+        <th class="right">Prix U. (DA)</th>
+        <th class="right">Total (DA)</th>
+      </tr>
+    </thead>
+    <tbody>${matRows}</tbody>
+    <tfoot>
+      <tr class="t-row">
+        <td colspan="4">TOTAL MATIÈRES</td>
+        <td class="right">${escapeHtml(nf2(totalCout))}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <p class="sec-label">RÉCAPITULATIF DES COÛTS</p>
+  <table class="kv">
+    <colgroup><col style="width:55%"><col style="width:45%"></colgroup>
+    <tbody>
+      <tr><td class="k">Coût total matières</td><td class="right">${escapeHtml(nf2(totalCout))} DA</td></tr>
+      <tr><td class="k">Quantité produite</td><td class="right">${escapeHtml(nfQty(fab.quantite_produite))} unité(s)</td></tr>
+      <tr><td class="k strong">Coût unitaire</td><td class="right strong">${escapeHtml(nf2(coutUnit))} DA</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fiche-foot">
+    <span>Saisi par : ${escapeHtml(fab.entered_by_user || '—')}</span>
+    <span>Le : ${escapeHtml(formatPrintedAt(new Date()))}</span>
+  </div>
+  <div class="fiche-sign">
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Responsable</span></div>
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Directeur</span></div>
+  </div>
+</section>`
 }
 
-export function printFabrications(fabrications, { title = 'SARL DPR AXXAM', subtitle = 'Fiches de Fabrication' } = {}) {
+export function printFabrications(fabrications) {
   const list = Array.isArray(fabrications) ? fabrications : []
   const sections = list.length
-    ? list.map((f, i) => fabricationSectionHtml(f, i + 1)).join('')
+    ? list.map((f, i) => ficheFabricationHtml(f, i + 1)).join('')
     : `<p class="empty">Aucune fabrication sélectionnée.</p>`
 
   const html = `<!DOCTYPE html>
@@ -342,49 +377,79 @@ export function printFabrications(fabrications, { title = 'SARL DPR AXXAM', subt
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(subtitle)}</title>
+<title>Fiches de fabrication</title>
 <style>
   * { box-sizing: border-box; }
   html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
-  body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 9pt; padding: 10px 14px; }
+  body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 10pt; }
 
-  @page { size: A4 portrait; margin: 1.5cm; }
+  @page { size: A4 portrait; margin: 2cm; }
 
-  .doc-header { text-align: center; margin: 0 0 4px; }
-  .doc-company { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
-  .doc-subtitle { font-size: 12pt; font-weight: bold; margin: 3px 0 0; }
-  .doc-meta-line { text-align: right; font-size: 9pt; color: #333333; margin-top: 6px; }
-  .doc-rule { border: none; border-top: 1.5px solid #000000; margin: 4px 0 12px; }
+  .fiche { page-break-after: always; }
+  .fiche:last-child { page-break-after: auto; }
 
-  .fab {
-    page-break-inside: avoid;
-    margin: 0 0 16px;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #000000;
+  .fiche-company { text-align: center; margin-bottom: 6px; }
+  .c-name { font-size: 14pt; font-weight: bold; margin: 0; letter-spacing: 0.3px; }
+  .c-addr { font-size: 10pt; margin: 2px 0 0; }
+  .c-legal { font-size: 9pt; margin: 2px 0 0; }
+
+  .fiche-title {
+    text-align: center;
+    font-size: 12pt;
+    font-weight: bold;
+    margin: 12px 0 14px;
+    padding: 5px 0;
+    border-top: 3px double #000000;
+    border-bottom: 3px double #000000;
   }
-  .fab:last-child { border-bottom: none; }
 
-  .fab-head {
+  .sec-label {
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 14px 0 4px;
+    padding-bottom: 2px;
     border-bottom: 1.5px solid #000000;
-    padding-bottom: 4px;
-    margin-bottom: 6px;
   }
-  .fab-head p { margin: 1px 0; font-size: 9pt; }
-  .fab-title { font-weight: bold; font-size: 11pt !important; }
 
-  .fab-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9pt; }
-  .fab-table th, .fab-table td {
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.kv, table.mat { border: 3px double #000000; }
+  th, td {
     border: 1px solid #000000;
-    padding: 4px 6px;
+    padding: 4px 7px;
+    font-size: 10pt;
     text-align: left;
     vertical-align: top;
     overflow-wrap: anywhere;
   }
-  .fab-table th { background: #e0e0e0; font-weight: bold; }
-  .fab-table .right { text-align: right; }
-  .fab-table tfoot td { font-weight: bold; background: #f0f0f0; }
-  .fab-table tr.ft-total td { border-top: 1.5px solid #000000; }
-  .fab-table td.empty { text-align: center; color: #555555; font-style: italic; }
+  th { background: #e8e8e8; font-weight: bold; }
+  .right { text-align: right; }
+  .center { text-align: center; }
+  .strong { font-weight: bold; }
+
+  table.kv td.k { background: #f2f2f2; font-weight: bold; }
+
+  table.mat tfoot td {
+    font-weight: bold;
+    background: #eeeeee;
+    border-top: 1.5px solid #000000;
+  }
+  table.mat td.empty { text-align: center; color: #555555; font-style: italic; }
+
+  .fiche-foot {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9pt;
+    margin-top: 18px;
+  }
+  .fiche-sign {
+    display: flex;
+    justify-content: space-between;
+    gap: 40px;
+    margin-top: 34px;
+  }
+  .sign-box { flex: 1; text-align: center; }
+  .sign-line { display: block; border-top: 1px solid #000000; margin: 0 12px; }
+  .sign-label { display: block; font-size: 9pt; margin-top: 3px; }
 
   p.empty { text-align: center; color: #555555; font-style: italic; padding: 24px 0; }
 
@@ -392,12 +457,6 @@ export function printFabrications(fabrications, { title = 'SARL DPR AXXAM', subt
 </style>
 </head>
 <body>
-  <div class="doc-header">
-    <p class="doc-company">${escapeHtml(title)}</p>
-    <p class="doc-subtitle">${escapeHtml(subtitle)}</p>
-  </div>
-  <div class="doc-meta-line">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</div>
-  <hr class="doc-rule">
   ${sections}
 </body>
 </html>`
