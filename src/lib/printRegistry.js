@@ -17,11 +17,6 @@ function escapeHtml(value) {
   ))
 }
 
-function formatPrintedAt(date) {
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} à ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
 // Formatage nombres fr-FR pour les documents d'impression.
 const nf2 = (v) => Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const nfQty = (v) => Number(v || 0).toLocaleString('fr-FR', { maximumFractionDigits: 3 })
@@ -118,7 +113,7 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(subtitle || title)}</title>
+<title>Document</title>
 <style>
   * { box-sizing: border-box; }
   html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
@@ -130,7 +125,10 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
 
   @page {
     size: A4 ${orientation};
-    margin: 1.5cm;
+    margin: 2cm;
+  }
+  @media print {
+    @page { margin: 2cm; }
   }
 
   ${COMPANY_HEADER_CSS}
@@ -202,10 +200,7 @@ function buildDocumentHtml({ title, subtitle, columns, rows, totalsRows, filters
 <body>
   ${companyHeaderHtml()}
   ${subtitle ? `<p class="doc-title">${escapeHtml(subtitle)}</p>` : title ? `<p class="doc-title">${escapeHtml(title)}</p>` : ''}
-  <div class="doc-meta-line">
-    <span class="left">${filters ? escapeHtml(filters) : ''}</span>
-    <span class="right">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</span>
-  </div>
+  ${filters ? `<div class="doc-meta-line"><span class="left">${escapeHtml(filters)}</span></div>` : ''}
   <hr class="doc-rule">
   <table>
     ${colgroupHtml}
@@ -321,7 +316,9 @@ function ficheFabricationHtml(fab, index) {
         .join('')
     : `<tr><td colspan="5" class="empty">Aucune matière première consommée.</td></tr>`
 
-  const noFiche = String(index).padStart(3, '0')
+  // Numéro incrémental basé sur la position dans la sélection imprimée
+  // (1re fiche -> 001, 2e -> 002, ...).
+  const noFiche = (index + 1).toString().padStart(3, '0')
 
   return `<section class="fiche">
   ${companyHeaderHtml()}
@@ -370,10 +367,6 @@ function ficheFabricationHtml(fab, index) {
     </tbody>
   </table>
 
-  <div class="fiche-foot">
-    <span>Saisi par : ${escapeHtml(fab.entered_by_user || '—')}</span>
-    <span>Le : ${escapeHtml(formatPrintedAt(new Date()))}</span>
-  </div>
   <div class="fiche-sign">
     <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Responsable</span></div>
     <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Directeur</span></div>
@@ -384,7 +377,7 @@ function ficheFabricationHtml(fab, index) {
 export function printFabrications(fabrications) {
   const list = Array.isArray(fabrications) ? fabrications : []
   const sections = list.length
-    ? list.map((f, i) => ficheFabricationHtml(f, i + 1)).join('')
+    ? list.map((f, i) => ficheFabricationHtml(f, i)).join('')
     : `<p class="empty">Aucune fabrication sélectionnée.</p>`
 
   const html = `<!DOCTYPE html>
@@ -392,13 +385,16 @@ export function printFabrications(fabrications) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fiches de fabrication</title>
+<title>Document</title>
 <style>
   * { box-sizing: border-box; }
   html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
   body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 10pt; }
 
   @page { size: A4 portrait; margin: 2cm; }
+  @media print {
+    @page { margin: 2cm; }
+  }
 
   .fiche { page-break-after: always; }
   .fiche:last-child { page-break-after: auto; }
@@ -447,17 +443,11 @@ export function printFabrications(fabrications) {
   }
   table.mat td.empty { text-align: center; color: #555555; font-style: italic; }
 
-  .fiche-foot {
-    display: flex;
-    justify-content: space-between;
-    font-size: 9pt;
-    margin-top: 18px;
-  }
   .fiche-sign {
     display: flex;
     justify-content: space-between;
     gap: 40px;
-    margin-top: 34px;
+    margin-top: 48px;
   }
   .sign-box { flex: 1; text-align: center; }
   .sign-line { display: block; border-top: 1px solid #000000; margin: 0 12px; }
@@ -519,17 +509,19 @@ export function printProductsConstitution(products) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Produits finis — constitution</title>
+<title>Document</title>
 <style>
   * { box-sizing: border-box; }
   html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
   body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 10pt; padding: 10px 14px; }
 
-  @page { size: A4 portrait; margin: 1.5cm; }
+  @page { size: A4 portrait; margin: 2cm; }
+  @media print {
+    @page { margin: 2cm; }
+  }
 
   ${COMPANY_HEADER_CSS}
   .doc-title { text-align: center; font-size: 12pt; font-weight: bold; margin: 0 0 4px; }
-  .doc-meta-line { text-align: right; font-size: 9pt; color: #333333; margin-top: 6px; }
   .doc-rule { border: none; border-top: 1.5px solid #000000; margin: 4px 0 12px; }
 
   .prod {
@@ -554,7 +546,6 @@ export function printProductsConstitution(products) {
 <body>
   ${companyHeaderHtml()}
   <p class="doc-title">Produits finis — Constitution</p>
-  <div class="doc-meta-line">Imprimé le ${escapeHtml(formatPrintedAt(new Date()))}</div>
   <hr class="doc-rule">
   ${blocks}
 </body>
