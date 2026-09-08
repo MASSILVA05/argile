@@ -1,19 +1,27 @@
 import { read, utils, SSF } from 'xlsx'
 
-// Lecture du fichier Excel de la station-service. On détecte les onglets par
-// leur nom (contient CARBURANT / LUBRIFIANT / GAZ) puis on repère la ligne
-// d'en-tête par mots-clés (elle n'est pas forcément la 1re ligne).
+// Lecture du fichier Excel de la station-service. Deux formats gérés :
 //
-//  - CARBURANT : Date, Client, Gasoil (Qté / P.U / Total), Essence (Qté /
-//    P.U / Total), Payé/Non payé -> jusqu'à 2 lignes par ligne source
-//  - LUBRIFIANT : Date, Client, Désignation, Qté, [Unité], P.U, Total, Payé
-//  - GAZ : Date, Client, Produit, Qté, P.U, Total, Consigne, Payé
+//  1. « ÉTAT DES VENTE » mensuel (le fichier réel "ETAT DES VENTE SARL
+//     STATION.xlsx") : un onglet par mois (Feuil1..Feuil7), en-tête
+//     DATTE / SANS PLOMB / GASOIL / GAZ BUTAN / TOTAL / sp1 / sp2 / gaz1 /
+//     gaz2 / gaz3. Une ligne = un jour, montants agrégés en DA (pas de
+//     client, pas de quantité, pas de prix unitaire). On génère des ventes
+//     "comptoir" : 1 ligne par jour et par produit, client VENTES COMPTOIR,
+//     quantité 1, prix unitaire = recette du jour (=> total_ht = recette),
+//     statut Payé. SANS PLOMB -> Essence, GASOIL -> Gasoil (carburant) ;
+//     GAZ BUTAN -> table gaz. L'onglet "SUIVIE VERSSEMENT" (trésorerie
+//     bancaire) et le bloc paie IRG (colonnes O..Q) sont ignorés.
 //
-// Le fichier "ETAT DES VENTE SARL STATION.xlsx" fourni comme test ne
-// contient PAS ces onglets (états mensuels par pompe) : l'import renverra
-// alors des listes vides et un message "aucun onglet reconnu".
+//  2. Format par client (onglets nommés CARBURANT / LUBRIFIANT / GAZ avec
+//     colonnes Date, Client, Qté, P.U, Total, Consigne, Payé…). Détection
+//     par mots-clés. Conservé pour un éventuel fichier à ce format.
 
 const MAX_HEADER_SCAN_ROWS = 15
+
+// Client fictif attribué aux ventes agrégées (recettes journalières sans
+// client nominatif) importées depuis l'état mensuel.
+export const COUNTER_CLIENT = 'VENTES COMPTOIR'
 
 function norm(value) {
   return String(value ?? '')
@@ -73,33 +81,113 @@ function sheetsByName(arrayBuffer) {
   }))
 }
 
-// Repère, pour chaque colonne, à quel champ elle correspond via `resolve`
-// (fonction (normalizedHeader, colIndex) => field | null). Renvoie la 1re
-// ligne (dans les 15 premières) qui contient au moins `required` champs.
+function findColumns(row, resolve) {
+  const columns = {}
+  row.forEach((cell, colIndex) => {
+    const field = resolve(norm(cell), colIndex)
+    if (field && columns[field] === undefined) columns[field] = colIndex
+  })
+  return columns
+}
+
 function findHeader(rows, resolve, required) {
   for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); i++) {
     if (isBlankRow(rows[i])) continue
-    const columns = {}
-    rows[i].forEach((cell, colIndex) => {
-      const field = resolve(norm(cell), colIndex)
-      if (field && columns[field] === undefined) columns[field] = colIndex
-    })
+    const columns = findColumns(rows[i], resolve)
     if (required.every((f) => columns[f] !== undefined)) return { index: i, columns }
   }
   return null
 }
 
 function dataRows(rows, index) {
-  return rows.slice(index + 1).filter((row) => !isBlankRow(row))
+  return rows.slice(index + 1)
 }
 
-// ---------- CARBURANT ----------
+// ============================================================
+// Format 1 : état des ventes mensuel (fichier réel)
+// ============================================================
+function resolveEtatVente(h) {
+  if (!h) return null
+  if (h === 'DATTE' || h === 'DATE') return 'date'
+  if (h === 'SANS PLOMB' || h === 'ESSENCE' || h === 'SP') return 'sans_plomb'
+  if (h === 'GASOIL' || h === 'GAS OIL' || h === 'DIESEL') return 'gasoil'
+  if (h === 'GAZ BUTAN' || h === 'GAZ BUTANE' || h === 'GAZ' || h === 'BUTANE') return 'gaz_butan'
+  if (h === 'TOTAL') return 'total'
+  return null
+}
+
+function parseEtatVente(rows) {
+  // En-tête = 1re ligne contenant SANS PLOMB + GASOIL (la colonne date
+  // s'appelle "DATTE " dans le fichier, parfois absente du 1er scan).
+  const header = findHeader(rows, resolveEtatVente, ['sans_plomb', 'gasoil'])
+  if (!header) return null
+  const { index, columns } = header
+  const dateCol = columns.date ?? 0
+  const get = (row, f) => (columns[f] === undefined ? null : row[columns[f]])
+
+  const carburant = []
+  const gaz = []
+
+  for (const row of dataRows(rows, index)) {
+    if (isBlankRow(row)) continue
+    const first = row[dateCol]
+    if (typeof first === 'string' && /^\s*TOTAL/i.test(first)) break
+    const date = parseDateCell(first)
+    if (!date) continue
+
+    const sp = toNumber(get(row, 'sans_plomb'))
+    const go = toNumber(get(row, 'gasoil'))
+    const gb = toNumber(get(row, 'gaz_butan'))
+
+    if (sp > 0) {
+      carburant.push({
+        entry_date: date,
+        client_name: COUNTER_CLIENT,
+        product: 'Essence',
+        quantity: 1,
+        unit_price: sp,
+        payment_status: 'Payé',
+        observations: "Recette journalière agrégée (import état des ventes SANS PLOMB)",
+      })
+    }
+    if (go > 0) {
+      carburant.push({
+        entry_date: date,
+        client_name: COUNTER_CLIENT,
+        product: 'Gasoil',
+        quantity: 1,
+        unit_price: go,
+        payment_status: 'Payé',
+        observations: "Recette journalière agrégée (import état des ventes GASOIL)",
+      })
+    }
+    if (gb > 0) {
+      gaz.push({
+        entry_date: date,
+        client_name: COUNTER_CLIENT,
+        product: 'GAZ BUTAN',
+        quantity: 1,
+        unit_price: gb,
+        consigne: 0,
+        payment_status: 'Payé',
+        observations: "Recette journalière agrégée (import état des ventes GAZ BUTAN)",
+      })
+    }
+  }
+
+  if (carburant.length === 0 && gaz.length === 0) return null
+  return { carburant, lubrifiants: [], gaz }
+}
+
+// ============================================================
+// Format 2 : par client (onglets CARBURANT / LUBRIFIANT / GAZ)
+// ============================================================
 function resolveCarburant(h) {
   if (!h) return null
   if (h === 'DATE' || h === 'DATTE') return 'date'
   if (h === 'CLIENT' || h.includes('NOM CLIENT')) return 'client'
   const isGasoil = h.includes('GASOIL') || h.includes('GAS OIL') || h.includes('DIESEL')
-  const isEssence = h.includes('ESSENCE') || h.includes('SANS PLOMB') || h.includes('SP')
+  const isEssence = h.includes('ESSENCE') || h.includes('SANS PLOMB') || h === 'SP'
   const kind = isGasoil ? 'gasoil' : isEssence ? 'essence' : null
   if (kind) {
     if (h.includes('QT') || h.includes('LITRE') || h.includes('VOL')) return `${kind}_qty`
@@ -117,6 +205,7 @@ function parseCarburant(rows) {
   const get = (row, f) => (columns[f] === undefined ? null : row[columns[f]])
   const out = []
   for (const row of dataRows(rows, index)) {
+    if (isBlankRow(row)) continue
     const date = parseDateCell(get(row, 'date'))
     const client = String(get(row, 'client') ?? '').trim()
     if (!client || /^TOTAL\b/i.test(client)) continue
@@ -140,7 +229,6 @@ function parseCarburant(rows) {
   return out
 }
 
-// ---------- LUBRIFIANT ----------
 function resolveLub(h) {
   if (!h) return null
   if (h === 'DATE' || h === 'DATTE') return 'date'
@@ -161,6 +249,7 @@ function parseLubrifiant(rows) {
   const get = (row, f) => (columns[f] === undefined ? null : row[columns[f]])
   const out = []
   for (const row of dataRows(rows, index)) {
+    if (isBlankRow(row)) continue
     const client = String(get(row, 'client') ?? '').trim()
     const product = String(get(row, 'product') ?? '').trim()
     if (!client || !product || /^TOTAL\b/i.test(client)) continue
@@ -182,7 +271,6 @@ function parseLubrifiant(rows) {
   return out
 }
 
-// ---------- GAZ ----------
 function resolveGaz(h) {
   if (!h) return null
   if (h === 'DATE' || h === 'DATTE') return 'date'
@@ -203,6 +291,7 @@ function parseGaz(rows) {
   const get = (row, f) => (columns[f] === undefined ? null : row[columns[f]])
   const out = []
   for (const row of dataRows(rows, index)) {
+    if (isBlankRow(row)) continue
     const client = String(get(row, 'client') ?? '').trim()
     const product = String(get(row, 'product') ?? '').trim()
     if (!client || !product || /^TOTAL\b/i.test(client)) continue
@@ -227,11 +316,26 @@ function parseGaz(rows) {
 export function parseStationFile(arrayBuffer) {
   const sheets = sheetsByName(arrayBuffer)
   const result = { carburant: [], lubrifiants: [], gaz: [] }
+
   for (const { name, rows } of sheets) {
     const n = norm(name)
+
+    // Onglet trésorerie bancaire : sans objet pour la station.
+    if (n.includes('VERSSEMENT') || n.includes('VERSEMENT')) continue
+
+    // Format 1 : état des ventes mensuel (SANS PLOMB / GASOIL / GAZ BUTAN).
+    const etat = parseEtatVente(rows)
+    if (etat) {
+      result.carburant.push(...etat.carburant)
+      result.gaz.push(...etat.gaz)
+      continue
+    }
+
+    // Format 2 : onglets par client.
     if (n.includes('CARBURANT')) result.carburant.push(...parseCarburant(rows))
     else if (n.includes('LUBRIFIANT') || n.includes('HUILE')) result.lubrifiants.push(...parseLubrifiant(rows))
     else if (n.includes('GAZ') || n.includes('GAS BUTAN')) result.gaz.push(...parseGaz(rows))
   }
+
   return result
 }

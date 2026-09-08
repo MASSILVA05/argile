@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { getSession } from '../lib/auth'
 import { formatDA, formatQty } from '../lib/station'
-import { parseStationFile } from '../lib/stationImportParser'
+import { parseStationFile, COUNTER_CLIENT } from '../lib/stationImportParser'
 
 const CHUNK = 300
 
@@ -32,6 +32,7 @@ const SECTIONS = [
       quantity: Number(r.quantity) || 0,
       unit_price: Number(r.unit_price) || 0,
       payment_status: r.payment_status || 'Non payé',
+      observations: r.observations || undefined,
       entered_by_user: user,
     }),
   },
@@ -56,6 +57,7 @@ const SECTIONS = [
       unit: r.unit || 'L',
       unit_price: Number(r.unit_price) || 0,
       payment_status: r.payment_status || 'Non payé',
+      observations: r.observations || undefined,
       entered_by_user: user,
     }),
   },
@@ -80,6 +82,7 @@ const SECTIONS = [
       unit_price: Number(r.unit_price) || 0,
       consigne: Number(r.consigne) || 0,
       payment_status: r.payment_status || 'Non payé',
+      observations: r.observations || undefined,
       entered_by_user: user,
     }),
   },
@@ -110,7 +113,7 @@ export default function StationImport() {
       setBuckets(next)
       if (!anyRows) {
         setParseError(
-          "Aucun onglet reconnu (CARBURANT / LUBRIFIANT / GAZ) avec des lignes exploitables. Le fichier « ETAT DES VENTE SARL STATION.xlsx » (états mensuels par pompe) n'est pas dans ce format."
+          "Aucun onglet exploitable. Formats acceptés : (1) état des ventes mensuel (onglets avec en-tête DATTE / SANS PLOMB / GASOIL / GAZ BUTAN) ; (2) onglets par client nommés CARBURANT / LUBRIFIANT / GAZ."
         )
       }
     } catch (err) {
@@ -160,8 +163,21 @@ export default function StationImport() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <p className="text-xs text-ink-muted">
-          Importe un classeur Excel avec des onglets nommés <strong>CARBURANT</strong>, <strong>LUBRIFIANT</strong> et/ou{' '}
-          <strong>GAZ</strong>. Les colonnes sont détectées par mots-clés (Date, Client, Qté, P.U, Total, Consigne, Payé…).
+          Deux formats reconnus automatiquement :
+        </p>
+        <ul className="ml-4 list-disc text-xs text-ink-muted">
+          <li>
+            <strong>État des ventes mensuel</strong> (fichier « ETAT DES VENTE SARL STATION ») : un onglet par mois,
+            en-tête <em>DATTE / SANS PLOMB / GASOIL / GAZ BUTAN / TOTAL</em>. Chaque jour devient une vente comptoir
+            (client <strong>{COUNTER_CLIENT}</strong>, quantité 1, prix unitaire = recette du jour). SANS PLOMB → Essence,
+            GASOIL → Gasoil, GAZ BUTAN → onglet Gaz. L'onglet trésorerie (versements) est ignoré.
+          </li>
+          <li>
+            <strong>Onglets par client</strong> nommés CARBURANT / LUBRIFIANT / GAZ (colonnes Date, Client, Qté, P.U,
+            Total, Consigne, Payé… détectées par mots-clés).
+          </li>
+        </ul>
+        <p className="text-xs text-ink-muted">
           Les lignes sont <strong>ajoutées</strong> (pas de dédoublonnage) : n'importez qu'une seule fois.
         </p>
         <label className="inline-flex min-h-11 w-fit cursor-pointer items-center rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10">
