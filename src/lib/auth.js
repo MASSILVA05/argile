@@ -126,13 +126,15 @@ export function clearSession() {
 // maintenance_only (Karim, Sofiane, Abderhmane) : Maintenance (saisie +
 //                    registre) + Production (saisie + registre + tableau de
 //                    bord), export Excel autorisé, accès 24h, pas de code admin
-// tva_only (AVADOU, Tahar) : TVA récupération + TVA à payer + Prodnet
-//                    (coût de revient produits finis), aucune autre page,
-//                    export Excel autorisé, pas de code admin. AVADOU est
-//                    cloisonné sur l'entité 'AVADOU', Tahar choisit librement
-//                    (Briqueterie/AVADOU) -- voir TVAPage.jsx / TVAPayerPage.jsx.
-//                    NB : ce rôle étant partagé, Tahar a lui aussi accès à
-//                    Prodnet ; créer un rôle distinct si seul AVADOU doit l'avoir.
+// tva_only (Tahar) : uniquement TVA récupération + TVA à payer, aucune autre
+//                    page, export Excel autorisé, pas de code admin. Tahar
+//                    choisit librement l'entité (Briqueterie/AVADOU) --
+//                    voir TVAPage.jsx / TVAPayerPage.jsx.
+// tva_prodnet (AVADOU) : identique à tva_only (TVA récup + TVA à payer, mêmes
+//                    restrictions export / pas de code admin) + accès à la page
+//                    Prodnet (coût de revient produits finis). AVADOU est
+//                    cloisonné sur l'entité 'AVADOU'. Rôle distinct de tva_only
+//                    pour que Tahar n'ait PAS Prodnet.
 // youcef_role (Youcef) : uniquement Carburant + Sable + Factures, export
 //                    Excel autorisé, modification/suppression dans les 72h,
 //                    pas de code admin. Dans Factures, limité aux sous-onglets
@@ -152,14 +154,15 @@ export function clearSession() {
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
 // La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
 // youcef_role -> concrètement Youcef, Halim, Bureau et les admins (Massilva,
-// Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, AVADOU + Tahar/
-// tva_only) n'y ont pas accès.
+// Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, Tahar/tva_only,
+// AVADOU/tva_prodnet) n'y ont pas accès.
 export const ROLE_TABS = {
   admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence'],
   editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
-  tva_only: ['tva', 'tva-payer', 'prodnet'],
+  tva_only: ['tva', 'tva-payer'],
+  tva_prodnet: ['tva', 'tva-payer', 'prodnet'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
   magasin_only: ['magasin', 'residence'],
 }
@@ -179,6 +182,7 @@ export function useAuth() {
     isViewer: role === 'viewer',
     isMaintenanceOnly: role === 'maintenance_only',
     isTvaOnly: role === 'tva_only',
+    isTvaProdnet: role === 'tva_prodnet',
     isYoucefRole: role === 'youcef_role',
     isMagasinOnly: role === 'magasin_only',
     // Entité TVA fixe de l'utilisateur (Halim -> 'Briqueterie', AVADOU ->

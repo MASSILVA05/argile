@@ -5173,3 +5173,15 @@ select setval(
 
 create unique index if not exists prodnet_fabrications_fab_number_idx
   on prodnet_fabrications (fab_number);
+
+
+-- ============================================================
+-- 2026-09-08 (2) : rôle distinct 'tva_prodnet' pour AVADOU
+-- AVADOU passe de 'tva_only' à 'tva_prodnet' -> mêmes accès TVA (récupération
+-- + à payer, mêmes restrictions export / pas de code admin) PLUS la page
+-- Prodnet. Tahar reste en 'tva_only' (donc SANS Prodnet).
+-- request_login_code renvoie v_user.role tel quel : aucune modif de fonction.
+-- Le cloisonnement d'entité d'AVADOU ('AVADOU') est basé sur le username, pas
+-- sur le rôle -> inchangé. Voir ROLE_TABS dans src/lib/auth.js.
+-- ============================================================
+update app_users set role = 'tva_prodnet' where username = 'AVADOU';
