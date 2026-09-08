@@ -14,6 +14,9 @@ import MatieresPicker from './MatieresPicker'
 
 const fmtTime = (v) => (v ? v.slice(0, 5) : '—')
 
+// N° de fabrication permanent (fab_number en base), formaté sur 3 chiffres.
+const fmtFabNo = (n) => (n != null ? String(n).padStart(3, '0') : '—')
+
 // 'YYYY-MM-DD' -> 'DD/MM/YY' (compact pour la liste de sélection)
 function dateCourt(iso) {
   const [y, m, d] = String(iso ?? '').split('-')
@@ -95,6 +98,7 @@ export default function ProdnetFabricationRegistry() {
       title: 'SARL DPR AXXAM',
       subtitle: 'Fiches de Fabrication',
       columns: [
+        { key: 'fab_no', label: 'N°' },
         { key: 'date_court', label: 'Date' },
         { key: 'product_reference', label: 'Réf.' },
         { key: 'product_designation', label: 'Produit fini' },
@@ -102,7 +106,7 @@ export default function ProdnetFabricationRegistry() {
         { key: 'matieres', label: 'Nb matières', align: 'right', format: (v) => (Array.isArray(v) ? v.length : 0) },
         { key: 'cout_total', label: 'Coût total (DA)', align: 'right', format: (v) => formatDA(v) },
       ],
-      rows: filtered.map((f) => ({ ...f, date_court: dateCourt(f.entry_date) })),
+      rows: filtered.map((f) => ({ ...f, fab_no: fmtFabNo(f.fab_number), date_court: dateCourt(f.entry_date) })),
       onPrint: (fabs) => printFabrications(fabs),
     }
   }
@@ -235,9 +239,10 @@ export default function ProdnetFabricationRegistry() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1000px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1080px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                  <Th>N°</Th>
                   <Th>Date</Th>
                   <Th>Heure</Th>
                   <Th>Saisie le</Th>
@@ -297,6 +302,7 @@ function FabRow({ fab, expanded, onToggle, onEdit, onDelete, onLockedAttempt }) 
   return (
     <>
       <tr className="border-b border-border last:border-0">
+        <Td className="font-medium text-ink">{fmtFabNo(fab.fab_number)}</Td>
         <Td>{fab.entry_date}</Td>
         <Td>{fmtTime(fab.entry_time)}</Td>
         <Td>{formatDateTime(fab.created_at)}</Td>
@@ -318,7 +324,7 @@ function FabRow({ fab, expanded, onToggle, onEdit, onDelete, onLockedAttempt }) 
       </tr>
       {expanded && (
         <tr className="border-b border-border bg-bg-soft last:border-0">
-          <td colSpan={10} className="px-3 py-3">
+          <td colSpan={11} className="px-3 py-3">
             <p className="mb-2 font-display text-ink">Matières premières consommées</p>
             <table className="w-full border-collapse text-[11px] sm:text-sm">
               <thead>

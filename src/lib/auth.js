@@ -126,11 +126,13 @@ export function clearSession() {
 // maintenance_only (Karim, Sofiane, Abderhmane) : Maintenance (saisie +
 //                    registre) + Production (saisie + registre + tableau de
 //                    bord), export Excel autorisé, accès 24h, pas de code admin
-// tva_only (AVADOU, Tahar) : uniquement TVA récupération + TVA à payer,
-//                    aucune autre page, export Excel autorisé, pas de code
-//                    admin. AVADOU est cloisonné sur l'entité 'AVADOU',
-//                    Tahar choisit librement (Briqueterie/AVADOU) --
-//                    voir TVAPage.jsx / TVAPayerPage.jsx.
+// tva_only (AVADOU, Tahar) : TVA récupération + TVA à payer + Prodnet
+//                    (coût de revient produits finis), aucune autre page,
+//                    export Excel autorisé, pas de code admin. AVADOU est
+//                    cloisonné sur l'entité 'AVADOU', Tahar choisit librement
+//                    (Briqueterie/AVADOU) -- voir TVAPage.jsx / TVAPayerPage.jsx.
+//                    NB : ce rôle étant partagé, Tahar a lui aussi accès à
+//                    Prodnet ; créer un rôle distinct si seul AVADOU doit l'avoir.
 // youcef_role (Youcef) : uniquement Carburant + Sable + Factures, export
 //                    Excel autorisé, modification/suppression dans les 72h,
 //                    pas de code admin. Dans Factures, limité aux sous-onglets
@@ -157,7 +159,7 @@ export const ROLE_TABS = {
   editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
-  tva_only: ['tva', 'tva-payer'],
+  tva_only: ['tva', 'tva-payer', 'prodnet'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
   magasin_only: ['magasin', 'residence'],
 }

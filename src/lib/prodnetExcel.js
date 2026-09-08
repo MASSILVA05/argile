@@ -94,6 +94,7 @@ export async function downloadProdnetMatieresExcel(rows, { filename } = {}) {
 }
 
 const FAB_COLUMNS = [
+  { header: 'N°', key: 'fab_no', width: 8 },
   { header: 'Date', key: 'entry_date', width: 12 },
   { header: 'Heure', key: 'entry_time', width: 9 },
   { header: 'Saisie le', key: 'created_at', width: 17 },
@@ -117,6 +118,7 @@ export async function downloadProdnetFabricationsExcel(rows, { filename } = {}) 
 
   for (const r of rows) {
     const row = sheet.addRow({
+      fab_no: r.fab_number != null ? String(r.fab_number).padStart(3, '0') : '',
       entry_date: r.entry_date,
       entry_time: r.entry_time ? r.entry_time.slice(0, 5) : '',
       created_at: formatDateTime(r.created_at),

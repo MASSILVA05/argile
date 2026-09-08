@@ -316,9 +316,10 @@ function ficheFabricationHtml(fab, index) {
         .join('')
     : `<tr><td colspan="5" class="empty">Aucune matière première consommée.</td></tr>`
 
-  // Numéro incrémental basé sur la position dans la sélection imprimée
-  // (1re fiche -> 001, 2e -> 002, ...).
-  const noFiche = (index + 1).toString().padStart(3, '0')
+  // Numéro permanent de la fabrication (fab_number, figé en base par ordre de
+  // création). Repli sur la position dans la sélection si absent.
+  const rawNo = fab.fab_number != null ? fab.fab_number : index + 1
+  const noFiche = rawNo.toString().padStart(3, '0')
 
   return `<section class="fiche">
   ${companyHeaderHtml()}

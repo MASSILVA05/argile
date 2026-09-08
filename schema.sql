@@ -5142,3 +5142,34 @@ grant execute on function admin_delete_residence_reservation(uuid, text) to anon
 grant execute on function admin_update_residence_caisse(uuid, text, jsonb) to anon, authenticated;
 grant execute on function admin_delete_residence_caisse(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_residence_client(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- PRODNET (2026-09-08) : numéro de fabrication permanent
+-- Chaque fabrication reçoit un N° incrémental figé (fab_number), basé sur
+-- l'ordre chronologique de création : 1re fabrication = 001, 2e = 002, ...
+-- Affiché dans le registre et sur les fiches imprimées (printFabrications).
+-- ============================================================
+
+alter table prodnet_fabrications add column if not exists fab_number serial;
+
+-- Renumérote les fabrications existantes par ordre de created_at (le backfill
+-- de `serial` suit l'ordre physique des lignes, pas forcément chronologique).
+with numbered as (
+  select id, row_number() over (order by created_at, id) as rn
+  from prodnet_fabrications
+)
+update prodnet_fabrications f
+  set fab_number = n.rn
+  from numbered n
+  where f.id = n.id;
+
+-- Réaligne la séquence sur le max courant pour éviter toute collision au
+-- prochain insert.
+select setval(
+  pg_get_serial_sequence('prodnet_fabrications', 'fab_number'),
+  coalesce((select max(fab_number) from prodnet_fabrications), 1)
+);
+
+create unique index if not exists prodnet_fabrications_fab_number_idx
+  on prodnet_fabrications (fab_number);
