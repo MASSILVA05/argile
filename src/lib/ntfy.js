@@ -16,6 +16,7 @@ const TOPIC_CAISSE = import.meta.env.VITE_NTFY_TOPIC_CAISSE || NTFY_TOPIC
 const TOPIC_MAGASIN = import.meta.env.VITE_NTFY_TOPIC_MAGASIN || NTFY_TOPIC
 const TOPIC_PRODUCTION = import.meta.env.VITE_NTFY_TOPIC_PRODUCTION || NTFY_TOPIC
 const TOPIC_RESIDENCE = import.meta.env.VITE_NTFY_TOPIC_RESIDENCE || NTFY_TOPIC
+const TOPIC_STATION = import.meta.env.VITE_NTFY_TOPIC_STATION || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -390,6 +391,60 @@ export function notifyResidenceCaisseEntry(entry) {
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy(TOPIC_RESIDENCE, `Résidence — Caisse : ${entry.operation_type}`, lines, 'moneybag')
+}
+
+// --- Station-service (carburant / lubrifiants / gaz) ------------------------
+
+function stationPaymentLines(entry, lines) {
+  lines.push(`Paiement : ${entry.payment_status ?? 'Non payé'}${entry.payment_mode ? ` (${entry.payment_mode})` : ''}`)
+  if (entry.payment_mode === 'Chèque' && entry.cheque_number) {
+    lines.push(`Chèque n° ${entry.cheque_number}${entry.cheque_bank ? ` — ${entry.cheque_bank}` : ''}`)
+  }
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+}
+
+export function notifyStationCarburant(entry) {
+  const lines = [
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Client : ${entry.client_name}`,
+    `Produit : ${entry.product}`,
+    `Quantité : ${entry.quantity} L`,
+    `Prix U. : ${formatDA(entry.unit_price)} DA/L`,
+    `Total HT : ${formatDA(entry.total_ht)} DA`,
+  ]
+  stationPaymentLines(entry, lines)
+  return sendNtfy(TOPIC_STATION, 'Station — Vente carburant', lines, 'fuelpump')
+}
+
+export function notifyStationLubrifiant(entry) {
+  const lines = [
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Client : ${entry.client_name}`,
+    `Produit : ${entry.product}`,
+    `Quantité : ${entry.quantity} ${entry.unit ?? ''}`.trim(),
+    `Prix U. : ${formatDA(entry.unit_price)} DA`,
+    `Total HT : ${formatDA(entry.total_ht)} DA`,
+  ]
+  stationPaymentLines(entry, lines)
+  return sendNtfy(TOPIC_STATION, 'Station — Vente lubrifiant', lines, 'oil_drum')
+}
+
+export function notifyStationGaz(entry) {
+  const lines = [
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Client : ${entry.client_name}`,
+    `Produit : ${entry.product}`,
+    `Quantité : ${entry.quantity} bouteille(s)`,
+    `Prix U. : ${formatDA(entry.unit_price)} DA`,
+    `Total HT : ${formatDA(entry.total_ht)} DA`,
+  ]
+  if (Number(entry.consigne)) {
+    lines.push(`Consigne : ${formatDA(entry.consigne)} DA`)
+    lines.push(`Total + consigne : ${formatDA(entry.total_with_consigne)} DA`)
+  }
+  stationPaymentLines(entry, lines)
+  return sendNtfy(TOPIC_STATION, 'Station — Vente gaz', lines, 'fire')
 }
 
 export function notifyClientAdvance(advance) {

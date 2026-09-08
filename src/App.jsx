@@ -12,6 +12,7 @@ import TVAPayerPage from './components/TVAPayerPage'
 import CaissePage from './components/CaissePage'
 import MagasinPage from './components/MagasinPage'
 import ResidencePage from './components/ResidencePage'
+import StationPage from './components/StationPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
@@ -33,6 +34,7 @@ const TITLES = {
   caisse: 'Caisse',
   magasin: 'Magasin Bejaia',
   residence: 'Résidence',
+  station: 'Station',
 }
 
 const SESSION_CHECK_MS = 60_000
@@ -131,6 +133,7 @@ function App() {
         {tab === 'caisse' && <CaissePage />}
         {tab === 'magasin' && <MagasinPage />}
         {tab === 'residence' && <ResidencePage />}
+        {tab === 'station' && <StationPage />}
       </main>
 
       <BottomNav active={tab} onChange={setTab} allowedTabs={allowedTabs} />

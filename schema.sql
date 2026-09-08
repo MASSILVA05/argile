@@ -5185,3 +5185,524 @@ create unique index if not exists prodnet_fabrications_fab_number_idx
 -- sur le rôle -> inchangé. Voir ROLE_TABS dans src/lib/auth.js.
 -- ============================================================
 update app_users set role = 'tva_prodnet' where username = 'AVADOU';
+
+
+-- ============================================================
+-- MODULE STATION (2026-09-08) : gestion d'une station-service
+-- Onglet "Station". Accès : rôle 'admin' uniquement (Ahcene, Massilva,
+-- Mazigh). Voir ROLE_TABS dans src/lib/auth.js -- aucun nouvel utilisateur.
+--
+-- Sous-onglets : Carburant / Lubrifiants / Gaz / Récapitulatif / Import.
+--
+-- 4 tables :
+--   station_carburant   : ventes de carburant (Gasoil / Essence), au litre
+--   station_lubrifiants : ventes d'huiles / lubrifiants (unité libre)
+--   station_gaz          : ventes de bouteilles de gaz (B13 / B06 / B03…) +
+--                          consigne
+--   station_clients      : fiches clients — cumuls par famille de produit,
+--                          total payé et solde (reste à payer), maintenus
+--                          automatiquement par triggers sur les 3 tables de
+--                          vente.
+--
+-- Colonnes calculées en base (GENERATED STORED) :
+--   *.total_ht                = quantity * unit_price
+--   station_gaz.total_with_consigne = quantity * unit_price + consigne
+--
+-- Le cumul client station_clients.total_gaz / total_paye / balance repose
+-- sur total_ht (produit seul) ; la consigne reste tracée sur chaque ligne
+-- de station_gaz mais n'entre pas dans le solde client (dépôt remboursable).
+--
+-- Verrou 72h sur update/delete des 3 tables de vente (comme magasin_ventes),
+-- débloqué par le code admin via admin_update_station_* / admin_delete_station_*.
+--
+-- Notifications ntfy : topic VITE_NTFY_TOPIC_STATION (Argile_Station).
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- 'station' : ajouté à ROLE_TABS.admin (src/lib/auth.js). Aucun compte
+-- dédié -- seuls Ahcene / Massilva / Mazigh (rôle 'admin') y ont accès.
+-- ------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- station_clients : fiches clients (cumuls maintenus par triggers)
+-- ------------------------------------------------------------
+create table if not exists station_clients (
+  id uuid primary key default gen_random_uuid(),
+  name text unique not null,
+  total_carburant numeric(14, 2) default 0,
+  total_lubrifiants numeric(14, 2) default 0,
+  total_gaz numeric(14, 2) default 0,
+  total_paye numeric(14, 2) default 0,
+  balance numeric(14, 2) default 0,
+  created_at timestamptz not null default now()
+);
+
+comment on table station_clients is 'Clients de la station — cumuls par famille de produit + total payé + solde (reste à payer). Maj automatique par station_client_sync sur station_carburant / station_lubrifiants / station_gaz.';
+comment on column station_clients.balance is 'Reste à payer : somme des ventes non payées (total_ht) sur les 3 tables. Positif = le client nous doit.';
+
+-- Noms toujours normalisés en MAJUSCULES (comme magasin_clients / clients).
+create or replace function station_clients_normalize_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.name := upper(trim(new.name));
+  return new;
+end;
+$$;
+
+drop trigger if exists station_clients_normalize_name_trg on station_clients;
+create trigger station_clients_normalize_name_trg
+  before insert or update on station_clients
+  for each row execute function station_clients_normalize_name();
+
+alter table station_clients enable row level security;
+
+create policy "Lecture publique station_clients" on station_clients for select using (true);
+create policy "Ajout station_clients" on station_clients for insert with check (true);
+create policy "Modification station_clients" on station_clients for update using (true) with check (true);
+create policy "Suppression station_clients" on station_clients for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table station_clients;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- Normalisation du nom de client sur les 3 tables de vente : MAJUSCULES,
+-- obligatoire. Trigger BEFORE partagé.
+-- ------------------------------------------------------------
+create or replace function station_normalize_client()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.client_name := upper(trim(coalesce(new.client_name, '')));
+  if new.client_name = '' then
+    raise exception 'Le nom du client est obligatoire';
+  end if;
+  return new;
+end;
+$$;
+
+-- ------------------------------------------------------------
+-- station_carburant
+-- ------------------------------------------------------------
+create table if not exists station_carburant (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  client_name text not null,
+  product text not null check (product in ('Gasoil', 'Essence')),
+  quantity numeric(10, 2) not null,
+  unit_price numeric(10, 2) not null,
+  total_ht numeric(12, 2) generated always as (quantity * unit_price) stored,
+  payment_status text default 'Non payé' check (payment_status in ('Payé', 'Non payé')),
+  payment_mode text check (payment_mode is null or payment_mode in ('Espèces', 'Chèque', 'Virement', 'Versement')),
+  cheque_number text,
+  cheque_bank text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table station_carburant is 'Ventes de carburant de la station (Gasoil / Essence), quantité en litres. total_ht calculé.';
+
+create index if not exists station_carburant_created_at_idx on station_carburant (created_at desc);
+create index if not exists station_carburant_entry_date_idx on station_carburant (entry_date desc);
+create index if not exists station_carburant_client_idx on station_carburant (client_name);
+create index if not exists station_carburant_product_idx on station_carburant (product);
+create index if not exists station_carburant_payment_idx on station_carburant (payment_status);
+
+drop trigger if exists station_carburant_normalize_client_trg on station_carburant;
+create trigger station_carburant_normalize_client_trg
+  before insert or update on station_carburant
+  for each row execute function station_normalize_client();
+
+alter table station_carburant enable row level security;
+
+create policy "Lecture publique station_carburant" on station_carburant for select using (true);
+create policy "Ajout station_carburant" on station_carburant for insert with check (true);
+create policy "Modification station_carburant" on station_carburant for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression station_carburant" on station_carburant for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table station_carburant;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- station_lubrifiants
+-- ------------------------------------------------------------
+create table if not exists station_lubrifiants (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  client_name text not null,
+  product text not null,
+  quantity numeric(10, 2) not null,
+  unit text default 'L',
+  unit_price numeric(10, 2) not null,
+  total_ht numeric(12, 2) generated always as (quantity * unit_price) stored,
+  payment_status text default 'Non payé' check (payment_status in ('Payé', 'Non payé')),
+  payment_mode text check (payment_mode is null or payment_mode in ('Espèces', 'Chèque', 'Virement', 'Versement')),
+  cheque_number text,
+  cheque_bank text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table station_lubrifiants is 'Ventes de lubrifiants / huiles de la station (désignation et unité libres : L, KG, Bidon, Fût).';
+
+create index if not exists station_lubrifiants_created_at_idx on station_lubrifiants (created_at desc);
+create index if not exists station_lubrifiants_entry_date_idx on station_lubrifiants (entry_date desc);
+create index if not exists station_lubrifiants_client_idx on station_lubrifiants (client_name);
+create index if not exists station_lubrifiants_product_idx on station_lubrifiants (lower(product));
+create index if not exists station_lubrifiants_payment_idx on station_lubrifiants (payment_status);
+
+drop trigger if exists station_lubrifiants_normalize_client_trg on station_lubrifiants;
+create trigger station_lubrifiants_normalize_client_trg
+  before insert or update on station_lubrifiants
+  for each row execute function station_normalize_client();
+
+alter table station_lubrifiants enable row level security;
+
+create policy "Lecture publique station_lubrifiants" on station_lubrifiants for select using (true);
+create policy "Ajout station_lubrifiants" on station_lubrifiants for insert with check (true);
+create policy "Modification station_lubrifiants" on station_lubrifiants for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression station_lubrifiants" on station_lubrifiants for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table station_lubrifiants;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- station_gaz
+-- ------------------------------------------------------------
+create table if not exists station_gaz (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  client_name text not null,
+  product text not null,
+  quantity integer not null,
+  unit_price numeric(10, 2) not null,
+  total_ht numeric(12, 2) generated always as (quantity * unit_price) stored,
+  consigne numeric(10, 2) default 0,
+  total_with_consigne numeric(12, 2) generated always as (quantity * unit_price + coalesce(consigne, 0)) stored,
+  payment_status text default 'Non payé' check (payment_status in ('Payé', 'Non payé')),
+  payment_mode text check (payment_mode is null or payment_mode in ('Espèces', 'Chèque', 'Virement', 'Versement')),
+  cheque_number text,
+  cheque_bank text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table station_gaz is 'Ventes de bouteilles de gaz de la station (B13 / B06 / B03…), quantité entière. total_with_consigne = produit + consigne (dépôt).';
+
+create index if not exists station_gaz_created_at_idx on station_gaz (created_at desc);
+create index if not exists station_gaz_entry_date_idx on station_gaz (entry_date desc);
+create index if not exists station_gaz_client_idx on station_gaz (client_name);
+create index if not exists station_gaz_product_idx on station_gaz (product);
+create index if not exists station_gaz_payment_idx on station_gaz (payment_status);
+
+drop trigger if exists station_gaz_normalize_client_trg on station_gaz;
+create trigger station_gaz_normalize_client_trg
+  before insert or update on station_gaz
+  for each row execute function station_normalize_client();
+
+alter table station_gaz enable row level security;
+
+create policy "Lecture publique station_gaz" on station_gaz for select using (true);
+create policy "Ajout station_gaz" on station_gaz for insert with check (true);
+create policy "Modification station_gaz" on station_gaz for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression station_gaz" on station_gaz for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table station_gaz;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- station_recalc_client / station_client_sync : recalcul des cumuls d'une
+-- fiche client à partir des 3 tables de vente. Le client est créé s'il
+-- n'existe pas encore (nom en MAJUSCULES).
+-- ------------------------------------------------------------
+create or replace function station_recalc_client(p_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_name text := nullif(upper(trim(coalesce(p_name, ''))), '');
+begin
+  if v_name is null then return; end if;
+
+  insert into station_clients (name) values (v_name) on conflict (name) do nothing;
+
+  update station_clients set
+    total_carburant   = coalesce((select sum(total_ht) from station_carburant   where client_name = v_name), 0),
+    total_lubrifiants = coalesce((select sum(total_ht) from station_lubrifiants where client_name = v_name), 0),
+    total_gaz         = coalesce((select sum(total_ht) from station_gaz          where client_name = v_name), 0),
+    total_paye =
+        coalesce((select sum(total_ht) from station_carburant   where client_name = v_name and payment_status = 'Payé'), 0)
+      + coalesce((select sum(total_ht) from station_lubrifiants where client_name = v_name and payment_status = 'Payé'), 0)
+      + coalesce((select sum(total_ht) from station_gaz          where client_name = v_name and payment_status = 'Payé'), 0),
+    balance =
+        coalesce((select sum(total_ht) from station_carburant   where client_name = v_name and payment_status = 'Non payé'), 0)
+      + coalesce((select sum(total_ht) from station_lubrifiants where client_name = v_name and payment_status = 'Non payé'), 0)
+      + coalesce((select sum(total_ht) from station_gaz          where client_name = v_name and payment_status = 'Non payé'), 0)
+  where name = v_name;
+end;
+$$;
+
+create or replace function station_client_sync()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    perform station_recalc_client(old.client_name);
+    return old;
+  end if;
+  perform station_recalc_client(new.client_name);
+  if tg_op = 'UPDATE' and new.client_name is distinct from old.client_name then
+    perform station_recalc_client(old.client_name);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists station_carburant_client_sync_trg on station_carburant;
+create trigger station_carburant_client_sync_trg
+  after insert or update or delete on station_carburant
+  for each row execute function station_client_sync();
+
+drop trigger if exists station_lubrifiants_client_sync_trg on station_lubrifiants;
+create trigger station_lubrifiants_client_sync_trg
+  after insert or update or delete on station_lubrifiants
+  for each row execute function station_client_sync();
+
+drop trigger if exists station_gaz_client_sync_trg on station_gaz;
+create trigger station_gaz_client_sync_trg
+  after insert or update or delete on station_gaz
+  for each row execute function station_client_sync();
+
+-- ------------------------------------------------------------
+-- Code admin : édition / suppression après le verrou de 72h (même principe
+-- que admin_update_residence_*). Les colonnes GENERATED ne sont pas
+-- modifiables (recalculées automatiquement). Le nom du client est
+-- re-normalisé par le trigger BEFORE, et les cumuls par le trigger AFTER.
+-- ------------------------------------------------------------
+create or replace function admin_update_station_carburant(p_id uuid, p_admin_code text, p jsonb)
+returns station_carburant
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result station_carburant;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update station_carburant set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    entry_time = coalesce((p->>'entry_time')::time, entry_time),
+    client_name = coalesce(nullif(trim(coalesce(p->>'client_name', '')), ''), client_name),
+    product = coalesce(p->>'product', product),
+    quantity = coalesce((p->>'quantity')::numeric, quantity),
+    unit_price = coalesce((p->>'unit_price')::numeric, unit_price),
+    payment_status = coalesce(p->>'payment_status', payment_status),
+    payment_mode = nullif(trim(coalesce(p->>'payment_mode', '')), ''),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Vente carburant introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_update_station_lubrifiants(p_id uuid, p_admin_code text, p jsonb)
+returns station_lubrifiants
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result station_lubrifiants;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update station_lubrifiants set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    entry_time = coalesce((p->>'entry_time')::time, entry_time),
+    client_name = coalesce(nullif(trim(coalesce(p->>'client_name', '')), ''), client_name),
+    product = coalesce(nullif(trim(coalesce(p->>'product', '')), ''), product),
+    quantity = coalesce((p->>'quantity')::numeric, quantity),
+    unit = coalesce(nullif(trim(coalesce(p->>'unit', '')), ''), unit),
+    unit_price = coalesce((p->>'unit_price')::numeric, unit_price),
+    payment_status = coalesce(p->>'payment_status', payment_status),
+    payment_mode = nullif(trim(coalesce(p->>'payment_mode', '')), ''),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Vente lubrifiant introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_update_station_gaz(p_id uuid, p_admin_code text, p jsonb)
+returns station_gaz
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result station_gaz;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update station_gaz set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    entry_time = coalesce((p->>'entry_time')::time, entry_time),
+    client_name = coalesce(nullif(trim(coalesce(p->>'client_name', '')), ''), client_name),
+    product = coalesce(nullif(trim(coalesce(p->>'product', '')), ''), product),
+    quantity = coalesce((p->>'quantity')::int, quantity),
+    unit_price = coalesce((p->>'unit_price')::numeric, unit_price),
+    consigne = coalesce((p->>'consigne')::numeric, consigne),
+    payment_status = coalesce(p->>'payment_status', payment_status),
+    payment_mode = nullif(trim(coalesce(p->>'payment_mode', '')), ''),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Vente gaz introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_station_carburant(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from station_carburant where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_station_lubrifiants(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from station_lubrifiants where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_station_gaz(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from station_gaz where id = p_id;
+end;
+$$;
+
+create or replace function admin_delete_station_client(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from station_clients where id = p_id;
+end;
+$$;
+
+revoke all on function station_recalc_client(text) from public;
+revoke all on function admin_update_station_carburant(uuid, text, jsonb) from public;
+revoke all on function admin_update_station_lubrifiants(uuid, text, jsonb) from public;
+revoke all on function admin_update_station_gaz(uuid, text, jsonb) from public;
+revoke all on function admin_delete_station_carburant(uuid, text) from public;
+revoke all on function admin_delete_station_lubrifiants(uuid, text) from public;
+revoke all on function admin_delete_station_gaz(uuid, text) from public;
+revoke all on function admin_delete_station_client(uuid, text) from public;
+
+grant execute on function admin_update_station_carburant(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_update_station_lubrifiants(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_update_station_gaz(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_station_carburant(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_station_lubrifiants(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_station_gaz(uuid, text) to anon, authenticated;
+grant execute on function admin_delete_station_client(uuid, text) to anon, authenticated;

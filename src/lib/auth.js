@@ -150,6 +150,11 @@ export function clearSession() {
 //                    Accès : rôle 'admin' (Ahcene, Massilva, Mazigh) et rôle
 //                    'magasin_only' (Aziz).
 //
+// station : onglet "Station" (station-service) -- ventes carburant /
+//                    lubrifiants / gaz, récapitulatif par client, import.
+//                    Accès : rôle 'admin' UNIQUEMENT (Ahcene, Massilva,
+//                    Mazigh). Aucun compte dédié.
+//
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
 // La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
@@ -157,7 +162,7 @@ export function clearSession() {
 // Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, Tahar/tva_only,
 // AVADOU/tva_prodnet) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence'],
+  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station'],
   editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],

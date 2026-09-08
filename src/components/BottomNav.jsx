@@ -156,6 +156,17 @@ function BuildingIcon(props) {
   )
 }
 
+function PumpIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <rect x="3" y="3" width="10" height="18" rx="1" />
+      <path d="M3 10h10" />
+      <path d="M13 7h3l3 3v7a1.5 1.5 0 0 1-3 0v-3a1 1 0 0 0-1-1h-2" />
+      <path d="M3 21h10" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
@@ -170,6 +181,7 @@ const TABS = [
   { id: 'caisse', label: 'Caisse', Icon: WalletIcon },
   { id: 'magasin', label: 'Magasin', Icon: StoreIcon },
   { id: 'residence', label: 'Résidence', Icon: BuildingIcon },
+  { id: 'station', label: 'Station', Icon: PumpIcon },
 ]
 
 export default function BottomNav({ active, onChange, allowedTabs }) {
