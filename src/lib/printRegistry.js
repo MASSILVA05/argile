@@ -317,9 +317,9 @@ function ficheFabricationHtml(fab, index) {
     : `<tr><td colspan="5" class="empty">Aucune matière première consommée.</td></tr>`
 
   // Numéro permanent de la fabrication (fab_number, figé en base par ordre de
-  // création). Repli sur la position dans la sélection si absent.
-  const rawNo = fab.fab_number != null ? fab.fab_number : index + 1
-  const noFiche = rawNo.toString().padStart(3, '0')
+  // création). Repli sur la position dans la sélection s'il est absent
+  // (colonne fab_number pas encore présente en base).
+  const noFiche = (fab.fab_number || index + 1).toString().padStart(3, '0')
 
   return `<section class="fiche">
   ${companyHeaderHtml()}
