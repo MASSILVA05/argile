@@ -52,3 +52,9 @@ export function uploadMagasinPhoto(file, ref) {
 export function uploadResidencePhoto(file, ref) {
   return uploadPhoto(file, 'residence-photos', String(ref))
 }
+
+// Station-service : photos des relevés de compteur de pompe (bucket public
+// "station-photos").
+export function uploadStationPhoto(file, ref) {
+  return uploadPhoto(file, 'station-photos', String(ref))
+}

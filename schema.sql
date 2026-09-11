@@ -5706,3 +5706,325 @@ grant execute on function admin_delete_station_carburant(uuid, text) to anon, au
 grant execute on function admin_delete_station_lubrifiants(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_station_gaz(uuid, text) to anon, authenticated;
 grant execute on function admin_delete_station_client(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- STATION — sous-onglet "Salaires" (2026-09-08)
+-- Bloc paie / IRG des onglets mensuels du fichier "ETAT DES VENTE SARL
+-- STATION.xlsx" (colonnes O-Q) : NOM ET PRENOM / NBR D'HEUR / SALAIRE NET.
+-- Une ligne par mois et par employé.
+--
+--   period        : 1er jour du mois concerné (normalisé par trigger)
+--   employee_name : nom de l'employé (MAJUSCULES)
+--   hours         : nombre d'heures travaillées (NBR D'HEUR)
+--   net_salary    : salaire net versé (SALAIRE NET), en DA
+--   irg_amount    : montant IRG retenu (facultatif — absent du fichier,
+--                   saisie manuelle)
+--   hourly_rate   : taux horaire calculé (= net_salary / hours), GENERATED
+--
+-- Verrou 72h sur update/delete ; déblocage code admin via
+-- admin_update_station_salaire / admin_delete_station_salaire.
+-- ============================================================
+create table if not exists station_salaires (
+  id uuid primary key default gen_random_uuid(),
+  period date not null,
+  employee_name text not null,
+  hours numeric(8, 2) not null default 0,
+  net_salary numeric(12, 2) not null default 0,
+  irg_amount numeric(12, 2),
+  hourly_rate numeric(10, 2) generated always as (
+    case when hours > 0 then round(net_salary / hours, 2) else 0 end
+  ) stored,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now(),
+  unique (period, employee_name)
+);
+
+comment on table station_salaires is 'Paie mensuelle des employés de la station (heures + salaire net + IRG). Une ligne par mois et par employé.';
+
+create index if not exists station_salaires_period_idx on station_salaires (period desc);
+create index if not exists station_salaires_employee_idx on station_salaires (employee_name);
+create index if not exists station_salaires_created_at_idx on station_salaires (created_at desc);
+
+-- Nom employé en MAJUSCULES + période forcée au 1er du mois.
+create or replace function station_salaires_normalize()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.employee_name := upper(trim(coalesce(new.employee_name, '')));
+  if new.employee_name = '' then
+    raise exception 'Le nom de l''employé est obligatoire';
+  end if;
+  if new.period is null then
+    raise exception 'La période (mois) est obligatoire';
+  end if;
+  new.period := date_trunc('month', new.period)::date;
+  return new;
+end;
+$$;
+
+drop trigger if exists station_salaires_normalize_trg on station_salaires;
+create trigger station_salaires_normalize_trg
+  before insert or update on station_salaires
+  for each row execute function station_salaires_normalize();
+
+alter table station_salaires enable row level security;
+
+create policy "Lecture publique station_salaires" on station_salaires for select using (true);
+create policy "Ajout station_salaires" on station_salaires for insert with check (true);
+create policy "Modification station_salaires" on station_salaires for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression station_salaires" on station_salaires for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table station_salaires;
+exception when duplicate_object then null;
+end $$;
+
+create or replace function admin_update_station_salaire(p_id uuid, p_admin_code text, p jsonb)
+returns station_salaires
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result station_salaires;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update station_salaires set
+    period = coalesce((p->>'period')::date, period),
+    employee_name = coalesce(nullif(trim(coalesce(p->>'employee_name', '')), ''), employee_name),
+    hours = coalesce((p->>'hours')::numeric, hours),
+    net_salary = coalesce((p->>'net_salary')::numeric, net_salary),
+    irg_amount = case when p ? 'irg_amount' then (p->>'irg_amount')::numeric else irg_amount end,
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Salaire introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_station_salaire(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from station_salaires where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_station_salaire(uuid, text, jsonb) from public;
+revoke all on function admin_delete_station_salaire(uuid, text) from public;
+grant execute on function admin_update_station_salaire(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_station_salaire(uuid, text) to anon, authenticated;
+
+
+-- ============================================================
+-- STATION — sous-onglet "Compteurs" (2026-09-11)
+-- Relevés de compteur des 5 pompes de la station (SP1, SP2, GZL1, GZL2,
+-- GZL3) : chaque pompiste saisit l'index affiché sur le compteur à la prise
+-- de service ("Début de service") et à la fin ("Fin de service"), avec une
+-- photo obligatoire du compteur. Le débit du jour par pompe
+-- (= index fin - index début) et le rapprochement avec les ventes carburant
+-- sont calculés côté application (src/lib/station.js).
+--
+-- Photo : bucket "station-photos" (en pratique via VITE_PHOTO_SERVER_URL,
+-- comme les autres modules — voir uploadStationPhoto dans src/lib/storage.js ;
+-- ce bucket Supabase est créé par cohérence avec les autres modules).
+-- Verrou 72h sur update/delete, déblocage par code admin via
+-- admin_update_station_compteur / admin_delete_station_compteur.
+-- Notifications ntfy sur le topic Argile_Station (VITE_NTFY_TOPIC_STATION).
+-- ============================================================
+
+insert into storage.buckets (id, name, public)
+values ('station-photos', 'station-photos', true)
+on conflict (id) do nothing;
+
+do $$ begin
+  create policy "Lecture publique photos station" on storage.objects for select
+    using (bucket_id = 'station-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Ajout photos station" on storage.objects for insert
+    with check (bucket_id = 'station-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Suppression photos station" on storage.objects for delete
+    using (bucket_id = 'station-photos');
+exception when duplicate_object then null;
+end $$;
+
+create table if not exists station_compteurs (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  pompe text not null check (pompe in ('SP1', 'SP2', 'GZL1', 'GZL2', 'GZL3')),
+  type_releve text not null check (type_releve in ('Début de service', 'Fin de service')),
+  index_compteur numeric(12, 2) not null,
+  photo_url text not null,
+  operateur text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table station_compteurs is 'Relevés de compteur des pompes de la station (index début/fin de service, photo obligatoire). Sert à calculer le débit du jour par pompe et à rapprocher avec station_carburant.pompe.';
+
+create index if not exists station_compteurs_created_at_idx on station_compteurs (created_at desc);
+create index if not exists station_compteurs_entry_date_idx on station_compteurs (entry_date desc);
+create index if not exists station_compteurs_pompe_idx on station_compteurs (pompe);
+create index if not exists station_compteurs_type_idx on station_compteurs (type_releve);
+
+alter table station_compteurs enable row level security;
+
+create policy "Lecture publique station_compteurs" on station_compteurs for select using (true);
+create policy "Ajout station_compteurs" on station_compteurs for insert with check (true);
+create policy "Modification station_compteurs" on station_compteurs for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression station_compteurs" on station_compteurs for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table station_compteurs;
+exception when duplicate_object then null;
+end $$;
+
+create or replace function admin_update_station_compteur(p_id uuid, p_admin_code text, p jsonb)
+returns station_compteurs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result station_compteurs;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update station_compteurs set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    entry_time = coalesce((p->>'entry_time')::time, entry_time),
+    pompe = coalesce(p->>'pompe', pompe),
+    type_releve = coalesce(p->>'type_releve', type_releve),
+    index_compteur = coalesce((p->>'index_compteur')::numeric, index_compteur),
+    operateur = nullif(trim(coalesce(p->>'operateur', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Relevé introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_station_compteur(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from station_compteurs where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_station_compteur(uuid, text, jsonb) from public;
+revoke all on function admin_delete_station_compteur(uuid, text) from public;
+grant execute on function admin_update_station_compteur(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_station_compteur(uuid, text) to anon, authenticated;
+
+-- Rapprochement ventes carburant / compteurs : chaque vente carburant peut
+-- être rattachée à la pompe qui l'a servie.
+alter table station_carburant add column if not exists pompe text
+  check (pompe is null or pompe in ('SP1', 'SP2', 'GZL1', 'GZL2', 'GZL3'));
+create index if not exists station_carburant_pompe_idx on station_carburant (pompe);
+
+-- admin_update_station_carburant doit pouvoir modifier la pompe (fonction
+-- redéfinie ici avec le même corps que plus haut + le champ pompe).
+create or replace function admin_update_station_carburant(p_id uuid, p_admin_code text, p jsonb)
+returns station_carburant
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result station_carburant;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update station_carburant set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    entry_time = coalesce((p->>'entry_time')::time, entry_time),
+    client_name = coalesce(nullif(trim(coalesce(p->>'client_name', '')), ''), client_name),
+    product = coalesce(p->>'product', product),
+    quantity = coalesce((p->>'quantity')::numeric, quantity),
+    unit_price = coalesce((p->>'unit_price')::numeric, unit_price),
+    pompe = case when p ? 'pompe' then nullif(trim(coalesce(p->>'pompe', '')), '') else pompe end,
+    payment_status = coalesce(p->>'payment_status', payment_status),
+    payment_mode = nullif(trim(coalesce(p->>'payment_mode', '')), ''),
+    cheque_number = nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    cheque_bank = nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Vente introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+
+-- ============================================================
+-- Utilisateur Mehdi — rôle 'station_only' (2026-09-11)
+-- Accès UNIQUEMENT à l'onglet "Station" (carburant / lubrifiants / gaz /
+-- récapitulatif / salaires / import) -- voir ROLE_TABS.station_only dans
+-- src/lib/auth.js. requires_verification = true -> comme les autres comptes
+-- non-admin : soumis à la plage horaire 8h-17h, au jour de repos (vendredi)
+-- et au code OTP le samedi (envoyé à l'administrateur via ntfy), pas de code
+-- admin. request_login_code lit v_user.role tel quel : aucune modification
+-- de fonction nécessaire.
+-- ============================================================
+insert into app_users (username, password_hash, requires_verification, role)
+values ('Mehdi', encode(digest('Mehdi@DPR2024!', 'sha256'), 'hex'), true, 'station_only')
+on conflict (username) do nothing;

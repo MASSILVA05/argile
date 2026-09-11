@@ -12,6 +12,7 @@ const CONFIG = {
   quantityInteger: false,
   hasUnit: false,
   hasConsigne: false,
+  hasPompe: true,
   excel: downloadStationCarburantExcel,
   notify: notifyStationCarburant,
   filePrefix: 'Ventes_Carburant_Station',

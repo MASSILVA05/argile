@@ -447,6 +447,33 @@ export function notifyStationGaz(entry) {
   return sendNtfy(TOPIC_STATION, 'Station — Vente gaz', lines, 'fire')
 }
 
+export function notifyStationSalaire(entry) {
+  const lines = [
+    `Mois : ${entry.period}`,
+    `Employé : ${entry.employee_name}`,
+    `Heures : ${entry.hours}`,
+    `Salaire net : ${formatDA(entry.net_salary)} DA`,
+  ]
+  if (entry.hourly_rate != null) lines.push(`Taux horaire : ${formatDA(entry.hourly_rate)} DA/h`)
+  if (entry.irg_amount != null) lines.push(`IRG : ${formatDA(entry.irg_amount)} DA`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_STATION, 'Station — Salaire', lines, 'moneybag')
+}
+
+export function notifyStationCompteur(entry) {
+  const lines = [
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Pompe : ${entry.pompe}`,
+    `Relevé : ${entry.type_releve}`,
+    `Index : ${entry.index_compteur}`,
+  ]
+  if (entry.operateur) lines.push(`Opérateur : ${entry.operateur}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_STATION, `Station — Compteur ${entry.pompe} (${entry.type_releve})`, lines, 'gauge')
+}
+
 export function notifyClientAdvance(advance) {
   const lines = [
     `Client : ${advance.client_name}`,

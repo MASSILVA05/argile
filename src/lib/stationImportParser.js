@@ -179,6 +179,79 @@ function parseEtatVente(rows) {
   return { carburant, lubrifiants: [], gaz }
 }
 
+// Mois du 1er jour couvert par les ventes de l'onglet (les dates du fichier
+// sont fiables, contrairement au titre "MOIS ..." parfois erroné).
+function periodFromSales(etat) {
+  const dates = [
+    ...etat.carburant.map((r) => r.entry_date),
+    ...etat.gaz.map((r) => r.entry_date),
+  ].filter(Boolean).sort()
+  if (dates.length === 0) return null
+  return `${dates[0].slice(0, 7)}-01`
+}
+
+const FR_MONTHS = [
+  ['JANV', '01'], ['FEV', '02'], ['FEB', '02'], ['MARS', '03'], ['MAR', '03'],
+  ['AVR', '04'], ['MAI', '05'], ['JUIN', '06'], ['JUIL', '07'], ['AOU', '08'],
+  ['SEPT', '09'], ['SEP', '09'], ['OCT', '10'], ['NOV', '11'], ['DEC', '12'],
+]
+
+// Repli : "IRG DES SALAIRES MOIS JANVIER 2026 ..." -> "2026-01-01"
+function periodFromTitle(rows) {
+  for (const row of rows) {
+    for (const cell of row ?? []) {
+      const h = norm(cell)
+      if (!h.includes('IRG DES SALAIRES') && !h.includes('SALAIRES MOIS')) continue
+      const yearMatch = h.match(/(20\d{2})/)
+      const year = yearMatch ? yearMatch[1] : null
+      const after = h.split('MOIS').pop() ?? ''
+      for (const [key, mm] of FR_MONTHS) {
+        if (after.includes(key)) return year ? `${year}-${mm}-01` : null
+      }
+    }
+  }
+  return null
+}
+
+// Bloc paie / IRG (colonnes O-Q dans le fichier réel = index 14/15/16) :
+//   ligne en-tête  : O = "NOM ET PRENOM", P = "NBR D'HEUR", Q = "SALAIRE NET"
+//   lignes données : O = nom, P = heures, Q = salaire net
+function parseSalaires(rows, period) {
+  if (!period) return []
+  let headerIdx = -1
+  for (let i = 0; i < rows.length; i++) {
+    const cells = rows[i] ?? []
+    if (cells.some((c) => norm(c).includes('NOM ET PRENOM'))) {
+      headerIdx = i
+      break
+    }
+  }
+  if (headerIdx === -1) return []
+
+  const nameCol = (rows[headerIdx] ?? []).findIndex((c) => norm(c).includes('NOM ET PRENOM'))
+  const hoursCol = nameCol + 1
+  const netCol = nameCol + 2
+
+  const out = []
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i] ?? []
+    const name = String(row[nameCol] ?? '').trim()
+    if (!name) break
+    if (/^TOTAL\b/i.test(name) || norm(name).includes('IRG DES SALAIRES')) break
+    const hours = toNumber(row[hoursCol])
+    const net = toNumber(row[netCol])
+    if (hours <= 0 && net <= 0) continue
+    out.push({
+      period,
+      employee_name: name,
+      hours,
+      net_salary: net,
+      observations: 'Import état des ventes (bloc IRG des salaires)',
+    })
+  }
+  return out
+}
+
 // ============================================================
 // Format 2 : par client (onglets CARBURANT / LUBRIFIANT / GAZ)
 // ============================================================
@@ -315,7 +388,7 @@ function parseGaz(rows) {
 
 export function parseStationFile(arrayBuffer) {
   const sheets = sheetsByName(arrayBuffer)
-  const result = { carburant: [], lubrifiants: [], gaz: [] }
+  const result = { carburant: [], lubrifiants: [], gaz: [], salaires: [] }
 
   for (const { name, rows } of sheets) {
     const n = norm(name)
@@ -323,11 +396,14 @@ export function parseStationFile(arrayBuffer) {
     // Onglet trésorerie bancaire : sans objet pour la station.
     if (n.includes('VERSSEMENT') || n.includes('VERSEMENT')) continue
 
-    // Format 1 : état des ventes mensuel (SANS PLOMB / GASOIL / GAZ BUTAN).
+    // Format 1 : état des ventes mensuel (SANS PLOMB / GASOIL / GAZ BUTAN)
+    // + bloc paie IRG des salaires (colonnes O-Q).
     const etat = parseEtatVente(rows)
     if (etat) {
       result.carburant.push(...etat.carburant)
       result.gaz.push(...etat.gaz)
+      const period = periodFromSales(etat) || periodFromTitle(rows)
+      result.salaires.push(...parseSalaires(rows, period))
       continue
     }
 

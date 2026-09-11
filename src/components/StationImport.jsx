@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { getSession } from '../lib/auth'
-import { formatDA, formatQty } from '../lib/station'
+import { formatDA, formatQty, formatMonth } from '../lib/station'
 import { parseStationFile, COUNTER_CLIENT } from '../lib/stationImportParser'
 
 const CHUNK = 300
@@ -86,6 +86,27 @@ const SECTIONS = [
       entered_by_user: user,
     }),
   },
+  {
+    key: 'salaires',
+    label: 'Salaires',
+    table: 'station_salaires',
+    upsert: 'period,employee_name',
+    columns: [
+      { key: 'mois', label: 'Mois' },
+      { key: 'employee_name', label: 'Employé' },
+      { key: 'hours', label: "Heures", format: formatQty },
+      { key: 'net_salary', label: 'Salaire net', format: formatDA },
+    ],
+    display: (r) => ({ ...r, mois: formatMonth(r.period) }),
+    toRow: (r, user) => ({
+      period: r.period,
+      employee_name: r.employee_name,
+      hours: Number(r.hours) || 0,
+      net_salary: Number(r.net_salary) || 0,
+      observations: r.observations || undefined,
+      entered_by_user: user,
+    }),
+  },
 ]
 
 export default function StationImport() {
@@ -146,7 +167,9 @@ export default function StationImport() {
       result.total += selected.length
       const payload = selected.map((r) => s.toRow(r, user))
       for (const part of chunk(payload, CHUNK)) {
-        const { error } = await supabase.from(s.table).insert(part)
+        const { error } = s.upsert
+          ? await supabase.from(s.table).upsert(part, { onConflict: s.upsert })
+          : await supabase.from(s.table).insert(part)
         if (error) result.errors.push(`${s.label} : ${error.message}`)
         else result.done += part.length
       }
@@ -170,7 +193,9 @@ export default function StationImport() {
             <strong>État des ventes mensuel</strong> (fichier « ETAT DES VENTE SARL STATION ») : un onglet par mois,
             en-tête <em>DATTE / SANS PLOMB / GASOIL / GAZ BUTAN / TOTAL</em>. Chaque jour devient une vente comptoir
             (client <strong>{COUNTER_CLIENT}</strong>, quantité 1, prix unitaire = recette du jour). SANS PLOMB → Essence,
-            GASOIL → Gasoil, GAZ BUTAN → onglet Gaz. L'onglet trésorerie (versements) est ignoré.
+            GASOIL → Gasoil, GAZ BUTAN → onglet Gaz. Le bloc <em>IRG DES SALAIRES</em> (colonnes O-Q :
+            nom / heures / salaire net) alimente l'onglet <strong>Salaires</strong> (1 ligne par mois et par
+            employé, mois déduit des dates de vente). L'onglet trésorerie (versements) est ignoré.
           </li>
           <li>
             <strong>Onglets par client</strong> nommés CARBURANT / LUBRIFIANT / GAZ (colonnes Date, Client, Qté, P.U,
@@ -178,7 +203,8 @@ export default function StationImport() {
           </li>
         </ul>
         <p className="text-xs text-ink-muted">
-          Les lignes sont <strong>ajoutées</strong> (pas de dédoublonnage) : n'importez qu'une seule fois.
+          Les ventes sont <strong>ajoutées</strong> (pas de dédoublonnage) : n'importez qu'une seule fois. Les
+          salaires sont <strong>mis à jour</strong> par mois et par employé (ré-import sans risque de doublon).
         </p>
         <label className="inline-flex min-h-11 w-fit cursor-pointer items-center rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10">
           Importer fichier Station
@@ -223,7 +249,9 @@ export default function StationImport() {
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {rows.map((r) => {
+                      const d = s.display ? s.display(r) : r
+                      return (
                       <tr key={r.__key} className="border-b border-border last:border-0">
                         <td className="px-2 py-1">
                           <input
@@ -235,11 +263,11 @@ export default function StationImport() {
                         </td>
                         {s.columns.map((c) => (
                           <td key={c.key} className="px-2 py-1 whitespace-nowrap">
-                            {c.format ? c.format(r[c.key]) : r[c.key] || '—'}
+                            {c.format ? c.format(d[c.key]) : d[c.key] || '—'}
                           </td>
                         ))}
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>

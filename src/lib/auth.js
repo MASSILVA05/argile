@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Mazigh', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane']
+export const USERNAMES = ['Ahcene', 'Massilva', 'Mazigh', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane', 'Mehdi']
 
 // Ahcene, Massilva et Mazigh (admin) n'ont aucune restriction d'horaire ni de jour.
 export const ADMIN_USERNAMES = ['Ahcene', 'Massilva', 'Mazigh']
@@ -151,9 +151,14 @@ export function clearSession() {
 //                    'magasin_only' (Aziz).
 //
 // station : onglet "Station" (station-service) -- ventes carburant /
-//                    lubrifiants / gaz, récapitulatif par client, import.
-//                    Accès : rôle 'admin' UNIQUEMENT (Ahcene, Massilva,
-//                    Mazigh). Aucun compte dédié.
+//                    lubrifiants / gaz, récapitulatif par client, salaires,
+//                    import. Accès : rôle 'admin' (Ahcene, Massilva, Mazigh)
+//                    ET rôle 'station_only' (Mehdi).
+// station_only (Mehdi) : UNIQUEMENT l'onglet Station (mêmes sous-onglets que
+//                    l'admin sur cette page), aucune autre page, pas de code
+//                    admin. Soumis comme les autres comptes non-admin à la
+//                    plage horaire 8h-17h, au jour de repos (vendredi) et au
+//                    code OTP du samedi (requires_verification en base).
 //
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
@@ -170,6 +175,7 @@ export const ROLE_TABS = {
   tva_prodnet: ['tva', 'tva-payer', 'prodnet'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
   magasin_only: ['magasin', 'residence'],
+  station_only: ['station'],
 }
 
 export function allowedTabsForRole(role) {
@@ -190,6 +196,7 @@ export function useAuth() {
     isTvaProdnet: role === 'tva_prodnet',
     isYoucefRole: role === 'youcef_role',
     isMagasinOnly: role === 'magasin_only',
+    isStationOnly: role === 'station_only',
     // Entité TVA fixe de l'utilisateur (Halim -> 'Briqueterie', AVADOU ->
     // 'AVADOU'), NULL si l'utilisateur choisit librement (Tahar, admins).
     entity: session?.entity ?? null,

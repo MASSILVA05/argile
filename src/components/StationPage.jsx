@@ -4,14 +4,18 @@ import { formatDA } from '../lib/station'
 import StationCarburant from './StationCarburant'
 import StationLubrifiants from './StationLubrifiants'
 import StationGaz from './StationGaz'
+import StationCompteurs from './StationCompteurs'
 import StationRecap from './StationRecap'
+import StationSalaires from './StationSalaires'
 import StationImport from './StationImport'
 
 const TABS = [
   { id: 'carburant', label: 'Carburant' },
   { id: 'lubrifiants', label: 'Lubrifiants' },
   { id: 'gaz', label: 'Gaz' },
+  { id: 'compteurs', label: 'Compteurs' },
   { id: 'recap', label: 'Récapitulatif' },
+  { id: 'salaires', label: 'Salaires' },
   { id: 'import', label: 'Import' },
 ]
 
@@ -82,7 +86,9 @@ export default function StationPage() {
       {view === 'carburant' && <StationCarburant />}
       {view === 'lubrifiants' && <StationLubrifiants />}
       {view === 'gaz' && <StationGaz />}
+      {view === 'compteurs' && <StationCompteurs />}
       {view === 'recap' && <StationRecap />}
+      {view === 'salaires' && <StationSalaires />}
       {view === 'import' && <StationImport />}
     </div>
   )

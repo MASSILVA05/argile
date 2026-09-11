@@ -9,6 +9,13 @@ export const CARBURANT_PRODUCTS = ['Gasoil', 'Essence']
 export const GAZ_PRODUCTS = ['B13', 'B06', 'B03', 'Autre']
 export const LUB_UNITS = ['L', 'KG', 'Bidon', 'Fût']
 
+// Compteurs de pompe (sous-onglet "Compteurs")
+export const STATION_PUMPS = ['SP1', 'SP2', 'GZL1', 'GZL2', 'GZL3']
+export const COMPTEUR_TYPES = ['Début de service', 'Fin de service']
+
+// Employés récurrents de la station (pré-remplissage du formulaire salaires).
+export const STATION_EMPLOYEES = ['BENHAMMA KHALED', 'BENMAMMAR NOREDIN']
+
 export const STATION_PAYMENT_STATUS = ['Payé', 'Non payé']
 // Mode de paiement facultatif ; "Versement" = acompte comptant.
 export const STATION_PAYMENT_MODES = ['Espèces', 'Chèque', 'Virement', 'Versement']
@@ -28,6 +35,32 @@ export function lineTotalHt(quantity, unitPrice) {
 
 export function gazTotalWithConsigne(quantity, unitPrice, consigne) {
   return lineTotalHt(quantity, unitPrice) + (Number(consigne) || 0)
+}
+
+// "2026-01-01" (ou "2026-01") -> "Janvier 2026"
+const MONTH_NAMES = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+]
+export function formatMonth(period) {
+  if (!period) return ''
+  const [y, m] = String(period).split('-')
+  const idx = Number(m) - 1
+  return idx >= 0 && idx < 12 ? `${MONTH_NAMES[idx]} ${y}` : String(period)
+}
+
+// "2026-01-15" / "2026-01" -> "2026-01" (mois pour <input type="month">)
+export function periodToMonthInput(period) {
+  return String(period ?? '').slice(0, 7)
+}
+// "2026-01" -> "2026-01-01"
+export function monthInputToPeriod(month) {
+  return month ? `${month.slice(0, 7)}-01` : ''
+}
+
+export function hourlyRate(hours, netSalary) {
+  const h = Number(hours) || 0
+  return h > 0 ? (Number(netSalary) || 0) / h : 0
 }
 
 export function isUnpaid(row) {
@@ -164,6 +197,35 @@ export function buildStationRecap({ carburant, lubrifiants, gaz }, startDate, en
   add(gaz, 'total_gaz')
 
   return [...map.values()].sort((a, b) => a.client.localeCompare(b.client))
+}
+
+// --- Compteurs de pompe : récapitulatif -----------------------------------
+// `rows` = toutes les lignes station_compteurs (toutes dates confondues).
+// Pour chaque pompe : dernier index connu (ligne la plus récente, toutes
+// dates), et débit du jour = index "Fin de service" - index "Début de
+// service" sur `dateISO` (quand les deux relevés existent pour cette date).
+export function computeCompteurRecap(rows, dateISO) {
+  return STATION_PUMPS.map((pompe) => {
+    const forPump = rows.filter((r) => r.pompe === pompe)
+    const last = [...forPump].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null
+
+    const todays = forPump.filter((r) => r.entry_date === dateISO)
+    const start = todays
+      .filter((r) => r.type_releve === 'Début de service')
+      .sort((a, b) => ((a.entry_time ?? '') < (b.entry_time ?? '') ? -1 : 1))[0]
+    const end = todays
+      .filter((r) => r.type_releve === 'Fin de service')
+      .sort((a, b) => ((a.entry_time ?? '') < (b.entry_time ?? '') ? 1 : -1))[0]
+
+    return {
+      pompe,
+      lastIndex: last ? Number(last.index_compteur) : null,
+      lastDate: last ? last.entry_date : null,
+      hasStart: start != null,
+      hasEnd: end != null,
+      debit: start && end ? Number(end.index_compteur) - Number(start.index_compteur) : null,
+    }
+  })
 }
 
 export const RECAP_COLUMNS = [

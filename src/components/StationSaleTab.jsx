@@ -8,6 +8,7 @@ import {
   STATION_PAYMENT_STATUS,
   STATION_PAYMENT_MODES,
   LUB_UNITS,
+  STATION_PUMPS,
   formatDA,
   formatQty,
   lineTotalHt,
@@ -75,6 +76,7 @@ function SaleForm({ config }) {
     entry_date: todayISO(),
     client_name: '',
     product: config.productMode === 'select' ? config.productOptions[0] : '',
+    pompe: config.hasPompe ? STATION_PUMPS[0] : '',
     quantity: '',
     unit: 'L',
     unit_price: '',
@@ -163,6 +165,7 @@ function SaleForm({ config }) {
     }
     if (config.hasUnit) payload.unit = draft.unit || 'L'
     if (config.hasConsigne) payload.consigne = consigne
+    if (config.hasPompe) payload.pompe = draft.pompe || null
 
     const { data, error: insertError } = await supabase
       .from(config.table)
@@ -218,6 +221,16 @@ function SaleForm({ config }) {
           ))}
         </datalist>
       </Field>
+
+      {config.hasPompe && (
+        <Field label="Pompe" required>
+          <select value={draft.pompe} onChange={(e) => update('pompe', e.target.value)} className={inputClass}>
+            {STATION_PUMPS.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field label="Produit" required>
@@ -457,8 +470,9 @@ function SaleRegistry({ config }) {
       { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
       { key: 'client_name', label: 'Client' },
       { key: 'product', label: 'Produit' },
-      { key: 'quantity', label: 'Qté', align: 'right', format: (v) => formatQty(v) },
     ]
+    if (config.hasPompe) columns.push({ key: 'pompe', label: 'Pompe' })
+    columns.push({ key: 'quantity', label: 'Qté', align: 'right', format: (v) => formatQty(v) })
     if (config.hasUnit) columns.push({ key: 'unit', label: 'Unité' })
     columns.push({ key: 'unit_price', label: 'P.U. (DA)', align: 'right', format: (v) => formatDA(v) })
     columns.push({ key: 'total_ht', label: 'Total HT (DA)', align: 'right', format: (v) => formatDA(v) })
@@ -527,6 +541,7 @@ function SaleRegistry({ config }) {
     }
     if (config.hasUnit) patch.unit = editDraft.unit || 'L'
     if (config.hasConsigne) patch.consigne = Number(editDraft.consigne) || 0
+    if (config.hasPompe) patch.pompe = editDraft.pompe || null
 
     const { data, error: updateError } = usingAdminCode
       ? await supabase.rpc(config.adminUpdateRpc, { p_id: editingId, p_admin_code: editAdminCode, p: patch })
@@ -672,7 +687,7 @@ function SaleRegistry({ config }) {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1100px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1180px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th>Date</Th>
@@ -680,6 +695,7 @@ function SaleRegistry({ config }) {
                   <Th>Saisie le</Th>
                   <Th>Client</Th>
                   <Th>Produit</Th>
+                  {config.hasPompe && <Th>Pompe</Th>}
                   {config.hasUnit && <Th>Unité</Th>}
                   <Th>Qté</Th>
                   <Th>P.U.</Th>
@@ -702,6 +718,7 @@ function SaleRegistry({ config }) {
                       <Td>{formatDateTime(r.created_at)}</Td>
                       <Td>{r.client_name}</Td>
                       <Td>{r.product}</Td>
+                      {config.hasPompe && <Td>{r.pompe ?? '—'}</Td>}
                       {config.hasUnit && <Td>{r.unit ?? '—'}</Td>}
                       <Td className="text-right">{formatQty(r.quantity)}</Td>
                       <Td className="text-right">{formatDA(r.unit_price)}</Td>
@@ -806,6 +823,15 @@ function EditRow({ config, draft, onChange, onSave, onCancel }) {
           <input type="text" value={draft.product ?? ''} onChange={(e) => set('product', e.target.value)} className={editInputClass} />
         )}
       </Td>
+      {config.hasPompe && (
+        <Td>
+          <select value={draft.pompe ?? ''} onChange={(e) => set('pompe', e.target.value)} className={editInputClass}>
+            {STATION_PUMPS.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </Td>
+      )}
       {config.hasUnit && (
         <Td>
           <select value={draft.unit ?? 'L'} onChange={(e) => set('unit', e.target.value)} className={editInputClass}>
