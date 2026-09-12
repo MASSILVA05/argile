@@ -6028,3 +6028,158 @@ $$;
 insert into app_users (username, password_hash, requires_verification, role)
 values ('Mehdi', encode(digest('Mehdi@DPR2024!', 'sha256'), 'hex'), true, 'station_only')
 on conflict (username) do nothing;
+
+
+-- ============================================================
+-- Onglet "Chèques" — suivi de tous les chèques émis et reçus (2026-09-13)
+-- Une ligne par chèque : émis (on paie quelqu'un) ou reçu (un client nous
+-- paie). Le statut suit le cycle de vie du chèque : En attente -> Remis en
+-- banque -> Encaissé (ou Rejeté / Annulé à tout moment). Sous-onglets Saisie
+-- / Registre / Suivi (voir ChequesPage.jsx / ChequeForm.jsx /
+-- ChequeRegistry.jsx / ChequeSuivi.jsx).
+--
+-- Photo : bucket "cheque-photos" (en pratique via VITE_PHOTO_SERVER_URL,
+-- comme les autres modules — voir uploadChequePhoto dans src/lib/storage.js ;
+-- ce bucket Supabase est créé par cohérence avec les autres modules).
+-- Verrou 72h sur update/delete (créneau depuis created_at), déblocage par
+-- code admin via admin_update_cheque / admin_delete_cheque.
+-- Notifications ntfy sur le topic Argile_Cheques (VITE_NTFY_TOPIC_CHEQUES).
+--
+-- Accès : rôle 'admin' (Ahcene, Massilva, Mazigh), rôle 'editor' (Halim,
+-- Bureau) et rôle 'youcef_role' (Youcef) — voir ROLE_TABS.admin /
+-- ROLE_TABS.editor / ROLE_TABS.youcef_role dans src/lib/auth.js.
+-- ============================================================
+
+insert into storage.buckets (id, name, public)
+values ('cheque-photos', 'cheque-photos', true)
+on conflict (id) do nothing;
+
+do $$ begin
+  create policy "Lecture publique photos cheques" on storage.objects for select
+    using (bucket_id = 'cheque-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Ajout photos cheques" on storage.objects for insert
+    with check (bucket_id = 'cheque-photos');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create policy "Suppression photos cheques" on storage.objects for delete
+    using (bucket_id = 'cheque-photos');
+exception when duplicate_object then null;
+end $$;
+
+create table if not exists cheques (
+  id uuid primary key default gen_random_uuid(),
+  cheque_number text not null,
+  cheque_date date not null,
+  entry_date date not null default current_date,
+  entry_time time,
+  type text not null check (type in ('Émis', 'Reçu')),
+  beneficiary text not null,
+  amount numeric(12, 2) not null,
+  bank text not null,
+  bank_account text,
+  motif text,
+  date_remise date,
+  date_encaissement date,
+  statut text not null default 'En attente'
+    check (statut in ('En attente', 'Remis en banque', 'Encaissé', 'Rejeté', 'Annulé')),
+  motif_rejet text,
+  photo_url text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table cheques is 'Suivi de tous les chèques émis (on paie) et reçus (un client nous paie) : n° chèque, banque, montant, statut (En attente / Remis en banque / Encaissé / Rejeté / Annulé), dates de remise/encaissement.';
+comment on column cheques.type is 'Émis = on a fait un chèque pour payer quelqu''un. Reçu = on a reçu un chèque d''un client.';
+comment on column cheques.beneficiary is 'À qui on paie (Émis) ou de qui on reçoit (Reçu).';
+
+create index if not exists cheques_created_at_idx on cheques (created_at desc);
+create index if not exists cheques_entry_date_idx on cheques (entry_date desc);
+create index if not exists cheques_cheque_date_idx on cheques (cheque_date desc);
+create index if not exists cheques_type_idx on cheques (type);
+create index if not exists cheques_statut_idx on cheques (statut);
+create index if not exists cheques_bank_idx on cheques (bank);
+create index if not exists cheques_beneficiary_idx on cheques (beneficiary);
+create index if not exists cheques_cheque_number_idx on cheques (cheque_number);
+
+alter table cheques enable row level security;
+
+create policy "Lecture publique cheques" on cheques for select using (true);
+create policy "Ajout cheques" on cheques for insert with check (true);
+create policy "Modification cheques" on cheques for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression cheques" on cheques for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table cheques;
+exception when duplicate_object then null;
+end $$;
+
+create or replace function admin_update_cheque(p_id uuid, p_admin_code text, p jsonb)
+returns cheques
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result cheques;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update cheques set
+    cheque_number = coalesce(nullif(trim(coalesce(p->>'cheque_number', '')), ''), cheque_number),
+    cheque_date = coalesce((p->>'cheque_date')::date, cheque_date),
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    entry_time = coalesce((p->>'entry_time')::time, entry_time),
+    type = coalesce(p->>'type', type),
+    beneficiary = coalesce(nullif(trim(coalesce(p->>'beneficiary', '')), ''), beneficiary),
+    amount = coalesce((p->>'amount')::numeric, amount),
+    bank = coalesce(nullif(trim(coalesce(p->>'bank', '')), ''), bank),
+    bank_account = case when p ? 'bank_account' then nullif(trim(coalesce(p->>'bank_account', '')), '') else bank_account end,
+    motif = case when p ? 'motif' then nullif(trim(coalesce(p->>'motif', '')), '') else motif end,
+    date_remise = case when p ? 'date_remise' then (p->>'date_remise')::date else date_remise end,
+    date_encaissement = case when p ? 'date_encaissement' then (p->>'date_encaissement')::date else date_encaissement end,
+    statut = coalesce(p->>'statut', statut),
+    motif_rejet = case when p ? 'motif_rejet' then nullif(trim(coalesce(p->>'motif_rejet', '')), '') else motif_rejet end,
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Chèque introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_cheque(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from cheques where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_cheque(uuid, text, jsonb) from public;
+revoke all on function admin_delete_cheque(uuid, text) from public;
+grant execute on function admin_update_cheque(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_cheque(uuid, text) to anon, authenticated;

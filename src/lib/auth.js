@@ -160,6 +160,11 @@ export function clearSession() {
 //                    plage horaire 8h-17h, au jour de repos (vendredi) et au
 //                    code OTP du samedi (requires_verification en base).
 //
+// cheques : onglet "Chèques" -- suivi de tous les chèques émis et reçus
+//                    (Saisie / Registre / Suivi). Accès : rôle 'admin'
+//                    (Ahcene, Massilva, Mazigh), rôle 'editor' (Halim,
+//                    Bureau) et rôle 'youcef_role' (Youcef).
+//
 // Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
 // La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
@@ -167,13 +172,13 @@ export function clearSession() {
 // Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, Tahar/tva_only,
 // AVADOU/tva_prodnet) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station'],
-  editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse'],
+  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station', 'cheques'],
+  editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'cheques'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
   tva_only: ['tva', 'tva-payer'],
   tva_prodnet: ['tva', 'tva-payer', 'prodnet'],
-  youcef_role: ['fuel', 'sand', 'invoices', 'caisse'],
+  youcef_role: ['fuel', 'sand', 'invoices', 'caisse', 'cheques'],
   magasin_only: ['magasin', 'residence'],
   station_only: ['station'],
 }

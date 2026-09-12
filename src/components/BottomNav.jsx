@@ -167,6 +167,17 @@ function PumpIcon(props) {
   )
 }
 
+function ChequeIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <circle cx="8" cy="12" r="2.4" />
+      <path d="M14 10h4M14 14h4" />
+      <path d="M2 9h20" />
+    </svg>
+  )
+}
+
 const TABS = [
   { id: 'form', label: 'Saisie', Icon: TruckIcon },
   { id: 'registry', label: 'Registre', Icon: ListIcon },
@@ -182,6 +193,7 @@ const TABS = [
   { id: 'magasin', label: 'Magasin', Icon: StoreIcon },
   { id: 'residence', label: 'Résidence', Icon: BuildingIcon },
   { id: 'station', label: 'Station', Icon: PumpIcon },
+  { id: 'cheques', label: 'Chèques', Icon: ChequeIcon },
 ]
 
 export default function BottomNav({ active, onChange, allowedTabs }) {

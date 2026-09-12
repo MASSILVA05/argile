@@ -17,6 +17,7 @@ const TOPIC_MAGASIN = import.meta.env.VITE_NTFY_TOPIC_MAGASIN || NTFY_TOPIC
 const TOPIC_PRODUCTION = import.meta.env.VITE_NTFY_TOPIC_PRODUCTION || NTFY_TOPIC
 const TOPIC_RESIDENCE = import.meta.env.VITE_NTFY_TOPIC_RESIDENCE || NTFY_TOPIC
 const TOPIC_STATION = import.meta.env.VITE_NTFY_TOPIC_STATION || NTFY_TOPIC
+const TOPIC_CHEQUES = import.meta.env.VITE_NTFY_TOPIC_CHEQUES || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -472,6 +473,34 @@ export function notifyStationCompteur(entry) {
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
   return sendNtfy(TOPIC_STATION, `Station — Compteur ${entry.pompe} (${entry.type_releve})`, lines, 'gauge')
+}
+
+// --- Chèques ----------------------------------------------------------------
+
+export function notifyCheque(entry) {
+  const lines = [
+    `N° Chèque : ${entry.cheque_number}`,
+    `Date chèque : ${entry.cheque_date}`,
+    `Bénéficiaire : ${entry.beneficiary}`,
+    `Montant : ${formatDA(entry.amount)} DA`,
+    `Banque : ${entry.bank}`,
+    `Statut : ${entry.statut}`,
+  ]
+  if (entry.motif) lines.push(`Motif : ${entry.motif}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.type} — ${entry.beneficiary}`, lines, 'moneybag')
+}
+
+export function notifyChequeStatut(entry) {
+  const lines = [
+    `N° Chèque : ${entry.cheque_number}`,
+    `Bénéficiaire : ${entry.beneficiary}`,
+    `Montant : ${formatDA(entry.amount)} DA`,
+    `Nouveau statut : ${entry.statut}`,
+  ]
+  if (entry.statut === 'Rejeté' && entry.motif_rejet) lines.push(`Motif de rejet : ${entry.motif_rejet}`)
+  return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.cheque_number} — ${entry.statut}`, lines, 'warning')
 }
 
 export function notifyClientAdvance(advance) {

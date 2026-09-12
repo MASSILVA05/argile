@@ -58,3 +58,8 @@ export function uploadResidencePhoto(file, ref) {
 export function uploadStationPhoto(file, ref) {
   return uploadPhoto(file, 'station-photos', String(ref))
 }
+
+// Chèques : photo du chèque (bucket public "cheque-photos").
+export function uploadChequePhoto(file, ref) {
+  return uploadPhoto(file, 'cheque-photos', String(ref))
+}

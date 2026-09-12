@@ -13,6 +13,7 @@ import CaissePage from './components/CaissePage'
 import MagasinPage from './components/MagasinPage'
 import ResidencePage from './components/ResidencePage'
 import StationPage from './components/StationPage'
+import ChequesPage from './components/ChequesPage'
 import BottomNav from './components/BottomNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
@@ -35,6 +36,7 @@ const TITLES = {
   magasin: 'Magasin Bejaia',
   residence: 'Résidence',
   station: 'Station',
+  cheques: 'Suivi Chèques',
 }
 
 const SESSION_CHECK_MS = 60_000
@@ -134,6 +136,7 @@ function App() {
         {tab === 'magasin' && <MagasinPage />}
         {tab === 'residence' && <ResidencePage />}
         {tab === 'station' && <StationPage />}
+        {tab === 'cheques' && <ChequesPage />}
       </main>
 
       <BottomNav active={tab} onChange={setTab} allowedTabs={allowedTabs} />
