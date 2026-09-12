@@ -165,7 +165,7 @@ export function clearSession() {
 //                    (Ahcene, Massilva, Mazigh), rôle 'editor' (Halim,
 //                    Bureau) et rôle 'youcef_role' (Youcef).
 //
-// Onglets (App.jsx / BottomNav.jsx) visibles par rôle. Un rôle absent de
+// Onglets (App.jsx / SideNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
 // La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
 // youcef_role -> concrètement Youcef, Halim, Bureau et les admins (Massilva,

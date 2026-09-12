@@ -14,12 +14,12 @@ import MagasinPage from './components/MagasinPage'
 import ResidencePage from './components/ResidencePage'
 import StationPage from './components/StationPage'
 import ChequesPage from './components/ChequesPage'
-import BottomNav from './components/BottomNav'
+import Header from './components/Header'
+import SideNav from './components/SideNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
 import { getSession, clearSession, allowedTabsForRole } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
-import { COMPANY_INFO } from './lib/printRegistry'
 
 const TITLES = {
   form: 'Suivi de chargement',
@@ -41,20 +41,12 @@ const TITLES = {
 
 const SESSION_CHECK_MS = 60_000
 
-function formatRemaining(expiresAt, now) {
-  const ms = expiresAt - now
-  if (ms <= 0) return 'expirée'
-  const totalMinutes = Math.floor(ms / 60_000)
-  const hours = Math.floor(totalMinutes / 60)
-  const minutes = totalMinutes % 60
-  return `${hours}h${String(minutes).padStart(2, '0')}`
-}
-
 function App() {
   const [session, setSession] = useState(() => getSession())
   // Initialisé directement sur la première page autorisée pour ce rôle, pour
   // éviter tout flash d'une page interdite avant qu'un effet ne redirige.
   const [tab, setTab] = useState(() => allowedTabsForRole(getSession()?.role)[0] ?? 'form')
+  const [menuOpen, setMenuOpen] = useState(false)
   const [pending, setPending] = useState(getQueue().length)
   const [now, setNow] = useState(() => Date.now())
 
@@ -95,51 +87,44 @@ function App() {
   }
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-4xl flex-col px-4 py-6 pb-24">
-      <header className="mb-6 flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs tracking-widest text-ocre uppercase">{COMPANY_INFO.name}</p>
-          <h1 className="font-display text-2xl font-semibold text-ink">{TITLES[tab]}</h1>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          {pending > 0 && (
-            <span className="rounded-full border border-ocre px-3 py-1 text-xs whitespace-nowrap text-ocre">
-              {pending} en attente de synchro
-            </span>
-          )}
-          <div className="flex items-center gap-2 text-xs text-ink-muted">
-            <span>{session.username}</span>
-            <span className="whitespace-nowrap">Session : {formatRemaining(session.expiresAt, now)}</span>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded border border-border px-2 py-1 hover:border-terracotta hover:text-terracotta"
-            >
-              Déconnexion
-            </button>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-svh flex-col">
+      <Header
+        title={TITLES[tab]}
+        onMenuClick={() => setMenuOpen(true)}
+        session={session}
+        now={now}
+        pending={pending}
+        onLogout={handleLogout}
+      />
 
-      <main className="rounded-xl border border-border bg-bg-card p-4">
-        {tab === 'form' && <EntryForm />}
-        {tab === 'registry' && <Registry />}
-        {tab === 'maintenance' && <MaintenancePage />}
-        {tab === 'production' && <ProductionPage />}
-        {tab === 'prodnet' && <ProdnetPage />}
-        {tab === 'fuel' && <FuelPage />}
-        {tab === 'sand' && <SandPage />}
-        {tab === 'invoices' && <InvoicesPage />}
-        {tab === 'tva' && <TVAPage />}
-        {tab === 'tva-payer' && <TVAPayerPage />}
-        {tab === 'caisse' && <CaissePage />}
-        {tab === 'magasin' && <MagasinPage />}
-        {tab === 'residence' && <ResidencePage />}
-        {tab === 'station' && <StationPage />}
-        {tab === 'cheques' && <ChequesPage />}
-      </main>
+      <SideNav
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        active={tab}
+        onChange={setTab}
+        allowedTabs={allowedTabs}
+      />
 
-      <BottomNav active={tab} onChange={setTab} allowedTabs={allowedTabs} />
+      <div className="mx-auto w-full max-w-4xl flex-1 px-4 py-6">
+        <main className="rounded-xl border border-border bg-bg-card p-4">
+          {tab === 'form' && <EntryForm />}
+          {tab === 'registry' && <Registry />}
+          {tab === 'maintenance' && <MaintenancePage />}
+          {tab === 'production' && <ProductionPage />}
+          {tab === 'prodnet' && <ProdnetPage />}
+          {tab === 'fuel' && <FuelPage />}
+          {tab === 'sand' && <SandPage />}
+          {tab === 'invoices' && <InvoicesPage />}
+          {tab === 'tva' && <TVAPage />}
+          {tab === 'tva-payer' && <TVAPayerPage />}
+          {tab === 'caisse' && <CaissePage />}
+          {tab === 'magasin' && <MagasinPage />}
+          {tab === 'residence' && <ResidencePage />}
+          {tab === 'station' && <StationPage />}
+          {tab === 'cheques' && <ChequesPage />}
+        </main>
+      </div>
+
       <InstallPrompt />
     </div>
   )
