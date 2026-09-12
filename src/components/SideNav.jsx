@@ -263,7 +263,7 @@ export default function SideNav({ open, onClose, active, onChange, allowedTabs }
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r border-border bg-bg shadow-2xl transition-transform duration-300 ease-in-out sm:w-[300px] ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r border-border bg-bg-card shadow-2xl transition-transform duration-300 ease-in-out sm:w-[300px] ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
         onTouchStart={handleTouchStart}
@@ -297,7 +297,7 @@ export default function SideNav({ open, onClose, active, onChange, allowedTabs }
                   className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
                     active === id
                       ? 'bg-terracotta text-ink'
-                      : 'text-ink-muted hover:bg-bg-soft hover:text-ink'
+                      : 'text-ink-muted hover:bg-border/40 hover:text-ink'
                   }`}
                 >
                   <Icon className="h-5 w-5 shrink-0" />

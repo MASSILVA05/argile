@@ -19,9 +19,26 @@ function MenuIcon(props) {
   )
 }
 
-export default function Header({ title, onMenuClick, session, now, pending, onLogout }) {
+function SunIcon(props) {
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-border bg-[#0a0a15] px-3 sm:gap-3 sm:px-4">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="12" cy="12" r="4.5" />
+      <path d="M12 2.5v2.5M12 19v2.5M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2.5 12H5M19 12h2.5M4.2 19.8l1.8-1.8M18 6l1.8-1.8" />
+    </svg>
+  )
+}
+
+function MoonIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z" />
+    </svg>
+  )
+}
+
+export default function Header({ title, onMenuClick, session, now, pending, onLogout, theme, onToggleTheme }) {
+  return (
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-border bg-[var(--color-header-bg)] px-3 sm:gap-3 sm:px-4">
       <div className="flex shrink-0 items-center gap-2">
         <button
           type="button"
@@ -46,6 +63,15 @@ export default function Header({ title, onMenuClick, session, now, pending, onLo
           </span>
         )}
         <div className="flex items-center gap-2 text-xs text-ink-muted">
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-ink-muted transition-colors hover:border-terracotta hover:text-terracotta"
+            aria-label={theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}
+            title={theme === 'dark' ? 'Mode clair' : 'Mode sombre'}
+          >
+            {theme === 'dark' ? <SunIcon className="h-4 w-4" /> : <MoonIcon className="h-4 w-4" />}
+          </button>
           <span className="hidden sm:inline">{session.username}</span>
           <span className="whitespace-nowrap">Session : {formatRemaining(session.expiresAt, now)}</span>
           <button

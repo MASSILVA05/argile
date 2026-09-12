@@ -189,7 +189,7 @@ export default function PrintSelectionModal({
                   <tr
                     key={i}
                     onClick={() => toggle(i)}
-                    className={`cursor-pointer border-b border-border last:border-0 hover:bg-bg-soft ${checked.has(i) ? 'bg-terracotta/10' : ''}`}
+                    className={`cursor-pointer border-b border-border last:border-0 hover:bg-border/40 ${checked.has(i) ? 'bg-terracotta/10' : ''}`}
                   >
                     <td className="px-2 py-1.5">
                       <input type="checkbox" checked={checked.has(i)} onChange={() => toggle(i)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 accent-terracotta" />

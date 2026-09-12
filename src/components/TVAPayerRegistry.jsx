@@ -354,7 +354,7 @@ export default function TVAPayerRegistry({ entityFilter }) {
             aria-label="Au"
           />
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex flex-wrap shrink-0 gap-2">
           <button
             type="button"
             onClick={() => setPrintOpen(true)}

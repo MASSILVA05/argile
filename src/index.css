@@ -25,13 +25,27 @@
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Inter", ui-sans-serif, system-ui, sans-serif;
 
-  /* Fond principal : bleu très foncé (pas noir pur). */
-  --color-bg: #0f0f1a;
-  /* Fond des inputs. */
-  --color-bg-soft: #16213e;
-  /* Fond des cartes / panels. */
-  --color-bg-card: #1a1a2e;
-  --color-border: #2a2a4a;
+  /* --------------------------------------------------------------------
+     Thème clair/sombre : ces --color-* sont les valeurs par défaut (mode
+     sombre). Le bloc `[data-theme="light"]` plus bas les redéfinit pour le
+     mode clair -- même variable, valeur différente, donc CHAQUE composant
+     de l'app qui utilise déjà les classes Tailwind bg-bg / bg-bg-card /
+     bg-bg-soft / border-border / text-ink / text-ink-muted / bg-terracotta /
+     text-ocre etc. re-thème automatiquement, sans modification. Pas de
+     tailwind.config.js : ce projet utilise Tailwind v4 (CSS-first, via
+     @theme), qui est déjà l'équivalent exact de la config JS suggérée
+     (colors: { bg: 'var(--bg-primary)', ... }) -- en ajouter un ferait
+     doublon et casserait ce mécanisme.
+     Correspondance avec les noms suggérés dans la demande :
+       --color-bg        <-> --bg-primary   --color-ink       <-> --text-primary
+       --color-bg-card   <-> --bg-card      --color-ink-muted <-> --text-secondary
+       --color-bg-soft   <-> --bg-input     --color-terracotta<-> --accent
+       --color-border    <-> --border       --color-ocre      <-> --accent-light
+     -------------------------------------------------------------------- */
+  --color-bg: #1a1a2e;
+  --color-bg-soft: #1e2a4a;
+  --color-bg-card: #222244;
+  --color-border: #3a3a5a;
 
   --color-terracotta: #c96d3c;
   --color-terracotta-hover: #d97f52;
@@ -41,14 +55,62 @@
      seule la valeur change. */
   --color-ocre: #e8a87c;
 
-  --color-ink: #e0e0e0;
-  --color-ink-muted: #8892a0;
+  --color-ink: #e8e8f0;
+  --color-ink-muted: #9aa0b0;
 
   /* Nouveaux tokens sémantiques (succès / erreur / alerte), disponibles via
      les utilitaires Tailwind bg-success / text-error / border-warning etc. */
   --color-success: #2ecc71;
   --color-error: #e74c3c;
   --color-warning: #f39c12;
+  --color-success-bg: rgba(46, 204, 113, 0.15);
+  --color-error-bg: rgba(231, 76, 60, 0.15);
+  --color-warning-bg: rgba(243, 156, 18, 0.15);
+
+  /* En-têtes de tableau (registres) + ligne alternée -- distincts de
+     bg-card/bg-soft (qui ont un rôle différent depuis le thème clair/sombre :
+     bg-soft = fond des inputs). Consommés uniquement par le CSS brut
+     ci-dessous (sélecteur `table`), mais posés ici comme le reste. */
+  --color-table-header-bg: #2a2a4a;
+  --color-table-header-text: var(--color-ocre);
+  --color-table-row-alt: #1e1e3a;
+  --color-table-row-hover: #262646;
+
+  /* Header (bandeau du haut) : plus sombre que le contenu en mode sombre,
+     blanc en mode clair -- voir Header.jsx (bg-[var(--color-header-bg)]). */
+  --color-header-bg: #0a0a15;
+}
+
+/* Mode clair -- activé en posant data-theme="light" sur <html> (voir le
+   bouton soleil/lune dans Header.jsx et src/lib/theme.js). Toutes les
+   variables ci-dessus sont redéfinies ; le reste de l'app (classes
+   Tailwind bg-bg, text-ink, border-border, bg-terracotta, text-ocre...)
+   suit automatiquement puisqu'il consomme ces mêmes variables. */
+[data-theme="light"] {
+  --color-bg: #f5f5f7;
+  --color-bg-soft: #ffffff;
+  --color-bg-card: #ffffff;
+  --color-border: #d0d0d8;
+
+  --color-terracotta: #c96d3c;
+  --color-terracotta-hover: #d97f52;
+  --color-ocre: #d97f52;
+
+  --color-ink: #1a1a2e;
+  --color-ink-muted: #6b7280;
+
+  --color-success-bg: rgba(46, 204, 113, 0.1);
+  --color-error-bg: rgba(231, 76, 60, 0.1);
+  --color-warning-bg: rgba(243, 156, 18, 0.1);
+
+  --color-table-header-bg: #e8e0d8;
+  --color-table-header-text: #4a3728;
+  --color-table-row-alt: #f9f9fb;
+  --color-table-row-hover: #f0ede8;
+
+  --color-header-bg: #ffffff;
+
+  color-scheme: light;
 }
 
 @layer base {
@@ -121,8 +183,8 @@
      propres règles avec une spécificité plus forte (sélecteurs de classe)
      et n'est donc pas affecté. */
   table thead th {
-    background-color: #1e1e3a;
-    color: var(--color-ocre);
+    background-color: var(--color-table-header-bg);
+    color: var(--color-table-header-text);
     text-transform: uppercase;
     font-size: 11px;
     letter-spacing: 0.05em;
@@ -131,10 +193,10 @@
     background-color: var(--color-bg-card);
   }
   table tbody tr:nth-child(even) {
-    background-color: var(--color-bg-soft);
+    background-color: var(--color-table-row-alt);
   }
   table tbody tr:hover {
-    background-color: #1e2a4a;
+    background-color: var(--color-table-row-hover);
   }
 
   /* Masquer les flèches (spinners) des champs number dans toute l'app :

@@ -20,6 +20,7 @@ import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
 import { getSession, clearSession, allowedTabsForRole } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
+import { getStoredTheme, applyTheme } from './lib/theme'
 
 const TITLES = {
   form: 'Suivi de chargement',
@@ -49,6 +50,21 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [pending, setPending] = useState(getQueue().length)
   const [now, setNow] = useState(() => Date.now())
+  const [theme, setTheme] = useState(() => getStoredTheme())
+
+  // Synchronise le meta theme-color (couleur de la barre d'adresse mobile) au
+  // montage : le script inline de index.html a déjà posé [data-theme] sur
+  // <html> avant le rendu (pas de flash), mais pas ce meta.
+  useEffect(() => {
+    applyTheme(theme)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function toggleTheme() {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    applyTheme(next)
+  }
 
   const allowedTabs = useMemo(() => allowedTabsForRole(session?.role), [session?.role])
 
@@ -95,6 +111,8 @@ function App() {
         now={now}
         pending={pending}
         onLogout={handleLogout}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       <SideNav
