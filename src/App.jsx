@@ -105,8 +105,8 @@ function App() {
         allowedTabs={allowedTabs}
       />
 
-      <div className="mx-auto w-full max-w-4xl flex-1 px-4 py-6">
-        <main className="rounded-xl border border-border bg-bg-card p-4">
+      <div key={tab} className="fade-in mx-auto w-full max-w-4xl flex-1 px-4 py-6">
+        <main className="rounded-xl border border-border bg-bg-card p-4 shadow-[0_4px_6px_rgba(0,0,0,0.3)]">
           {tab === 'form' && <EntryForm />}
           {tab === 'registry' && <Registry />}
           {tab === 'maintenance' && <MaintenancePage />}

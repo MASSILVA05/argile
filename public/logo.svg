@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 90" role="img" aria-label="DPR AXXAM">
+  <!-- Repères d'angle (style plan technique / industriel) -->
+  <path d="M3 22 V4 H21" fill="none" stroke="#c96d3c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M217 68 V86 H199" fill="none" stroke="#e8a87c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+
+  <text x="6" y="52" font-family="Arial, Helvetica, sans-serif" font-weight="800" font-size="46" letter-spacing="1" fill="#c96d3c">DPR</text>
+  <text x="8" y="74" font-family="Arial, Helvetica, sans-serif" font-weight="600" font-size="16" letter-spacing="7" fill="#e8a87c">AXXAM</text>
+</svg>

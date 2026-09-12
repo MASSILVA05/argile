@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dpr-chargement-v1'
+const CACHE_NAME = 'axxam-erp-v1'
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png', '/favicon.svg']
 
 self.addEventListener('install', (event) => {

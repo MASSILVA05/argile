@@ -21,15 +21,18 @@ function MenuIcon(props) {
 
 export default function Header({ title, onMenuClick, session, now, pending, onLogout }) {
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between gap-2 border-b border-border bg-bg-card px-3 py-3 sm:gap-3 sm:px-4">
-      <button
-        type="button"
-        onClick={onMenuClick}
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-ink-muted transition-colors hover:border-terracotta hover:text-terracotta"
-        aria-label="Ouvrir le menu"
-      >
-        <MenuIcon className="h-5 w-5" />
-      </button>
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-border bg-[#0a0a15] px-3 sm:gap-3 sm:px-4">
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border text-ink-muted transition-colors hover:border-terracotta hover:text-terracotta"
+          aria-label="Ouvrir le menu"
+        >
+          <MenuIcon className="h-5 w-5" />
+        </button>
+        <img src="/logo.svg" alt="AXXAM ERP" className="hidden h-8 w-auto sm:block" />
+      </div>
 
       <div className="flex min-w-0 flex-1 flex-col items-center text-center">
         <p className="text-[10px] tracking-widest text-ocre uppercase sm:text-xs">{COMPANY_INFO.name}</p>

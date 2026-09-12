@@ -1,13 +1,13 @@
 {
-  "name": "DPR Chargement",
-  "short_name": "DPR Chargement",
-  "description": "Suivi des sorties de camions - Chargement argile, SARL DPR AXXAM",
+  "name": "AXXAM ERP",
+  "short_name": "AXXAM ERP",
+  "description": "AXXAM ERP — gestion intégrée SARL DPR AXXAM (chargement, production, stocks, finances)",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#1a1a2e",
-  "theme_color": "#1a1a2e",
+  "background_color": "#0f0f1a",
+  "theme_color": "#0f0f1a",
   "lang": "fr",
   "icons": [
     {

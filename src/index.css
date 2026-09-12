@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* Police "Inter" (Google Fonts) pour tout le texte (titres + corps), comme
+   demandé pour la refonte AXXAM ERP. Note : contrairement aux polices
+   ci-dessous (Oswald/IBM Plex Mono, servies localement via @fontsource pour
+   fonctionner hors-ligne en PWA), Inter est chargée depuis Google Fonts --
+   dépendance réseau externe assumée pour suivre la consigne "Google Fonts" ;
+   passer à `@fontsource/inter` (npm) supprimerait cette dépendance si besoin. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @import "@fontsource/oswald/400.css";
 @import "@fontsource/oswald/500.css";
 @import "@fontsource/oswald/600.css";
@@ -9,20 +17,38 @@
 @import "@fontsource/ibm-plex-mono/600.css";
 
 @theme {
-  --font-display: "Oswald", sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
+  /* Inter partout : titres (font-display, poids semi-bold via les classes
+     font-semibold/font-medium déjà posées sur les h1/h2/boutons existants)
+     et corps de texte (font-mono -- nom de variable conservé pour ne pas
+     devoir toucher tous les composants qui en dépendent indirectement via
+     `body`, mais la police n'est plus IBM Plex Mono). */
+  --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Inter", ui-sans-serif, system-ui, sans-serif;
 
-  --color-bg: #1a1a2e;
-  --color-bg-soft: #22233a;
-  --color-bg-card: #24243f;
-  --color-border: #33344f;
+  /* Fond principal : bleu très foncé (pas noir pur). */
+  --color-bg: #0f0f1a;
+  /* Fond des inputs. */
+  --color-bg-soft: #16213e;
+  /* Fond des cartes / panels. */
+  --color-bg-card: #1a1a2e;
+  --color-border: #2a2a4a;
 
-  --color-terracotta: #c4653a;
-  --color-terracotta-hover: #d97444;
-  --color-ocre: #d4a24e;
+  --color-terracotta: #c96d3c;
+  --color-terracotta-hover: #d97f52;
+  /* Accent secondaire (terracotta clair) -- réutilise le nom de variable
+     "ocre" déjà employé par des dizaines de composants (badges, boutons
+     secondaires, mises en avant) pour éviter un renommage global risqué ;
+     seule la valeur change. */
+  --color-ocre: #e8a87c;
 
-  --color-ink: #ede9e3;
-  --color-ink-muted: #a3a3bd;
+  --color-ink: #e0e0e0;
+  --color-ink-muted: #8892a0;
+
+  /* Nouveaux tokens sémantiques (succès / erreur / alerte), disponibles via
+     les utilitaires Tailwind bg-success / text-error / border-warning etc. */
+  --color-success: #2ecc71;
+  --color-error: #e74c3c;
+  --color-warning: #f39c12;
 }
 
 @layer base {
@@ -35,15 +61,80 @@
     background-color: var(--color-bg);
     color: var(--color-ink);
     font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
+    font-weight: 600;
+  }
+
+  small, .text-xs {
+    font-weight: 300;
   }
 
   input, select, textarea, button {
     font-family: var(--font-mono);
+  }
+
+  /* Transitions douces par défaut sur les éléments interactifs (couleurs,
+     bordures, ombre, léger scale) -- appliqué globalement pour éviter de
+     dupliquer `transition-colors` partout. Les classes Tailwind explicites
+     (transition-colors, duration-300...) posées sur certains composants
+     restent prioritaires là où elles existent. */
+  button, a, input, select, textarea, [role="button"] {
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease,
+      box-shadow 0.2s ease, transform 0.15s ease;
+  }
+
+  button:not(:disabled):hover {
+    transform: scale(1.02);
+  }
+  button:not(:disabled):active {
+    transform: scale(0.97);
+  }
+
+  /* Coins arrondis + focus "glow" par défaut pour tout input/select/textarea
+     qui n'en définit pas explicitement via une classe Tailwind (la plupart
+     posent déjà rounded-lg/focus:border-terracotta ; ceci ajoute la lueur
+     de focus demandée sans devoir toucher chaque formulaire). */
+  input, select, textarea {
+    border-radius: 8px;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--color-terracotta);
+    box-shadow: 0 0 0 2px rgba(201, 109, 60, 0.3);
+  }
+
+  button {
+    border-radius: 8px;
+  }
+
+  /* Registres (tables) : lignes alternées, en-tête distinct, survol -- pour
+     tous les <table> de l'app (registres) sans dupliquer ces règles dans
+     chaque composant. `.printable-sheet-table` (fiches imprimables) a ses
+     propres règles avec une spécificité plus forte (sélecteurs de classe)
+     et n'est donc pas affecté. */
+  table thead th {
+    background-color: #1e1e3a;
+    color: var(--color-ocre);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+  }
+  table tbody tr:nth-child(odd) {
+    background-color: var(--color-bg-card);
+  }
+  table tbody tr:nth-child(even) {
+    background-color: var(--color-bg-soft);
+  }
+  table tbody tr:hover {
+    background-color: #1e2a4a;
   }
 
   /* Masquer les flèches (spinners) des champs number dans toute l'app :
@@ -62,6 +153,16 @@
   #root {
     min-height: 100svh;
   }
+}
+
+/* Fade-in au chargement d'une page (voir App.jsx : appliqué avec key={tab}
+   sur le conteneur de contenu pour se rejouer à chaque changement d'onglet). */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fade-in {
+  animation: fadeIn 0.3s ease;
 }
 
 /* L'impression ne passe plus par @media print sur cette page (thème sombre +

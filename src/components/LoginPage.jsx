@@ -138,37 +138,43 @@ export default function LoginPage({ onLogin }) {
   }
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-md flex-col justify-center px-4 py-10">
-      <div className="mb-8 text-center">
+    <div className="fade-in mx-auto flex min-h-svh max-w-md flex-col justify-center px-4 py-10">
+      <div className="mb-8 flex flex-col items-center text-center">
+        <img src="/logo.svg" alt="AXXAM ERP" className="mb-3 h-[72px] w-auto sm:h-[90px]" />
         <p className="text-xs tracking-widest text-ocre uppercase">SARL DPR AXXAM</p>
-        <h1 className="font-display text-2xl font-semibold text-ink">Suivi de chargement</h1>
       </div>
 
-      <div className="rounded-xl border border-border bg-bg-card p-6">
+      <div className="rounded-xl border border-border bg-bg-card p-6 shadow-[0_4px_6px_rgba(0,0,0,0.3)]">
         {step === 'credentials' ? (
           <form onSubmit={handleCredentialsSubmit} className="flex flex-col gap-4">
             <h2 className="font-display text-lg text-ink">Connexion</h2>
 
             <Field label="Nom d'utilisateur">
-              <select value={username} onChange={(e) => setUsername(e.target.value)} className={inputClass}>
-                {USERNAMES.map((u) => (
-                  <option key={u} value={u}>
-                    {u}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <UserIcon className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+                <select value={username} onChange={(e) => setUsername(e.target.value)} className={iconInputClass}>
+                  {USERNAMES.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </Field>
 
             <Field label="Mot de passe">
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className={inputClass}
-                autoFocus
-                required
-                disabled={!access.allowed}
-              />
+              <div className="relative">
+                <LockIcon className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className={iconInputClass}
+                  autoFocus
+                  required
+                  disabled={!access.allowed}
+                />
+              </div>
             </Field>
 
             {!access.allowed && (
@@ -362,6 +368,24 @@ export default function LoginPage({ onLogin }) {
   )
 }
 
+function UserIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+    </svg>
+  )
+}
+
+function LockIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  )
+}
+
 function Field({ label, children }) {
   return (
     <label className="flex flex-col gap-1.5">
@@ -373,3 +397,8 @@ function Field({ label, children }) {
 
 const inputClass =
   'min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta'
+// Variante pour les champs précédés d'une icône (user/lock) : pl-9 au lieu de
+// px-3 pour laisser la place à l'icône, sans faire cohabiter px-3 et pl-9
+// (deux classes Tailwind concurrentes sur padding-left, ordre non garanti).
+const iconInputClass =
+  'min-h-11 w-full rounded-lg border border-border bg-bg-soft py-2 pr-3 pl-9 text-ink placeholder:text-ink-muted/60 outline-none focus:border-terracotta'
