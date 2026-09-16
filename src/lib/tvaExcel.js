@@ -26,6 +26,8 @@ const COLUMNS = [
   { header: 'TTC (DA)', key: 'total_ttc', width: 14 },
   { header: 'Timbre (DA)', key: 'stamp_duty', width: 12 },
   { header: 'Total Net (DA)', key: 'total_net', width: 16 },
+  { header: 'Montant payé (DA)', key: 'montant_paye', width: 16 },
+  { header: 'Reste à payer (DA)', key: 'reste_a_payer', width: 16 },
   { header: 'Paiement', key: 'payment_mode', width: 14 },
   { header: 'Pièce de règlement', key: 'payment_piece', width: 18 },
   { header: 'Photo', key: 'photo_url', width: 24 },
@@ -65,6 +67,8 @@ export async function downloadTvaExcel(entries, { filename } = {}) {
       total_ttc: entry.total_ttc ?? 0,
       stamp_duty: entry.stamp_duty ?? 0,
       total_net: entry.total_net ?? 0,
+      montant_paye: entry.montant_paye ?? 0,
+      reste_a_payer: entry.reste_a_payer ?? (entry.total_net ?? 0) - (entry.montant_paye ?? 0),
       payment_mode: entry.payment_mode ?? 'Non payé',
       payment_piece: entry.payment_piece ?? '',
       photo_url: entry.photo_url ?? '',
@@ -87,6 +91,8 @@ export async function downloadTvaExcel(entries, { filename } = {}) {
     total_ttc: sum('total_ttc'),
     stamp_duty: sum('stamp_duty'),
     total_net: sum('total_net'),
+    montant_paye: sum('montant_paye'),
+    reste_a_payer: sum('reste_a_payer'),
   })
   styleTotalsRow(totalsRow, null)
   totalsRow.height = DATA_ROW_HEIGHT

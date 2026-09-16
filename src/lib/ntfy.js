@@ -175,6 +175,26 @@ export function notifyTvaEntry(entry) {
   return sendNtfy(TOPIC_TVA, `TVA ${entry.entity ?? 'Briqueterie'} — Nouvelle facture`, lines, 'receipt')
 }
 
+export function notifyTvaPayment({ payment, entry }) {
+  const lines = [
+    `Paiement TVA : ${formatDA(payment.amount)} DA sur facture n° ${entry.invoice_number} (Fournisseur : ${entry.supplier_name})`,
+    `Mode : ${payment.payment_mode}`,
+  ]
+  if (payment.payment_mode === 'Chèque' && payment.cheque_number) {
+    lines.push(`Chèque n° ${payment.cheque_number}${payment.cheque_bank ? ` — ${payment.cheque_bank}` : ''}`)
+  }
+  lines.push(`Déjà payé : ${formatDA(entry.montant_paye)} DA`)
+  lines.push(`Reste : ${formatDA(entry.reste_a_payer)} DA`)
+  if (payment.observations) lines.push(`Obs : ${payment.observations}`)
+  if (payment.entered_by_user) lines.push(`Saisi par : ${payment.entered_by_user}`)
+  return sendNtfy(
+    TOPIC_TVA,
+    `TVA ${entry.entity ?? 'Briqueterie'} — Paiement facture n° ${entry.invoice_number}`,
+    lines,
+    'moneybag'
+  )
+}
+
 export function notifyTvaPayerEntry(entry) {
   const lines = [
     `Facture n° ${entry.invoice_number}`,

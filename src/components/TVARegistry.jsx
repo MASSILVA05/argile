@@ -5,7 +5,7 @@ import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
 import { formatDateTime } from '../lib/dateFormat'
-import { PAYMENT_MODES, MONTHS, recoveryLabel } from '../lib/tvaPayment'
+import { PAYMENT_MODES, PAYMENT_STATUS_FILTERS, MONTHS, recoveryLabel } from '../lib/tvaPayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -13,6 +13,8 @@ import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
+import TVAPaymentModal from './TVAPaymentModal'
+import TVAPaymentHistoryModal from './TVAPaymentHistoryModal'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -47,6 +49,8 @@ export default function TVARegistry({ entityFilter }) {
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
   const [sheetModalOpen, setSheetModalOpen] = useState(false)
+  const [paymentEntry, setPaymentEntry] = useState(null)
+  const [historyEntry, setHistoryEntry] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -115,8 +119,10 @@ export default function TVARegistry({ entityFilter }) {
         tva: acc.tva + Number(e.tva_amount || 0),
         totalTtc: acc.totalTtc + Number(e.total_ttc || 0),
         totalNet: acc.totalNet + Number(e.total_net || 0),
+        montantPaye: acc.montantPaye + Number(e.montant_paye || 0),
+        resteAPayer: acc.resteAPayer + Number(e.reste_a_payer ?? Number(e.total_net || 0) - Number(e.montant_paye || 0)),
       }),
-      { count: 0, totalHt: 0, tva: 0, totalTtc: 0, totalNet: 0 }
+      { count: 0, totalHt: 0, tva: 0, totalTtc: 0, totalNet: 0, montantPaye: 0, resteAPayer: 0 }
     )
   }, [filtered])
 
@@ -148,6 +154,8 @@ export default function TVARegistry({ entityFilter }) {
         { key: 'total_ttc', label: 'TTC', align: 'right', format: (v) => formatDA(v) },
         { key: 'stamp_duty', label: 'Timbre', align: 'right', format: (v) => formatDA(v) },
         { key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
+        { key: 'montant_paye', label: 'Payé', align: 'right', format: (v) => formatDA(v) },
+        { key: 'reste_a_payer', label: 'Reste', align: 'right', format: (v) => formatDA(v) },
         { key: 'payment_mode', label: 'Paiement' },
         { key: 'photo_url', label: 'Photo', format: (v) => (v ? 'Oui' : 'Non') },
         { key: 'entered_by_user', label: 'Saisi par' },
@@ -159,6 +167,8 @@ export default function TVARegistry({ entityFilter }) {
         tva_amount: formatDA(totals.tva),
         total_ttc: formatDA(totals.totalTtc),
         total_net: formatDA(totals.totalNet),
+        montant_paye: formatDA(totals.montantPaye),
+        reste_a_payer: formatDA(totals.resteAPayer),
       },
     }
   }
@@ -430,7 +440,7 @@ export default function TVARegistry({ entityFilter }) {
             className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
           >
             <option value="">Paiement : tous</option>
-            {PAYMENT_MODES.map((o) => (
+            {PAYMENT_STATUS_FILTERS.map((o) => (
               <option key={o} value={o}>
                 {o}
               </option>
@@ -501,6 +511,14 @@ export default function TVARegistry({ entityFilter }) {
               <p className="text-xs text-ink-muted">Total Net</p>
               <p className="font-display text-xl text-ocre">{formatDA(totals.totalNet)}</p>
             </div>
+            <div>
+              <p className="text-xs text-ink-muted">Payé</p>
+              <p className="font-display text-xl text-green-500">{formatDA(totals.montantPaye)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-muted">Reste</p>
+              <p className="font-display text-xl text-terracotta">{formatDA(totals.resteAPayer)}</p>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
@@ -523,6 +541,8 @@ export default function TVARegistry({ entityFilter }) {
                   <Th>TTC</Th>
                   <Th>Timbre</Th>
                   <Th>Total Net</Th>
+                  <Th>Payé</Th>
+                  <Th>Reste</Th>
                   <Th>Paiement</Th>
                   <Th>Photo</Th>
                   <Th>Saisi par</Th>
@@ -541,41 +561,16 @@ export default function TVARegistry({ entityFilter }) {
                       bankSuggestions={banks}
                     />
                   ) : (
-                    <tr key={entry.id} className="border-b border-border last:border-0">
-                      <Td sticky>{entry.invoice_number}</Td>
-                      <Td>{entry.entity ?? '—'}</Td>
-                      <Td>{entry.piece_number ?? '—'}</Td>
-                      <Td>{entry.entry_date}</Td>
-                      <Td>{formatDateTime(entry.created_at)}</Td>
-                      <Td>{recoveryLabel(entry.recovery_month, entry.recovery_year)}</Td>
-                      <Td>{entry.supplier_name}</Td>
-                      <Td>{entry.supplier_address ?? '—'}</Td>
-                      <Td>{formatDANullable(entry.total_ht)}</Td>
-                      <Td>{formatDA(entry.discount_amount)}</Td>
-                      <Td>{formatDA(entry.ht_net)}</Td>
-                      <Td>{formatDA(entry.tva_amount)}</Td>
-                      <Td>{formatDA(entry.dd_amount)}</Td>
-                      <Td>{formatDA(entry.total_ttc)}</Td>
-                      <Td>{formatDA(entry.stamp_duty)}</Td>
-                      <Td>
-                        <span className="font-display text-ocre">{formatDA(entry.total_net)}</span>
-                      </Td>
-                      <Td>
-                        <PaymentBadge mode={entry.payment_mode} />
-                      </Td>
-                      <Td>
-                        <PhotoThumb url={entry.photo_url} onClick={setLightboxUrl} label={`Facture n° ${entry.invoice_number}`} />
-                      </Td>
-                      <Td>{entry.entered_by_user ?? '—'}</Td>
-                      <Td className="no-print">
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
-                      </Td>
-                    </tr>
+                    <TvaRow
+                      key={entry.id}
+                      entry={entry}
+                      onStartEdit={() => startEdit(entry)}
+                      onDelete={() => handleDelete(entry)}
+                      onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                      onPay={() => setPaymentEntry(entry)}
+                      onHistory={() => setHistoryEntry(entry)}
+                      onPhoto={setLightboxUrl}
+                    />
                   )
                 )}
               </tbody>
@@ -622,18 +617,107 @@ export default function TVARegistry({ entityFilter }) {
         onGenerate={buildTvaSheet}
         excelSheetName="Fiche TVA"
       />
+
+      {paymentEntry && (
+        <TVAPaymentModal
+          entry={paymentEntry}
+          onClose={() => setPaymentEntry(null)}
+          onSaved={(updated) => {
+            setEntries((current) => current.map((e) => (e.id === updated.id ? updated : e)))
+            setPaymentEntry(null)
+          }}
+        />
+      )}
+
+      {historyEntry && (
+        <TVAPaymentHistoryModal entry={historyEntry} onClose={() => setHistoryEntry(null)} />
+      )}
     </div>
   )
 }
 
-function PaymentBadge({ mode }) {
-  const paid = mode && mode !== 'Non payé'
+function TvaRow({ entry, onStartEdit, onDelete, onLockedAttempt, onPay, onHistory, onPhoto }) {
+  const montantPaye = Number(entry.montant_paye) || 0
+  const resteAPayer = entry.reste_a_payer != null ? Number(entry.reste_a_payer) : Number(entry.total_net || 0) - montantPaye
+  const isPartial = entry.payment_mode === 'Partiel'
+  const canPay = resteAPayer > 0
+  const hasHistory = montantPaye > 0
+
   return (
-    <span
-      className={`inline-block rounded-full border px-2 py-0.5 text-xs whitespace-nowrap ${
-        paid ? 'border-green-500/50 bg-green-500/10 text-green-500' : 'border-terracotta/50 bg-terracotta/10 text-terracotta'
-      }`}
-    >
+    <tr className={`border-b border-border last:border-0 ${isPartial ? 'bg-ocre/10' : ''}`}>
+      <Td sticky={isPartial ? 'bg-ocre/10' : true}>{entry.invoice_number}</Td>
+      <Td>{entry.entity ?? '—'}</Td>
+      <Td>{entry.piece_number ?? '—'}</Td>
+      <Td>{entry.entry_date}</Td>
+      <Td>{formatDateTime(entry.created_at)}</Td>
+      <Td>{recoveryLabel(entry.recovery_month, entry.recovery_year)}</Td>
+      <Td>{entry.supplier_name}</Td>
+      <Td>{entry.supplier_address ?? '—'}</Td>
+      <Td>{formatDANullable(entry.total_ht)}</Td>
+      <Td>{formatDA(entry.discount_amount)}</Td>
+      <Td>{formatDA(entry.ht_net)}</Td>
+      <Td>{formatDA(entry.tva_amount)}</Td>
+      <Td>{formatDA(entry.dd_amount)}</Td>
+      <Td>{formatDA(entry.total_ttc)}</Td>
+      <Td>{formatDA(entry.stamp_duty)}</Td>
+      <Td>
+        <span className="font-display text-ocre">{formatDA(entry.total_net)}</span>
+      </Td>
+      <Td>
+        <span className="font-medium text-green-500">{formatDA(montantPaye)}</span>
+      </Td>
+      <Td>
+        <span className={`font-medium ${resteAPayer > 0 ? 'text-terracotta' : 'text-ink-muted'}`}>{formatDA(resteAPayer)}</span>
+      </Td>
+      <Td>
+        <PaymentBadge mode={entry.payment_mode} />
+      </Td>
+      <Td>
+        <PhotoThumb url={entry.photo_url} onClick={onPhoto} label={`Facture n° ${entry.invoice_number}`} />
+      </Td>
+      <Td>{entry.entered_by_user ?? '—'}</Td>
+      <Td className="no-print">
+        <div className="flex flex-wrap gap-2">
+          {canPay && (
+            <button
+              type="button"
+              onClick={onPay}
+              className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10"
+            >
+              Paiement
+            </button>
+          )}
+          {hasHistory && (
+            <button
+              type="button"
+              onClick={onHistory}
+              className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ink-muted"
+            >
+              Historique paiements
+            </button>
+          )}
+          <RowActions
+            entry={entry}
+            onEdit={onStartEdit}
+            onDelete={onDelete}
+            onLockedAttempt={onLockedAttempt}
+          />
+        </div>
+      </Td>
+    </tr>
+  )
+}
+
+function PaymentBadge({ mode }) {
+  const status =
+    mode === 'Non payé' || !mode ? 'unpaid' : mode === 'Partiel' ? 'partial' : 'paid'
+  const styles = {
+    unpaid: 'border-terracotta/50 bg-terracotta/10 text-terracotta',
+    partial: 'border-ocre/50 bg-ocre/10 text-ocre',
+    paid: 'border-green-500/50 bg-green-500/10 text-green-500',
+  }
+  return (
+    <span className={`inline-block rounded-full border px-2 py-0.5 text-xs whitespace-nowrap ${styles[status]}`}>
       {mode ?? 'Non payé'}
     </span>
   )
@@ -719,6 +803,12 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions }) {
       </Td>
       <Td>
         <span className="font-display text-ocre">{formatDA(totalNet)}</span>
+      </Td>
+      <Td className="text-ink-muted" title="Modifiable uniquement via le bouton « Paiement » du registre">
+        {formatDA(draft.montant_paye)}
+      </Td>
+      <Td className="text-ink-muted" title="Modifiable uniquement via le bouton « Paiement » du registre">
+        {formatDA(draft.reste_a_payer ?? totalNet - (Number(draft.montant_paye) || 0))}
       </Td>
       <Td>
         <div className="flex min-w-36 flex-col gap-1">

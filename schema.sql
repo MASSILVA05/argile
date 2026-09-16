@@ -6499,3 +6499,181 @@ revoke all on function admin_update_ppi_import(uuid, text, jsonb) from public;
 revoke all on function admin_delete_ppi_import(uuid, text) from public;
 grant execute on function admin_update_ppi_import(uuid, text, jsonb) to anon, authenticated;
 grant execute on function admin_delete_ppi_import(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- PAIEMENT PARTIEL TVA RÉCUPÉRATION (2026-09-16)
+-- Jusqu'ici tva_entries.payment_mode servait à la fois de "mode" et de
+-- "statut" de paiement (une facture est payée intégralement en une fois, ou
+-- pas du tout -- il n'existe PAS de colonne payment_status séparée dans ce
+-- schéma). On ajoute la possibilité de régler une facture en plusieurs fois
+-- (paiements partiels), en réutilisant ce même payment_mode comme statut :
+-- 'Non payé' (rien payé), 'Partiel' (nouveau), 'Payé' (nouveau, soldé), ou
+-- l'une des anciennes valeurs directes (Espèces/Chèque/Versement/Virement,
+-- conservées pour compatibilité avec les factures déjà réglées avant cette
+-- fonctionnalité -- traitées comme "Payé").
+--
+-- tva_entries.montant_paye / reste_a_payer : colonnes NORMALES (pas
+-- GENERATED), tenues à jour automatiquement par le trigger existant
+-- tva_apply_calculations (BEFORE INSERT/UPDATE, déjà responsable de
+-- ht_net/total_ttc/total_net) -- reste_a_payer = total_net - montant_paye
+-- recalculé à CHAQUE écriture sur la ligne, y compris une correction
+-- manuelle du montant de la facture après des paiements déjà enregistrés.
+-- La RPC tva_record_payment reste seule responsable de la logique métier
+-- (refus si le paiement dépasse le reste, transition du statut).
+--
+-- tva_payments : historique des paiements partiels, immuable (RLS lecture +
+-- insert uniquement, pas d'update/delete -- piste d'audit).
+--
+-- Notifications ntfy : réutilise le topic VITE_NTFY_TOPIC_TVA.
+-- ============================================================
+
+alter table tva_entries add column if not exists montant_paye numeric(12, 2) not null default 0;
+alter table tva_entries add column if not exists reste_a_payer numeric(12, 2);
+
+comment on column tva_entries.montant_paye is 'Cumul des paiements partiels enregistrés via tva_record_payment (+ migration initiale : total_net si déjà payé, 0 sinon).';
+comment on column tva_entries.reste_a_payer is 'total_net - montant_paye, recalculé par le trigger tva_apply_calculations à chaque écriture (pas GENERATED : permet à tva_record_payment d''appliquer ses propres règles métier).';
+
+-- Étend le trigger existant (ht_net/total_ttc/total_net) pour maintenir
+-- aussi reste_a_payer -- remplace la fonction, les triggers déjà créés
+-- (tva_entries_before_insert / tva_entries_before_update) pointent dessus
+-- par son nom et n'ont pas besoin d'être recréés.
+create or replace function tva_apply_calculations()
+returns trigger
+language plpgsql
+as $$
+begin
+  NEW.ht_net := coalesce(NEW.total_ht, 0) - coalesce(NEW.discount_amount, 0);
+  NEW.total_ttc := NEW.ht_net + coalesce(NEW.tva_amount, 0);
+  NEW.total_net := NEW.total_ttc + coalesce(NEW.stamp_duty, 0);
+  NEW.reste_a_payer := NEW.total_net - coalesce(NEW.montant_paye, 0);
+  return NEW;
+end;
+$$;
+
+-- CHECK sur payment_mode (le nom réel de la colonne -- il n'existe pas de
+-- colonne payment_status dans ce schéma) : ajoute 'Partiel' et 'Payé' aux
+-- valeurs existantes, conservées pour compatibilité avec les factures déjà
+-- réglées avant cette fonctionnalité.
+alter table tva_entries drop constraint if exists tva_entries_payment_mode_check;
+alter table tva_entries add constraint tva_entries_payment_mode_check
+  check (payment_mode in ('Non payé', 'Partiel', 'Payé', 'Espèces', 'Chèque', 'Versement', 'Virement'));
+
+-- Migration des factures existantes -- idempotent (ne touche que les lignes
+-- jamais passées par le trigger ci-dessus, donc sans effet sur les paiements
+-- déjà enregistrés lors d'une ré-exécution de ce fichier) : les anciennes
+-- valeurs de paiement direct (Espèces/Chèque/Versement/Virement) sont
+-- considérées comme intégralement payées, 'Non payé' comme rien payé. Cette
+-- UPDATE déclenche le trigger BEFORE UPDATE, qui calcule reste_a_payer dans
+-- la même opération.
+update tva_entries
+set montant_paye = case when payment_mode = 'Non payé' then 0 else coalesce(total_net, 0) end
+where reste_a_payer is null;
+
+-- ------------------------------------------------------------
+-- tva_payments : historique des paiements partiels
+-- ------------------------------------------------------------
+create table if not exists tva_payments (
+  id uuid primary key default gen_random_uuid(),
+  tva_entry_id uuid references tva_entries(id) on delete cascade,
+  entry_date date not null default current_date,
+  amount numeric(12, 2) not null,
+  payment_mode text default 'Espèces'
+    check (payment_mode in ('Espèces', 'Chèque', 'Versement', 'Virement')),
+  cheque_number text,
+  cheque_bank text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table tva_payments is 'Historique des paiements partiels des factures TVA (créés uniquement via tva_record_payment). Immuable : pas de policy update/delete.';
+
+create index if not exists tva_payments_tva_entry_id_idx on tva_payments (tva_entry_id);
+create index if not exists tva_payments_entry_date_idx on tva_payments (entry_date desc);
+
+alter table tva_payments enable row level security;
+create policy "Lecture publique tva_payments" on tva_payments for select using (true);
+create policy "Ajout tva_payments" on tva_payments for insert with check (true);
+
+do $$ begin
+  alter publication supabase_realtime add table tva_payments;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- tva_record_payment : enregistre atomiquement un paiement partiel.
+--   1. verrouille la ligne facture, vérifie qu'elle existe
+--   2. calcule le nouveau montant_paye = ancien + p_amount (refuse si
+--      p_amount <= 0, ou si le nouveau montant_paye dépasse total_net)
+--   3. met à jour montant_paye / reste_a_payer / payment_mode (statut :
+--      'Payé' si reste = 0, 'Partiel' si montant_paye > 0, sinon 'Non payé')
+--   4. insère la ligne tva_payments
+--   5. renvoie la facture mise à jour
+-- ------------------------------------------------------------
+create or replace function tva_record_payment(
+  p_tva_entry_id uuid,
+  p_amount numeric,
+  p_payment_mode text,
+  p_cheque_number text default null,
+  p_cheque_bank text default null,
+  p_observations text default null,
+  p_entered_by_user text default null
+)
+returns tva_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row tva_entries;
+  v_total_net numeric;
+  v_montant_paye numeric;
+  v_new_montant_paye numeric;
+  v_new_reste numeric;
+  v_new_status text;
+begin
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Le montant du paiement doit être supérieur à 0.';
+  end if;
+
+  select total_net, montant_paye into v_total_net, v_montant_paye
+    from tva_entries where id = p_tva_entry_id for update;
+  if v_total_net is null then
+    raise exception 'Facture introuvable.';
+  end if;
+
+  v_new_montant_paye := coalesce(v_montant_paye, 0) + p_amount;
+  if v_new_montant_paye > coalesce(v_total_net, 0) then
+    raise exception 'Le paiement dépasse le montant restant.';
+  end if;
+
+  v_new_reste := coalesce(v_total_net, 0) - v_new_montant_paye;
+  v_new_status := case
+    when v_new_reste = 0 then 'Payé'
+    when v_new_montant_paye > 0 then 'Partiel'
+    else 'Non payé'
+  end;
+
+  update tva_entries set
+    montant_paye = v_new_montant_paye,
+    reste_a_payer = v_new_reste,
+    payment_mode = v_new_status
+  where id = p_tva_entry_id
+  returning * into v_row;
+
+  insert into tva_payments (
+    tva_entry_id, amount, payment_mode, cheque_number, cheque_bank, observations, entered_by_user
+  ) values (
+    p_tva_entry_id, p_amount, p_payment_mode,
+    nullif(trim(coalesce(p_cheque_number, '')), ''),
+    nullif(trim(coalesce(p_cheque_bank, '')), ''),
+    nullif(trim(coalesce(p_observations, '')), ''),
+    nullif(trim(coalesce(p_entered_by_user, '')), '')
+  );
+
+  return v_row;
+end;
+$$;
+
+revoke all on function tva_record_payment(uuid, numeric, text, text, text, text, text) from public;
+grant execute on function tva_record_payment(uuid, numeric, text, text, text, text, text) to anon, authenticated;
