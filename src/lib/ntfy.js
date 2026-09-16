@@ -18,6 +18,7 @@ const TOPIC_PRODUCTION = import.meta.env.VITE_NTFY_TOPIC_PRODUCTION || NTFY_TOPI
 const TOPIC_RESIDENCE = import.meta.env.VITE_NTFY_TOPIC_RESIDENCE || NTFY_TOPIC
 const TOPIC_STATION = import.meta.env.VITE_NTFY_TOPIC_STATION || NTFY_TOPIC
 const TOPIC_CHEQUES = import.meta.env.VITE_NTFY_TOPIC_CHEQUES || NTFY_TOPIC
+const TOPIC_PPI = import.meta.env.VITE_NTFY_TOPIC_PPI || NTFY_TOPIC
 
 export async function sendNtfy(topic, title, lines, tags = 'truck') {
   if (!topic) {
@@ -501,6 +502,24 @@ export function notifyChequeStatut(entry) {
   ]
   if (entry.statut === 'Rejeté' && entry.motif_rejet) lines.push(`Motif de rejet : ${entry.motif_rejet}`)
   return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.cheque_number} — ${entry.statut}`, lines, 'warning')
+}
+
+// --- PPI (Programme Prévisionnel d'Importation) ------------------------
+
+export function notifyPpiImport(entry) {
+  const lines = [
+    `Date : ${entry.entry_date}${entry.entry_time ? ` à ${entry.entry_time.slice(0, 5)}` : ''}`,
+    `Pays : ${entry.country_name_fr}`,
+    `Produit : ${entry.product_designation}`,
+    `Quantité : ${entry.quantite}`,
+    `Prix U. : ${formatDA(entry.prix_unitaire)} €`,
+    `Montant : ${formatDA(entry.montant)} €`,
+  ]
+  if (entry.numero_facture) lines.push(`N° Facture : ${entry.numero_facture}`)
+  if (entry.fournisseur) lines.push(`Fournisseur : ${entry.fournisseur}`)
+  if (entry.observations) lines.push(`Obs : ${entry.observations}`)
+  if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
+  return sendNtfy(TOPIC_PPI, `PPI — Nouvelle importation (${entry.country_name_fr})`, lines, 'globe_with_meridians')
 }
 
 export function notifyClientAdvance(advance) {

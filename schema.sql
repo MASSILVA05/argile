@@ -6183,3 +6183,319 @@ revoke all on function admin_update_cheque(uuid, text, jsonb) from public;
 revoke all on function admin_delete_cheque(uuid, text) from public;
 grant execute on function admin_update_cheque(uuid, text, jsonb) to anon, authenticated;
 grant execute on function admin_delete_cheque(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- MODULE PPI (2026-09-16) : Programme Prévisionnel d'Importation
+-- Onglet "PPI". Accès : rôle 'admin' (Ahcene, Massilva, Mazigh), rôle
+-- 'editor' (Halim, Bureau) et rôle 'tva_prodnet' (AVADOU). Voir ROLE_TABS
+-- dans src/lib/auth.js -- aucun nouvel utilisateur.
+--
+-- L'entreprise dispose d'un programme d'importation autorisé par l'état
+-- algérien : chaque pays autorisé (Belgique, Turquie, Inde, Chine) a un
+-- montant plafond (budget_autorise, en €). Chaque importation consomme ce
+-- plafond (budget_consomme += montant) ; le budget_restant (GENERATED) ne
+-- doit JAMAIS devenir négatif -- contrôlé atomiquement par la RPC
+-- ppi_record_import (verrou de ligne + refus si dépassement).
+--
+-- Sous-onglets : Saisie / Registre / Budget / Import.
+--
+-- 3 tables :
+--   ppi_countries : pays autorisés + plafonds (budget_autorise/consomme/restant)
+--   ppi_products  : produits autorisés par pays (quota + prix unitaire €)
+--   ppi_imports   : historique des importations effectuées
+--
+-- Colonnes calculées en base (GENERATED STORED) :
+--   ppi_countries.budget_restant = budget_autorise - budget_consomme
+--   ppi_products.sous_total      = quantite_autorisee * prix_unitaire
+--   ppi_imports.montant          = quantite * prix_unitaire
+--
+-- ppi_record_import (RPC atomique, appelée à chaque saisie) :
+--   1. verrouille la ligne pays (FOR UPDATE), vérifie budget_restant >= montant
+--      (sinon ERREUR "Budget dépassé", rollback -- jamais de plafond dépassé)
+--   2. verrouille la ligne produit, vérifie qu'il existe
+--   3. incrémente ppi_countries.budget_consomme et ppi_products.stock_actuel
+--   4. insère la ligne ppi_imports
+-- Un trigger AFTER DELETE (ppi_reverse_import) restaure budget_consomme et
+-- stock_actuel quand une importation est supprimée (registre dans les 72h,
+-- ou admin_delete_ppi_import au-delà) -- pas de duplication de logique entre
+-- les deux chemins de suppression.
+--
+-- Verrou 72h sur update/delete de ppi_imports (comme les autres registres) ;
+-- admin_update_ppi_import ne permet de modifier que date / n° facture /
+-- fournisseur / observations (jamais quantité/prix/produit/pays, qui
+-- impacteraient le budget et le stock déjà appliqués à la création).
+--
+-- Notifications ntfy : topic VITE_NTFY_TOPIC_PPI (Argile_PPI).
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- ppi_countries : pays autorisés + plafonds
+-- ------------------------------------------------------------
+create table if not exists ppi_countries (
+  id uuid primary key default gen_random_uuid(),
+  name_ar text not null,
+  name_fr text not null,
+  budget_autorise numeric(14, 2) not null,
+  budget_consomme numeric(14, 2) not null default 0,
+  budget_restant numeric(14, 2) generated always as (budget_autorise - budget_consomme) stored,
+  created_at timestamptz not null default now()
+);
+
+comment on table ppi_countries is 'PPI -- pays autorisés à l''importation et leur plafond (€). budget_consomme incrémenté atomiquement par ppi_record_import.';
+
+create unique index if not exists ppi_countries_name_fr_unique on ppi_countries (name_fr);
+
+alter table ppi_countries enable row level security;
+create policy "Lecture publique ppi_countries" on ppi_countries for select using (true);
+create policy "Ajout ppi_countries" on ppi_countries for insert with check (true);
+create policy "Modification ppi_countries" on ppi_countries for update using (true) with check (true);
+create policy "Suppression ppi_countries" on ppi_countries for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table ppi_countries;
+exception when duplicate_object then null;
+end $$;
+
+insert into ppi_countries (name_ar, name_fr, budget_autorise) values
+  ('بلجيكا', 'Belgique', 832400),
+  ('تركيا', 'Turquie', 1178845.80),
+  ('الهند', 'Inde', 195740),
+  ('الصين', 'Chine', 1241550)
+on conflict (name_fr) do nothing;
+
+-- ------------------------------------------------------------
+-- ppi_products : produits autorisés par pays (quota + prix unitaire €)
+-- ------------------------------------------------------------
+create table if not exists ppi_products (
+  id uuid primary key default gen_random_uuid(),
+  numero integer,
+  chapitre text,
+  position_tarifaire text not null,
+  designation text not null,
+  stock_actuel numeric(10, 2) not null default 0,
+  qte_en_cours numeric(10, 2) not null default 0,
+  quantite_autorisee integer not null,
+  unite text not null default 'U',
+  prix_unitaire numeric(10, 2) not null,
+  country_id uuid references ppi_countries(id) on delete restrict,
+  country_name_fr text not null,
+  sous_total numeric(12, 2) generated always as (quantite_autorisee * prix_unitaire) stored,
+  created_at timestamptz not null default now()
+);
+
+comment on table ppi_products is 'PPI -- produits autorisés par pays (quota quantite_autorisee, prix unitaire €). stock_actuel incrémenté par ppi_record_import.';
+comment on column ppi_products.position_tarifaire is 'Code tarifaire (HS). PAS unique : plusieurs désignations peuvent partager le même code dans le fichier PPI ACORDER -- l''import rapproche sur (position_tarifaire, désignation).';
+
+create index if not exists ppi_products_position_tarifaire_idx on ppi_products (position_tarifaire);
+create index if not exists ppi_products_designation_idx on ppi_products (lower(designation));
+create index if not exists ppi_products_country_id_idx on ppi_products (country_id);
+
+alter table ppi_products enable row level security;
+create policy "Lecture publique ppi_products" on ppi_products for select using (true);
+create policy "Ajout ppi_products" on ppi_products for insert with check (true);
+create policy "Modification ppi_products" on ppi_products for update using (true) with check (true);
+create policy "Suppression ppi_products" on ppi_products for delete using (true);
+
+do $$ begin
+  alter publication supabase_realtime add table ppi_products;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- ppi_imports : historique des importations effectuées
+-- ------------------------------------------------------------
+create table if not exists ppi_imports (
+  id uuid primary key default gen_random_uuid(),
+  entry_date date not null default current_date,
+  entry_time time,
+  product_id uuid references ppi_products(id) on delete restrict,
+  product_designation text not null,
+  position_tarifaire text,
+  country_id uuid references ppi_countries(id) on delete restrict,
+  country_name_fr text not null,
+  quantite integer not null,
+  prix_unitaire numeric(10, 2) not null,
+  montant numeric(12, 2) generated always as (quantite * prix_unitaire) stored,
+  numero_facture text,
+  fournisseur text,
+  observations text,
+  entered_by_user text,
+  created_at timestamptz not null default now()
+);
+
+comment on table ppi_imports is 'PPI -- historique des importations effectuées (créées uniquement via ppi_record_import pour garantir l''atomicité budget/stock).';
+comment on column ppi_imports.position_tarifaire is 'Dénormalisé depuis ppi_products au moment de la saisie (comme product_designation) -- affiché tel quel dans le Registre.';
+
+create index if not exists ppi_imports_entry_date_idx on ppi_imports (entry_date desc);
+create index if not exists ppi_imports_created_at_idx on ppi_imports (created_at desc);
+create index if not exists ppi_imports_country_id_idx on ppi_imports (country_id);
+create index if not exists ppi_imports_product_id_idx on ppi_imports (product_id);
+create index if not exists ppi_imports_fournisseur_idx on ppi_imports (lower(fournisseur));
+
+alter table ppi_imports enable row level security;
+create policy "Lecture publique ppi_imports" on ppi_imports for select using (true);
+create policy "Ajout ppi_imports" on ppi_imports for insert with check (true);
+create policy "Modification ppi_imports" on ppi_imports for update
+  using (created_at > now() - interval '72 hours')
+  with check (created_at > now() - interval '72 hours');
+create policy "Suppression ppi_imports" on ppi_imports for delete
+  using (created_at > now() - interval '72 hours');
+
+do $$ begin
+  alter publication supabase_realtime add table ppi_imports;
+exception when duplicate_object then null;
+end $$;
+
+-- ------------------------------------------------------------
+-- ppi_record_import : enregistre atomiquement une importation.
+--   1. verrouille + vérifie le budget restant du pays (refuse si dépassement)
+--   2. verrouille + vérifie l'existence du produit
+--   3. incrémente budget_consomme (pays) et stock_actuel (produit)
+--   4. insère la ligne ppi_imports
+-- ------------------------------------------------------------
+create or replace function ppi_record_import(p jsonb)
+returns ppi_imports
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row ppi_imports;
+  v_country_id uuid := nullif(p->>'country_id', '')::uuid;
+  v_product_id uuid := nullif(p->>'product_id', '')::uuid;
+  v_qty integer := coalesce((p->>'quantite')::int, 0);
+  v_pu numeric := coalesce((p->>'prix_unitaire')::numeric, 0);
+  v_montant numeric := v_qty * v_pu;
+  v_budget_restant numeric;
+  v_country_name text;
+  v_product_designation text;
+  v_position_tarifaire text;
+begin
+  if v_country_id is null then
+    raise exception 'Pays non spécifié.';
+  end if;
+  if v_product_id is null then
+    raise exception 'Produit non spécifié.';
+  end if;
+  if v_qty <= 0 then
+    raise exception 'La quantité doit être supérieure à 0.';
+  end if;
+
+  select budget_restant, name_fr into v_budget_restant, v_country_name
+    from ppi_countries where id = v_country_id for update;
+  if v_country_name is null then
+    raise exception 'Pays introuvable.';
+  end if;
+  if v_montant > v_budget_restant then
+    raise exception 'Budget dépassé pour % : restant % €, montant demandé % €.', v_country_name, v_budget_restant, v_montant;
+  end if;
+
+  select designation, position_tarifaire into v_product_designation, v_position_tarifaire
+    from ppi_products where id = v_product_id for update;
+  if v_product_designation is null then
+    raise exception 'Produit introuvable.';
+  end if;
+
+  update ppi_countries set budget_consomme = budget_consomme + v_montant where id = v_country_id;
+  update ppi_products set stock_actuel = stock_actuel + v_qty where id = v_product_id;
+
+  insert into ppi_imports (
+    entry_date, entry_time, product_id, product_designation, position_tarifaire, country_id, country_name_fr,
+    quantite, prix_unitaire, numero_facture, fournisseur, observations, entered_by_user
+  ) values (
+    coalesce((p->>'entry_date')::date, current_date),
+    (p->>'entry_time')::time,
+    v_product_id, v_product_designation, v_position_tarifaire, v_country_id, v_country_name,
+    v_qty, v_pu,
+    nullif(trim(coalesce(p->>'numero_facture', '')), ''),
+    nullif(trim(coalesce(p->>'fournisseur', '')), ''),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function ppi_record_import(jsonb) from public;
+grant execute on function ppi_record_import(jsonb) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- ppi_reverse_import : restaure budget_consomme (pays) et stock_actuel
+-- (produit) à la suppression d'une importation -- déclenché aussi bien par
+-- une suppression directe (dans les 72h, RLS) que par admin_delete_ppi_import.
+-- ------------------------------------------------------------
+create or replace function ppi_reverse_import()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update ppi_countries set budget_consomme = budget_consomme - old.montant where id = old.country_id;
+  update ppi_products set stock_actuel = stock_actuel - old.quantite where id = old.product_id;
+  return old;
+end;
+$$;
+
+drop trigger if exists ppi_imports_reverse_trg on ppi_imports;
+create trigger ppi_imports_reverse_trg
+  after delete on ppi_imports
+  for each row execute function ppi_reverse_import();
+
+-- ------------------------------------------------------------
+-- Code admin : édition (champs non quantitatifs uniquement) / suppression
+-- après le verrou de 72h.
+-- ------------------------------------------------------------
+create or replace function admin_update_ppi_import(p_id uuid, p_admin_code text, p jsonb)
+returns ppi_imports
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result ppi_imports;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update ppi_imports set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    numero_facture = nullif(trim(coalesce(p->>'numero_facture', '')), ''),
+    fournisseur = nullif(trim(coalesce(p->>'fournisseur', '')), ''),
+    observations = nullif(trim(coalesce(p->>'observations', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Importation introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+create or replace function admin_delete_ppi_import(p_id uuid, p_admin_code text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+  delete from ppi_imports where id = p_id;
+end;
+$$;
+
+revoke all on function admin_update_ppi_import(uuid, text, jsonb) from public;
+revoke all on function admin_delete_ppi_import(uuid, text) from public;
+grant execute on function admin_update_ppi_import(uuid, text, jsonb) to anon, authenticated;
+grant execute on function admin_delete_ppi_import(uuid, text) to anon, authenticated;

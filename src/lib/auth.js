@@ -165,6 +165,12 @@ export function clearSession() {
 //                    (Ahcene, Massilva, Mazigh), rôle 'editor' (Halim,
 //                    Bureau) et rôle 'youcef_role' (Youcef).
 //
+// ppi : onglet "PPI" -- Programme Prévisionnel d'Importation (plafonds par
+//                    pays, produits autorisés, importations effectuées).
+//                    Sous-onglets : Saisie / Registre / Budget / Import.
+//                    Accès : rôle 'admin' (Ahcene, Massilva, Mazigh), rôle
+//                    'editor' (Halim, Bureau) et rôle 'tva_prodnet' (AVADOU).
+//
 // Onglets (App.jsx / SideNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
 // La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
@@ -172,12 +178,12 @@ export function clearSession() {
 // Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, Tahar/tva_only,
 // AVADOU/tva_prodnet) n'y ont pas accès.
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station', 'cheques'],
-  editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'cheques'],
+  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station', 'cheques', 'ppi'],
+  editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'cheques', 'ppi'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
   tva_only: ['tva', 'tva-payer'],
-  tva_prodnet: ['tva', 'tva-payer', 'prodnet'],
+  tva_prodnet: ['tva', 'tva-payer', 'prodnet', 'ppi'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse', 'cheques'],
   magasin_only: ['magasin', 'residence'],
   station_only: ['station'],

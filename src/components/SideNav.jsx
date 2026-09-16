@@ -180,6 +180,16 @@ function ChequeIcon(props) {
   )
 }
 
+function GlobeIcon(props) {
+  return (
+    <svg {...ICON_PROPS} {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18" />
+    </svg>
+  )
+}
+
 // Menu groupé par catégorie. Les catégories/onglets sans accès (allowedTabs)
 // sont masqués -- voir ROLE_TABS dans src/lib/auth.js.
 const CATEGORIES = [
@@ -226,6 +236,7 @@ const CATEGORIES = [
     label: 'Autre',
     items: [
       { id: 'residence', label: 'Résidence', Icon: BuildingIcon },
+      { id: 'ppi', label: 'PPI', Icon: GlobeIcon },
     ],
   },
 ]
