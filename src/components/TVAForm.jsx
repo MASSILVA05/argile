@@ -5,12 +5,11 @@ import { sendTvaEmail } from '../lib/email'
 import { uploadTvaPhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { getSession } from '../lib/auth'
-import { PAYMENT_MODES, TVA_PAYMENT_MODES, MONTHS, ENTITIES } from '../lib/tvaPayment'
+import { TVA_PAYMENT_MODES, MONTHS, ENTITIES } from '../lib/tvaPayment'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
 const round2 = (n) => Math.round(n * 100) / 100
-const formatDA = (v) => Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 const CURRENT_YEAR = new Date().getFullYear()
 const YEARS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1]
@@ -33,9 +32,6 @@ const emptyDraft = {
   tva_amount: '0',
   dd_amount: '0',
   stamp_duty: '0',
-  payment_mode: 'Non payé',
-  cheque_number: '',
-  cheque_bank: '',
   payment_piece: '',
   photo_file: null,
   observations: '',
@@ -52,16 +48,15 @@ export default function TVAForm({ entity, canChooseEntity }) {
   const [clock, setClock] = useState(() => formatHHMM(new Date()))
   const [tvaTouched, setTvaTouched] = useState(false)
 
-  // Section "Paiement" (paiement initial optionnel, enregistré via la même
-  // RPC atomique tva_record_payment que le registre -- voir TVARegistry.jsx
-  // / TVAPaymentModal.jsx) : décochée par défaut, le formulaire se comporte
-  // alors exactement comme avant (payment_mode piloté par le select "Mode de
-  // paiement" ci-dessous, factures créées 'Non payé' par défaut).
-  const [recordPayment, setRecordPayment] = useState(false)
-  const [paymentAmount, setPaymentAmount] = useState('')
-  const [initialPaymentMode, setInitialPaymentMode] = useState(TVA_PAYMENT_MODES[0])
-  const [initialChequeNumber, setInitialChequeNumber] = useState('')
-  const [initialChequeBank, setInitialChequeBank] = useState('')
+  // Statut de paiement : "Non payé" (défaut) ou "Payé" (paiement, total ou
+  // partiel, enregistré via la même RPC atomique tva_record_payment que le
+  // registre -- voir TVARegistry.jsx / TVAPaymentModal.jsx).
+  const [paymentStatus, setPaymentStatus] = useState('Non payé')
+  const [montantPaye, setMontantPaye] = useState('')
+  const [montantPayeTouched, setMontantPayeTouched] = useState(false)
+  const [payMode, setPayMode] = useState(TVA_PAYMENT_MODES[0])
+  const [payChequeNumber, setPayChequeNumber] = useState('')
+  const [payChequeBank, setPayChequeBank] = useState('')
 
   useEffect(() => {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
@@ -109,52 +104,25 @@ export default function TVAForm({ entity, canChooseEntity }) {
   const stampDuty = Number(draft.stamp_duty) || 0
   const totalNet = totalTtc + stampDuty
 
-  const paymentAmountNum = Number(paymentAmount) || 0
-  const isInitialCheque = initialPaymentMode === 'Chèque'
+  const montantPayeNum = Number(montantPaye) || 0
+  const isPayCheque = payMode === 'Chèque'
 
-  // Texte dynamique sous le champ "Montant à payer maintenant" -- seulement
-  // une fois qu'un montant a été saisi (paymentAmount non vide).
-  const paymentHint = (() => {
-    if (!recordPayment || paymentAmount === '') return null
-    if (paymentAmountNum > totalNet) {
-      return { text: 'Le montant dépasse le total !', color: 'text-terracotta' }
-    }
-    if (paymentAmountNum > 0 && paymentAmountNum === totalNet) {
-      return { text: 'Paiement total ✓', color: 'text-green-500' }
-    }
-    if (paymentAmountNum > 0 && paymentAmountNum < totalNet) {
-      return { text: `Paiement partiel — Reste à payer : ${formatDA(totalNet - paymentAmountNum)} DA`, color: 'text-ocre' }
-    }
-    return null
-  })()
+  // Statut "Payé" : le montant payé se pré-remplit sur le Total Net tant
+  // qu'il n'a pas été modifié à la main (paiement partiel).
+  useEffect(() => {
+    if (paymentStatus !== 'Payé' || montantPayeTouched) return
+    setMontantPaye(totalNet > 0 ? String(totalNet) : '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentStatus, totalNet, montantPayeTouched])
 
-  // Résumé affiché sur le bouton "Enregistrer".
-  const submitLabel = (() => {
-    if (recordPayment && paymentAmountNum > 0 && paymentAmountNum <= totalNet) {
-      return paymentAmountNum === totalNet
-        ? 'Enregistrer la facture (Payée intégralement)'
-        : `Enregistrer la facture + paiement de ${formatDA(paymentAmountNum)} DA`
-    }
-    if (!recordPayment && draft.payment_mode !== 'Non payé') {
-      return 'Enregistrer la facture (Payée intégralement)'
-    }
-    return 'Enregistrer la facture (Non payée)'
-  })()
-
-  // Coché/décoché : repart d'un état propre (évite qu'un ancien montant ou
-  // un select "Mode de paiement" resté sur "Chèque" avant le passage par
-  // cette section n'interfère avec l'insertion).
-  function toggleRecordPayment(checked) {
-    setRecordPayment(checked)
-    if (checked) {
-      update('payment_mode', 'Non payé')
-      update('cheque_number', '')
-      update('cheque_bank', '')
-    } else {
-      setPaymentAmount('')
-      setInitialPaymentMode(TVA_PAYMENT_MODES[0])
-      setInitialChequeNumber('')
-      setInitialChequeBank('')
+  function handlePaymentStatusChange(value) {
+    setPaymentStatus(value)
+    if (value === 'Non payé') {
+      setMontantPaye('')
+      setMontantPayeTouched(false)
+      setPayMode(TVA_PAYMENT_MODES[0])
+      setPayChequeNumber('')
+      setPayChequeBank('')
     }
   }
 
@@ -195,12 +163,10 @@ export default function TVAForm({ entity, canChooseEntity }) {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
     if (!draft.entry_date) return 'La date est obligatoire.'
     if (!draft.supplier_name.trim()) return 'Le nom du fournisseur est obligatoire.'
-    if (draft.payment_mode === 'Chèque' && !draft.cheque_number.trim()) {
-      return 'Le n° de chèque est obligatoire.'
-    }
-    if (recordPayment && paymentAmountNum > 0) {
-      if (paymentAmountNum > totalNet) return 'Le montant du paiement ne peut pas dépasser le Total Net.'
-      if (isInitialCheque && (!initialChequeNumber.trim() || !initialChequeBank.trim())) {
+    if (paymentStatus === 'Payé') {
+      if (!(montantPayeNum > 0)) return 'Le montant payé doit être supérieur à 0.'
+      if (montantPayeNum > totalNet) return 'Le montant payé ne peut pas dépasser le Total Net.'
+      if (isPayCheque && (!payChequeNumber.trim() || !payChequeBank.trim())) {
         return 'N° de chèque et banque obligatoires pour un paiement par chèque.'
       }
     }
@@ -237,8 +203,6 @@ export default function TVAForm({ entity, canChooseEntity }) {
       return
     }
 
-    const isCheque = draft.payment_mode === 'Chèque'
-
     try {
       let photo_url = null
       if (draft.photo_file) {
@@ -266,9 +230,9 @@ export default function TVAForm({ entity, canChooseEntity }) {
         tva_amount: tvaAmount,
         dd_amount: ddAmount,
         stamp_duty: stampDuty,
-        payment_mode: draft.payment_mode,
-        cheque_number: isCheque ? draft.cheque_number.trim() : null,
-        cheque_bank: isCheque ? draft.cheque_bank.trim() || null : null,
+        payment_mode: 'Non payé',
+        cheque_number: null,
+        cheque_bank: null,
         payment_piece: draft.payment_piece.trim() || null,
         photo_url,
         observations: draft.observations.trim() || null,
@@ -296,28 +260,28 @@ export default function TVAForm({ entity, canChooseEntity }) {
 
       let successMessage = `Facture n° ${invoiceNumber} enregistrée.`
 
-      // Paiement initial optionnel : la facture vient d'être créée (donc
-      // 'Non payé', montant_paye = 0) -- on réutilise la même RPC atomique
-      // que le registre pour enregistrer le paiement et faire transiter le
-      // statut ('Partiel'/'Payé'), plutôt que de dupliquer cette logique ici.
-      if (recordPayment && paymentAmountNum > 0) {
+      // Facture créée 'Non payé' -- si un paiement a été renseigné, on
+      // réutilise la même RPC atomique que le registre pour l'enregistrer et
+      // faire transiter le statut ('Partiel'/'Payé'), plutôt que de dupliquer
+      // cette logique ici.
+      if (paymentStatus === 'Payé' && montantPayeNum > 0) {
         const paymentPayload = {
           p_tva_entry_id: data.id,
-          p_amount: paymentAmountNum,
-          p_payment_mode: initialPaymentMode,
-          p_cheque_number: isInitialCheque ? initialChequeNumber.trim() : null,
-          p_cheque_bank: isInitialCheque ? initialChequeBank.trim() || null : null,
+          p_amount: montantPayeNum,
+          p_payment_mode: payMode,
+          p_cheque_number: isPayCheque ? payChequeNumber.trim() : null,
+          p_cheque_bank: isPayCheque ? payChequeBank.trim() || null : null,
           p_observations: null,
           p_entered_by_user: getSession()?.username ?? null,
         }
         const { data: paidEntry, error: paymentError } = await supabase.rpc('tva_record_payment', paymentPayload)
         if (paymentError) {
-          successMessage += ` Le paiement initial n'a pas pu être enregistré : ${paymentError.message}`
+          successMessage += ` Le paiement n'a pas pu être enregistré : ${paymentError.message}`
         } else {
           notifyTvaPayment({
             payment: {
-              amount: paymentAmountNum,
-              payment_mode: initialPaymentMode,
+              amount: montantPayeNum,
+              payment_mode: payMode,
               cheque_number: paymentPayload.p_cheque_number,
               cheque_bank: paymentPayload.p_cheque_bank,
               observations: null,
@@ -325,17 +289,16 @@ export default function TVAForm({ entity, canChooseEntity }) {
             },
             entry: paidEntry,
           })
-          successMessage = `Facture n° ${invoiceNumber} enregistrée — paiement de ${paymentAmountNum.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} DA enregistré (${paidEntry.payment_mode}).`
         }
       }
 
       setSuppliers((p) => dedupe([payload.supplier_name, ...p]))
       setAddresses((p) => dedupe([payload.supplier_address, ...p]))
-      setBanks((p) => dedupe([payload.cheque_bank, ...p]))
+      setBanks((p) => dedupe([payChequeBank, ...p]))
 
       setTvaTouched(false)
       setDraft((d) => ({ ...emptyDraft, entity: d.entity, entry_date: d.entry_date, recovery_month: d.recovery_month, recovery_year: d.recovery_year }))
-      toggleRecordPayment(false)
+      handlePaymentStatusChange('Non payé')
       setSuccess(successMessage)
     } catch (err) {
       setError(`Erreur d'enregistrement : ${err.message}`)
@@ -610,6 +573,75 @@ export default function TVAForm({ entity, canChooseEntity }) {
         </Field>
       </div>
 
+      <Field label="Statut de paiement">
+        <select value={paymentStatus} onChange={(e) => handlePaymentStatusChange(e.target.value)} className={inputClass}>
+          <option value="Non payé">Non payé</option>
+          <option value="Payé">Payé</option>
+        </select>
+      </Field>
+
+      {paymentStatus === 'Payé' && (
+        <div className="flex flex-col gap-3">
+          <Field label="Montant payé (DA)" required>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              max={totalNet}
+              step="0.01"
+              value={montantPaye}
+              onChange={(e) => {
+                setMontantPayeTouched(true)
+                setMontantPaye(e.target.value)
+              }}
+              className={inputClass}
+              required
+            />
+            <span className="text-xs text-ink-muted">Par défaut : Total Net de la facture — modifiable pour un paiement partiel.</span>
+          </Field>
+
+          <Field label="Mode de paiement" required>
+            <select value={payMode} onChange={(e) => setPayMode(e.target.value)} className={inputClass}>
+              {TVA_PAYMENT_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {isPayCheque && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="N° de chèque" required>
+                <input
+                  type="text"
+                  value={payChequeNumber}
+                  onChange={(e) => setPayChequeNumber(e.target.value)}
+                  className={inputClass}
+                  required
+                />
+              </Field>
+              <Field label="Banque" required>
+                <input
+                  type="text"
+                  list="tva-banks-list"
+                  value={payChequeBank}
+                  onChange={(e) => setPayChequeBank(e.target.value)}
+                  className={inputClass}
+                  autoComplete="off"
+                  required
+                />
+                <datalist id="tva-banks-list">
+                  {banks.map((b) => (
+                    <option key={b} value={b} />
+                  ))}
+                </datalist>
+              </Field>
+            </div>
+          )}
+        </div>
+      )}
+
       <Field label="Pièce de règlement">
         <input
           type="text"
@@ -654,134 +686,6 @@ export default function TVAForm({ entity, canChooseEntity }) {
         />
       </Field>
 
-      {totalNet > 0 && (
-        <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-soft p-4">
-          <div className="flex items-center gap-2 border-b border-border pb-2">
-            <span className="text-lg">💰</span>
-            <h3 className="font-display text-lg text-ink">Paiement</h3>
-          </div>
-
-          <p className="text-sm text-ink">
-            Montant total de la facture : <span className="font-bold text-ocre">{formatDA(totalNet)} DA</span>
-          </p>
-
-          <label className="flex items-center gap-2 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={recordPayment}
-              onChange={(e) => toggleRecordPayment(e.target.checked)}
-              className="h-4 w-4 accent-terracotta"
-            />
-            Effectuer un paiement sur cette facture
-          </label>
-
-          {!recordPayment ? (
-            <div className="flex flex-col gap-3">
-              {draft.payment_mode === 'Non payé' && (
-                <p className="text-sm text-ink-muted">Cette facture sera enregistrée comme Non payée.</p>
-              )}
-              <Field label="Mode de paiement">
-                <select value={draft.payment_mode} onChange={(e) => update('payment_mode', e.target.value)} className={inputClass}>
-                  {PAYMENT_MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-xs text-ink-muted">Pour marquer directement la facture comme payée, sans passer par un montant partiel.</span>
-              </Field>
-
-              {draft.payment_mode === 'Chèque' && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="N° de chèque" required>
-                    <input
-                      type="text"
-                      value={draft.cheque_number}
-                      onChange={(e) => update('cheque_number', e.target.value)}
-                      className={inputClass}
-                      required
-                    />
-                  </Field>
-                  <Field label="Banque">
-                    <input
-                      type="text"
-                      list="tva-banks-list"
-                      value={draft.cheque_bank}
-                      onChange={(e) => update('cheque_bank', e.target.value)}
-                      className={inputClass}
-                      autoComplete="off"
-                    />
-                    <datalist id="tva-banks-list">
-                      {banks.map((b) => (
-                        <option key={b} value={b} />
-                      ))}
-                    </datalist>
-                  </Field>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <Field label="Montant à payer maintenant (DA)" required>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                  className={inputClass}
-                  placeholder="ex: 50000"
-                  required
-                />
-              </Field>
-
-              {paymentHint && <p className={`text-sm font-medium ${paymentHint.color}`}>{paymentHint.text}</p>}
-
-              <Field label="Mode de paiement" required>
-                <select value={initialPaymentMode} onChange={(e) => setInitialPaymentMode(e.target.value)} className={inputClass}>
-                  {TVA_PAYMENT_MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              {isInitialCheque && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <Field label="N° de chèque" required>
-                    <input
-                      type="text"
-                      value={initialChequeNumber}
-                      onChange={(e) => setInitialChequeNumber(e.target.value)}
-                      className={inputClass}
-                      required
-                    />
-                  </Field>
-                  <Field label="Banque" required>
-                    <input
-                      type="text"
-                      list="tva-banks-list"
-                      value={initialChequeBank}
-                      onChange={(e) => setInitialChequeBank(e.target.value)}
-                      className={inputClass}
-                      autoComplete="off"
-                      required
-                    />
-                    <datalist id="tva-banks-list">
-                      {banks.map((b) => (
-                        <option key={b} value={b} />
-                      ))}
-                    </datalist>
-                  </Field>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
       {error && (
         <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
           {error}
@@ -796,7 +700,7 @@ export default function TVAForm({ entity, canChooseEntity }) {
         disabled={loading}
         className="min-h-12 rounded-lg bg-terracotta px-4 py-3 font-display text-lg font-medium tracking-wide text-ink transition-colors hover:bg-terracotta-hover disabled:opacity-50"
       >
-        {loading ? 'Enregistrement…' : submitLabel}
+        {loading ? 'Enregistrement…' : 'Enregistrer la facture'}
       </button>
     </form>
   )
