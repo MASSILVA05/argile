@@ -12,15 +12,25 @@ function formatDANullable(value) {
   return value == null ? '—' : formatDA(value)
 }
 
+const CHUNK = 200
+
+function chunk(arr, size) {
+  const out = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
 export default function TVAImportTab({ entityFilter }) {
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState([])
   const [parseError, setParseError] = useState('')
+  const [checking, setChecking] = useState(false)
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState(null)
   const [summary, setSummary] = useState(null)
 
   const selectedCount = rows.filter((r) => r.selected).length
+  const missingEntityCount = rows.filter((r) => r.selected && !(r.entity || entityFilter)).length
 
   async function handleFileChange(e) {
     const file = e.target.files?.[0]
@@ -28,14 +38,30 @@ export default function TVAImportTab({ entityFilter }) {
     setSummary(null)
     setParseError('')
     setFileName(file.name)
+    setRows([])
     try {
       const arrayBuffer = await file.arrayBuffer()
       const parsed = parseTvaImportFile(arrayBuffer)
       if (parsed.length === 0) {
-        setParseError("Aucune ligne de facture détectée dans le fichier.")
+        setParseError('Aucune ligne de facture détectée dans le fichier.')
+        return
       }
-      setRows(parsed.map((r) => ({ ...r, selected: true })))
+
+      // Pré-vérification : quelles factures existent déjà (par n°) -> statut
+      // 🆕 Nouvelle / 🔄 Mise à jour affiché dans l'aperçu, et détermine
+      // ensuite si l'import fera un INSERT ou un UPDATE pour chaque ligne.
+      setChecking(true)
+      const invoiceNumbers = parsed.map((r) => r.invoice_number)
+      const existing = new Set()
+      for (const part of chunk(invoiceNumbers, CHUNK)) {
+        const { data } = await supabase.from('tva_entries').select('invoice_number').in('invoice_number', part)
+        for (const row of data ?? []) existing.add(row.invoice_number)
+      }
+      setChecking(false)
+
+      setRows(parsed.map((r) => ({ ...r, selected: true, exists: existing.has(r.invoice_number) })))
     } catch (err) {
+      setChecking(false)
       setRows([])
       setParseError(`Erreur de lecture du fichier : ${err.message}`)
     }
@@ -52,23 +78,25 @@ export default function TVAImportTab({ entityFilter }) {
   }
 
   async function handleImport() {
-    const toImport = rows.filter((r) => r.selected)
-    if (toImport.length === 0 || !entityFilter) return
+    const toImport = rows.filter((r) => r.selected && (r.entity || entityFilter))
+    if (toImport.length === 0) return
     setImporting(true)
     setSummary(null)
     setProgress({ done: 0, total: toImport.length })
 
     const username = getSession()?.username ?? null
-    let imported = 0
+    let created = 0
+    let updated = 0
     let errors = 0
     const errorDetails = []
 
     for (let i = 0; i < toImport.length; i++) {
       const row = toImport[i]
       try {
-        const payload = {
-          invoice_number: row.invoice_number,
-          entity: entityFilter,
+        // Champs "métier" -- toujours importables, en création comme en
+        // mise à jour.
+        const baseFields = {
+          entity: row.entity || entityFilter,
           piece_number: row.piece_number,
           entry_date: row.entry_date,
           recovery_month: row.recovery_month,
@@ -85,19 +113,36 @@ export default function TVAImportTab({ entityFilter }) {
           tva_amount: row.tva_amount,
           dd_amount: row.dd_amount,
           stamp_duty: row.stamp_duty,
-          payment_mode: row.payment_mode,
           payment_piece: row.payment_piece,
-          observations: 'Importé depuis fichier Excel',
-          entered_by_user: username,
         }
+        // Observations : seulement si le fichier en contient une (colonne
+        // "Observations" de l'export) -- sinon on ne touche pas à une note
+        // déjà saisie manuellement sur une facture existante. Pour une
+        // nouvelle facture sans colonne Observations, on pose un repère.
+        if (row.observations != null) baseFields.observations = row.observations
+        else if (!row.exists) baseFields.observations = 'Importé depuis fichier Excel'
 
-        const { error: upsertError } = await supabase
-          .from('tva_entries')
-          .upsert(payload, { onConflict: 'invoice_number' })
-
-        if (upsertError) throw upsertError
-
-        imported += 1
+        if (row.exists) {
+          // Mise à jour : ne touche JAMAIS payment_mode / montant_paye /
+          // reste_a_payer (paiements déjà enregistrés), ni l'id ni le n° de
+          // facture lui-même (clé de correspondance, utilisée uniquement
+          // dans le .eq() ci-dessous).
+          const { error: updateError } = await supabase
+            .from('tva_entries')
+            .update(baseFields)
+            .eq('invoice_number', row.invoice_number)
+          if (updateError) throw updateError
+          updated += 1
+        } else {
+          const { error: insertError } = await supabase.from('tva_entries').insert({
+            invoice_number: row.invoice_number,
+            ...baseFields,
+            payment_mode: 'Non payé',
+            entered_by_user: username,
+          })
+          if (insertError) throw insertError
+          created += 1
+        }
       } catch (err) {
         errors += 1
         errorDetails.push(`${row.invoice_number} : ${err.message}`)
@@ -105,7 +150,7 @@ export default function TVAImportTab({ entityFilter }) {
       setProgress({ done: i + 1, total: toImport.length })
     }
 
-    setSummary({ imported, errors, errorDetails })
+    setSummary({ created, updated, errors, errorDetails })
     setImporting(false)
     setProgress(null)
   }
@@ -114,34 +159,27 @@ export default function TVAImportTab({ entityFilter }) {
     <div className="flex flex-col gap-4">
       {!entityFilter && (
         <p className="rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-3 text-sm text-ocre">
-          Choisissez une entité précise (Briqueterie ou AVADOU) dans le sélecteur en haut de la page avant
-          d'importer — l'import n'est pas possible avec "Tout" sélectionné.
+          Choisissez une entité précise (Briqueterie ou AVADOU) dans le sélecteur en haut de la page, ou assurez-vous
+          que le fichier contient une colonne "Entité" — l'import est bloqué pour les lignes sans entité connue.
         </p>
       )}
 
       <div className="flex flex-col gap-2">
-        <label
-          className={`min-h-11 inline-flex w-fit items-center rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors ${
-            entityFilter ? 'cursor-pointer hover:bg-ocre/10' : 'cursor-not-allowed opacity-50'
-          }`}
-        >
-          Choisir un fichier .xls/.xlsx
-          <input
-            type="file"
-            accept=".xls,.xlsx"
-            onChange={handleFileChange}
-            disabled={!entityFilter}
-            className="hidden"
-          />
+        <label className="min-h-11 inline-flex w-fit cursor-pointer items-center rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10">
+          Importer des factures
+          <input type="file" accept=".xls,.xlsx" onChange={handleFileChange} className="hidden" />
         </label>
         {fileName && <p className="text-sm text-ink-muted">Fichier : {fileName}</p>}
         <p className="text-xs text-ink-muted">
-          Colonnes détectées automatiquement par en-tête (N° FACT, DATE, NOM DE FOURNISSEUR, ADRESSE, TOTAL HT, TVA…).
-          N° Pièce et Mois de récupération, absents du fichier, restent vides — à compléter plus tard dans le
-          registre. Total HT reste vide pour les lignes sans montant HT (quittances douane).
-          {entityFilter && ` Import pour l'entité : ${entityFilter}.`}
+          Même format que l'export Excel du registre (colonnes détectées par en-tête, insensible à la casse/accents).
+          Le n° de facture sert de clé : une facture déjà existante est mise à jour (jamais dupliquée), une nouvelle
+          est créée. Le statut de paiement (Paiement / Montant payé / Reste à payer) n'est jamais modifié par
+          l'import — ces colonnes ne sont affichées ci-dessous qu'à titre indicatif.
+          {entityFilter && ` Entité par défaut : ${entityFilter} (utilisée si le fichier n'a pas de colonne Entité).`}
         </p>
       </div>
+
+      {checking && <p className="text-sm text-ink-muted">Vérification des factures existantes…</p>}
 
       {parseError && (
         <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
@@ -163,15 +201,26 @@ export default function TVAImportTab({ entityFilter }) {
             <p className="text-sm text-ink-muted">
               {rows.length} facture{rows.length > 1 ? 's' : ''} détectée{rows.length > 1 ? 's' : ''}, {selectedCount}{' '}
               sélectionnée{selectedCount > 1 ? 's' : ''}
+              {' — '}
+              {rows.filter((r) => r.exists).length} mise{rows.filter((r) => r.exists).length > 1 ? 's' : ''} à jour,{' '}
+              {rows.filter((r) => !r.exists).length} nouvelle{rows.filter((r) => !r.exists).length > 1 ? 's' : ''}
             </p>
           </div>
 
+          {missingEntityCount > 0 && (
+            <p className="rounded-lg border border-terracotta/50 bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
+              {missingEntityCount} ligne(s) sélectionnée(s) sans entité connue — elles seront ignorées à l'import.
+            </p>
+          )}
+
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1400px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1600px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th></Th>
+                  <Th>Statut</Th>
                   <Th>N° Facture</Th>
+                  <Th>Entité</Th>
                   <Th>Date</Th>
                   <Th>Mois récup.</Th>
                   <Th>Fournisseur</Th>
@@ -181,16 +230,24 @@ export default function TVAImportTab({ entityFilter }) {
                   <Th>TVA</Th>
                   <Th>DD</Th>
                   <Th>Timbre</Th>
-                  <Th>Paiement</Th>
+                  <Th title="Informatif uniquement -- jamais modifié par l'import">Paiement (info)</Th>
+                  <Th title="Informatif uniquement -- jamais modifié par l'import">Payé (info)</Th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.invoice_number} className="border-b border-border last:border-0">
+                  <tr
+                    key={row.invoice_number}
+                    className={`border-b border-border last:border-0 ${row.exists ? 'bg-yellow-500/10' : ''}`}
+                  >
                     <Td>
                       <input type="checkbox" checked={row.selected} onChange={() => toggleRow(row.invoice_number)} />
                     </Td>
+                    <Td>{row.exists ? '🔄 Mise à jour' : '🆕 Nouvelle'}</Td>
                     <Td>{row.invoice_number}</Td>
+                    <Td className={!(row.entity || entityFilter) ? 'font-medium text-terracotta' : ''}>
+                      {row.entity || entityFilter || 'manquante'}
+                    </Td>
                     <Td>{row.entry_date}</Td>
                     <Td>{recoveryLabel(row.recovery_month, row.recovery_year)}</Td>
                     <Td>{row.supplier_name}</Td>
@@ -200,7 +257,8 @@ export default function TVAImportTab({ entityFilter }) {
                     <Td>{formatDA(row.tva_amount)}</Td>
                     <Td>{formatDA(row.dd_amount)}</Td>
                     <Td>{formatDA(row.stamp_duty)}</Td>
-                    <Td>{row.payment_mode}</Td>
+                    <Td className="text-ink-muted italic">{row.payment_mode_info ?? '—'}</Td>
+                    <Td className="text-ink-muted italic">{formatDANullable(row.montant_paye_info)}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -224,8 +282,8 @@ export default function TVAImportTab({ entityFilter }) {
           {summary && (
             <div className="rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-3 text-sm text-ocre">
               <p>
-                {summary.imported} facture{summary.imported > 1 ? 's' : ''} importée{summary.imported > 1 ? 's' : ''},{' '}
-                {summary.errors} erreur{summary.errors > 1 ? 's' : ''}
+                {summary.created} créée{summary.created > 1 ? 's' : ''}, {summary.updated} mise
+                {summary.updated > 1 ? 's' : ''} à jour, {summary.errors} erreur{summary.errors > 1 ? 's' : ''}
               </p>
               {summary.errorDetails.length > 0 && (
                 <ul className="mt-2 list-disc pl-5 text-terracotta">
@@ -240,10 +298,10 @@ export default function TVAImportTab({ entityFilter }) {
           <button
             type="button"
             onClick={handleImport}
-            disabled={importing || selectedCount === 0 || !entityFilter}
+            disabled={importing || selectedCount === 0}
             className="min-h-12 rounded-lg bg-terracotta px-4 py-3 font-display text-lg font-medium tracking-wide text-ink transition-colors hover:bg-terracotta-hover disabled:opacity-50"
           >
-            {importing ? 'Import en cours…' : `Importer les lignes sélectionnées (${selectedCount})`}
+            {importing ? 'Import en cours…' : `Importer ${selectedCount} facture${selectedCount > 1 ? 's' : ''}`}
           </button>
         </>
       )}
@@ -251,10 +309,14 @@ export default function TVAImportTab({ entityFilter }) {
   )
 }
 
-function Th({ children }) {
-  return <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2">{children}</th>
+function Th({ children, title }) {
+  return (
+    <th className="px-1 py-1 font-display font-medium whitespace-nowrap sm:px-3 sm:py-2" title={title}>
+      {children}
+    </th>
+  )
 }
 
-function Td({ children }) {
-  return <td className="px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2">{children}</td>
+function Td({ children, className = '' }) {
+  return <td className={`px-1 py-1 whitespace-nowrap sm:px-3 sm:py-2 ${className}`}>{children}</td>
 }

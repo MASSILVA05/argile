@@ -1,33 +1,47 @@
 import { read, utils, SSF } from 'xlsx'
+import { ENTITIES } from './tvaPayment'
 
-// Correspondance en-tête de colonne (normalisé) -> champ tva_payer_entries.
-// Total TVA/Total TTC/Total net ne sont pas importés : ce sont des colonnes
-// générées côté base, recalculées automatiquement depuis Total HT/Remise/
-// Timbre (la formule est identique à celle du fichier source).
+// Correspondance en-tête de colonne -> champ tva_payer_entries. Clés écrites
+// en français lisible (accents compris) ; la comparaison réelle se fait
+// après normalisation (accents/majuscules/parenthèses/ponctuation retirés,
+// voir normalizeHeader) sur NORMALIZED_HEADER_MAP plus bas -- couvre aussi
+// bien le format source externe "Etat Relevé Facture de Ventes" que l'export
+// tvaPayerExcel.js ré-importé tel quel. Total TVA/Total TTC/Total net ne
+// sont pas importés : colonnes générées côté base.
 const HEADER_MAP = {
-  'NUMÉRO': 'invoice_number',
-  'NUMERO': 'invoice_number',
-  'DU': 'entry_date',
-  'CLIENT': 'client_name',
-  'TOTAL HT': 'total_ht',
-  'REMISE': 'discount_amount',
-  'TIMBRE': 'stamp_duty',
-  'RÉF. COMMANDE': 'ref_commande',
-  'REF. COMMANDE': 'ref_commande',
-  'RÉF COMMANDE': 'ref_commande',
-  'RÉF. LIVRAISON': 'ref_livraison',
-  'REF. LIVRAISON': 'ref_livraison',
-  'RÉF LIVRAISON': 'ref_livraison',
+  'Numéro': 'invoice_number',
+  'Numéro de facture': 'invoice_number',
+  'N° Facture': 'invoice_number',
+  'Entité': 'entity',
+  'Du': 'entry_date',
+  'Date': 'entry_date',
+  'Client': 'client_name',
+  'Total HT': 'total_ht',
+  'Remise': 'discount_amount',
+  'Timbre': 'stamp_duty',
+  'Réf. Commande': 'ref_commande',
+  'Réf Commande': 'ref_commande',
+  'Réf. Livraison': 'ref_livraison',
+  'Réf Livraison': 'ref_livraison',
 }
 
-const MAX_HEADER_SCAN_ROWS = 10
+function stripAccents(str) {
+  return String(str ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
 
 function normalizeHeader(value) {
-  return String(value ?? '')
+  return stripAccents(value)
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^A-Za-z0-9]+/g, ' ')
     .trim()
-    .replace(/\s+/g, ' ')
     .toUpperCase()
 }
+
+const NORMALIZED_HEADER_MAP = Object.fromEntries(
+  Object.entries(HEADER_MAP).map(([k, v]) => [normalizeHeader(k), v])
+)
+
+const MAX_HEADER_SCAN_ROWS = 10
 
 function isBlankRow(row) {
   return !row || row.every((cell) => cell == null || cell === '')
@@ -45,20 +59,31 @@ function parseDateCell(value) {
   if (typeof value === 'number') return excelSerialToISO(value)
   if (value instanceof Date) return value.toISOString().slice(0, 10)
   const str = String(value).trim()
-  const slash = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/)
-  if (slash) {
-    let [, a, b, y] = slash
-    if (y.length === 2) y = `20${y}`
-    // Le fichier source affiche les dates en M/D/YY (ex: "6/1/26").
-    return `${y}-${a.padStart(2, '0')}-${b.padStart(2, '0')}`
+  // Le fichier source externe affiche les dates en M/D/YY (ex: "6/1/26") ;
+  // l'export tvaPayerExcel.js les écrit en DD/MM/YYYY (ex: "01/06/2026").
+  // On tente d'abord DD/MM/YYYY (4 chiffres d'année = format export), sinon
+  // on retombe sur M/D/YY (année à 2 chiffres = format source externe).
+  const long = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/)
+  if (long) {
+    const [, d, m, y] = long
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  const short = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/)
+  if (short) {
+    const [, mo, d, y] = short
+    return `20${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`
   }
   const parsed = new Date(str)
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10)
 }
 
+function parseEntity(value) {
+  const str = String(value ?? '').trim()
+  return ENTITIES.find((e) => e.toLowerCase() === str.toLowerCase()) ?? null
+}
+
 // Cherche, dans les MAX_HEADER_SCAN_ROWS premières lignes, celle qui
-// contient le plus de colonnes reconnues (au moins "Numéro" et "Total HT")
-// -- reste robuste si la mise en page exacte varie légèrement.
+// contient le plus de colonnes reconnues (au moins "Numéro" et "Total HT").
 function findHeaderRow(rows) {
   let best = { index: -1, columns: null, score: 0 }
   for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN_ROWS); i++) {
@@ -67,8 +92,7 @@ function findHeaderRow(rows) {
     const columns = {}
     let score = 0
     row.forEach((cell, colIndex) => {
-      const key = normalizeHeader(cell)
-      const field = HEADER_MAP[key]
+      const field = NORMALIZED_HEADER_MAP[normalizeHeader(cell)]
       if (field && columns[field] === undefined) {
         columns[field] = colIndex
         score += 1
@@ -91,8 +115,13 @@ function findSheetWithHeader(workbook) {
   return null
 }
 
-// Lit un fichier "Etat Relevé Facture de Ventes" (.xls/.xlsx, ArrayBuffer)
-// et renvoie la liste des factures détectées, prêtes à l'aperçu/import.
+// Lit un fichier .xls/.xlsx (ArrayBuffer) -- export tvaPayerExcel.js
+// ré-importé tel quel, ou fichier source externe "Etat Relevé Facture de
+// Ventes" -- et renvoie la liste des factures détectées. `entity` reste null
+// si la colonne est absente/non reconnue (résolu dans TVAPayerImportTab
+// avec l'entité sélectionnée sur la page). Le statut de paiement n'est pas
+// dans ce fichier : jamais déterminé ici, voir TVAPayerImportTab pour la
+// valeur par défaut appliquée uniquement aux nouvelles factures.
 export function parseTvaPayerImportFile(arrayBuffer) {
   const workbook = read(arrayBuffer, { type: 'array' })
   const found = findSheetWithHeader(workbook)
@@ -114,24 +143,23 @@ export function parseTvaPayerImportFile(arrayBuffer) {
     const rawInvoiceNumber = get('invoice_number')
     if (rawInvoiceNumber == null || String(rawInvoiceNumber).trim() === '') continue
     const invoiceNumber = String(rawInvoiceNumber).trim()
-    // Ligne de totaux du fichier source : "Nombre de lignes :".
+    // Ligne de totaux (fichier source externe : "Nombre de lignes :").
     if (/^nombre de lignes/i.test(invoiceNumber)) continue
+    if (/^TOTAL\b/i.test(invoiceNumber)) continue
 
     const clientName = String(get('client_name') ?? '').trim()
     if (!clientName) continue
 
     const entryDate = parseDateCell(get('entry_date')) ?? new Date().toISOString().slice(0, 10)
-    const stampDuty = Number(get('stamp_duty')) || 0
 
     results.push({
       invoice_number: invoiceNumber,
+      entity: parseEntity(get('entity')),
       entry_date: entryDate,
       client_name: clientName,
       total_ht: Number(get('total_ht')) || 0,
       discount_amount: Number(get('discount_amount')) || 0,
-      stamp_duty: stampDuty,
-      // Timbre > 0 -> facture considérée réglée en espèces (voir TVAPayerForm).
-      payment_mode: stampDuty > 0 ? 'Espèces' : 'Non payé',
+      stamp_duty: Number(get('stamp_duty')) || 0,
       ref_commande: String(get('ref_commande') ?? '').trim() || null,
       ref_livraison: String(get('ref_livraison') ?? '').trim() || null,
     })
