@@ -3,15 +3,22 @@ import { read, utils, SSF } from 'xlsx'
 // Lecture du fichier Excel de la station-service. Deux formats gérés :
 //
 //  1. « ÉTAT DES VENTE » mensuel (le fichier réel "ETAT DES VENTE SARL
-//     STATION.xlsx") : un onglet par mois (Feuil1..Feuil7), en-tête
-//     DATTE / SANS PLOMB / GASOIL / GAZ BUTAN / TOTAL / sp1 / sp2 / gaz1 /
-//     gaz2 / gaz3. Une ligne = un jour, montants agrégés en DA (pas de
-//     client, pas de quantité, pas de prix unitaire). On génère des ventes
+//     STATION.xlsx" et sa version mise à jour avec la colonne LUBRIFIANTS) :
+//     un onglet par mois (Feuil1..Feuil8), en-tête DATTE / SANS PLOMB /
+//     GASOIL / LUBRIFIANTS / GAZ BUTAN / TOTAL / sp1 / sp2 / gaz1 / gaz2 /
+//     gaz3 -- LUBRIFIANTS est optionnelle (absente des fichiers plus
+//     anciens). Une ligne = un jour, montants agrégés en DA (pas de client,
+//     pas de quantité, pas de prix unitaire). On génère des ventes
 //     "comptoir" : 1 ligne par jour et par produit, client VENTES COMPTOIR,
 //     quantité 1, prix unitaire = recette du jour (=> total_ht = recette),
 //     statut Payé. SANS PLOMB -> Essence, GASOIL -> Gasoil (carburant) ;
-//     GAZ BUTAN -> table gaz. L'onglet "SUIVIE VERSSEMENT" (trésorerie
-//     bancaire) et le bloc paie IRG (colonnes O..Q) sont ignorés.
+//     LUBRIFIANTS -> table lubrifiants ; GAZ BUTAN -> table gaz. La ligne
+//     d'en-tête est détectée par son contenu (SANS PLOMB + GASOIL), pas par
+//     un numéro de ligne fixe -- robuste aux fichiers où elle est décalée
+//     (ex. ligne 5 au lieu de 4 sur certains onglets). L'onglet "SUIVIE
+//     VERSSEMENT" (trésorerie bancaire) et les colonnes par pompe
+//     (sp1/sp2/gaz1/gaz2/gaz3) sont ignorés ; le bloc paie IRG (colonnes
+//     O..Q, nombre de lignes variable selon les embauches) est importé.
 //
 //  2. Format par client (onglets nommés CARBURANT / LUBRIFIANT / GAZ avec
 //     colonnes Date, Client, Qté, P.U, Total, Consigne, Payé…). Détection
@@ -22,6 +29,17 @@ const MAX_HEADER_SCAN_ROWS = 15
 // Client fictif attribué aux ventes agrégées (recettes journalières sans
 // client nominatif) importées depuis l'état mensuel.
 export const COUNTER_CLIENT = 'VENTES COMPTOIR'
+
+const MONTH_NAMES_FR = [
+  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre',
+]
+
+// "2026-01-15" -> "Janvier 2026"
+function monthYearLabel(iso) {
+  const [y, m] = iso.split('-')
+  return `${MONTH_NAMES_FR[Number(m) - 1]} ${y}`
+}
 
 function norm(value) {
   return String(value ?? '')
@@ -111,6 +129,7 @@ function resolveEtatVente(h) {
   if (h === 'DATTE' || h === 'DATE') return 'date'
   if (h === 'SANS PLOMB' || h === 'ESSENCE' || h === 'SP') return 'sans_plomb'
   if (h === 'GASOIL' || h === 'GAS OIL' || h === 'DIESEL') return 'gasoil'
+  if (h === 'LUBRIFIANTS' || h === 'LUBRIFIANT' || h === 'HUILE' || h === 'HUILES') return 'lubrifiants'
   if (h === 'GAZ BUTAN' || h === 'GAZ BUTANE' || h === 'GAZ' || h === 'BUTANE') return 'gaz_butan'
   if (h === 'TOTAL') return 'total'
   return null
@@ -126,6 +145,7 @@ function parseEtatVente(rows) {
   const get = (row, f) => (columns[f] === undefined ? null : row[columns[f]])
 
   const carburant = []
+  const lubrifiants = []
   const gaz = []
 
   for (const row of dataRows(rows, index)) {
@@ -137,6 +157,7 @@ function parseEtatVente(rows) {
 
     const sp = toNumber(get(row, 'sans_plomb'))
     const go = toNumber(get(row, 'gasoil'))
+    const lub = toNumber(get(row, 'lubrifiants'))
     const gb = toNumber(get(row, 'gaz_butan'))
 
     if (sp > 0) {
@@ -161,6 +182,18 @@ function parseEtatVente(rows) {
         observations: "Recette journalière agrégée (import état des ventes GASOIL)",
       })
     }
+    if (lub > 0) {
+      lubrifiants.push({
+        entry_date: date,
+        client_name: COUNTER_CLIENT,
+        product: 'Lubrifiants (comptoir)',
+        quantity: 1,
+        unit: 'L',
+        unit_price: lub,
+        payment_status: 'Payé',
+        observations: `Import état des ventes mois ${monthYearLabel(date)}`,
+      })
+    }
     if (gb > 0) {
       gaz.push({
         entry_date: date,
@@ -175,8 +208,8 @@ function parseEtatVente(rows) {
     }
   }
 
-  if (carburant.length === 0 && gaz.length === 0) return null
-  return { carburant, lubrifiants: [], gaz }
+  if (carburant.length === 0 && lubrifiants.length === 0 && gaz.length === 0) return null
+  return { carburant, lubrifiants, gaz }
 }
 
 // Mois du 1er jour couvert par les ventes de l'onglet (les dates du fichier
@@ -184,6 +217,7 @@ function parseEtatVente(rows) {
 function periodFromSales(etat) {
   const dates = [
     ...etat.carburant.map((r) => r.entry_date),
+    ...etat.lubrifiants.map((r) => r.entry_date),
     ...etat.gaz.map((r) => r.entry_date),
   ].filter(Boolean).sort()
   if (dates.length === 0) return null
@@ -396,11 +430,12 @@ export function parseStationFile(arrayBuffer) {
     // Onglet trésorerie bancaire : sans objet pour la station.
     if (n.includes('VERSSEMENT') || n.includes('VERSEMENT')) continue
 
-    // Format 1 : état des ventes mensuel (SANS PLOMB / GASOIL / GAZ BUTAN)
-    // + bloc paie IRG des salaires (colonnes O-Q).
+    // Format 1 : état des ventes mensuel (SANS PLOMB / GASOIL / LUBRIFIANTS /
+    // GAZ BUTAN) + bloc paie IRG des salaires (colonnes O-Q).
     const etat = parseEtatVente(rows)
     if (etat) {
       result.carburant.push(...etat.carburant)
+      result.lubrifiants.push(...etat.lubrifiants)
       result.gaz.push(...etat.gaz)
       const period = periodFromSales(etat) || periodFromTitle(rows)
       result.salaires.push(...parseSalaires(rows, period))
