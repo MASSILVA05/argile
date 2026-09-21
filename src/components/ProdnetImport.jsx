@@ -169,11 +169,11 @@ function ProductsImport() {
           rows={rows}
           setRows={setRows}
           columns={[
+            { key: 'designation', label: 'Désignation', wide: true },
+            { key: 'quantite', label: 'Qté', format: formatQty, numeric: true },
+            { key: 'prix_moyen_ht', label: 'Prix moyen HT', format: formatDA, numeric: true },
+            { key: 'montant_ht', label: 'Montant HT', format: formatDA, numeric: true },
             { key: 'reference', label: 'Référence' },
-            { key: 'designation', label: 'Désignation' },
-            { key: 'quantite', label: 'Qté', format: formatQty },
-            { key: 'prix_moyen_ht', label: 'Prix moyen HT', format: formatDA },
-            { key: 'montant_ht', label: 'Montant HT', format: formatDA },
           ]}
           summary={summary}
           importing={importing}
@@ -344,12 +344,12 @@ function MatieresImport() {
           rows={rows}
           setRows={setRows}
           columns={[
-            { key: 'designation', label: 'Désignation' },
+            { key: 'designation', label: 'Désignation', wide: true },
             { key: 'position_tarifaire', label: 'Position tarifaire' },
             { key: 'unite', label: 'Unité' },
-            { key: 'quantite', label: 'Qté', format: formatQty },
-            { key: 'prix_moyen', label: 'Prix moyen', format: formatDA },
-            { key: 'valeur_totale', label: 'Valeur totale', format: formatDA },
+            { key: 'quantite', label: 'Qté', format: formatQty, numeric: true },
+            { key: 'prix_moyen', label: 'Prix moyen', format: formatDA, numeric: true },
+            { key: 'valeur_totale', label: 'Valeur totale', format: formatDA, numeric: true },
           ]}
           summary={summary}
           importing={importing}
@@ -374,41 +374,52 @@ function Preview({ rows, setRows, columns, summary, importing, progress, selecte
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={selectedCount === rows.length} onChange={(e) => toggleAll(e.target.checked)} className="h-4 w-4 accent-terracotta" />
-          Tout sélectionner
-        </label>
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg-soft px-4 py-3">
+        <button
+          type="button"
+          onClick={() => toggleAll(true)}
+          className="min-h-9 rounded-lg border border-ocre px-3 py-1.5 text-sm font-display text-ocre hover:bg-ocre/10"
+        >
+          Tout cocher
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleAll(false)}
+          className="min-h-9 rounded-lg border border-border px-3 py-1.5 text-sm font-display text-ink-muted hover:bg-bg"
+        >
+          Tout décocher
+        </button>
         <p className="text-sm text-ink-muted">
-          {rows.length} ligne(s), {selectedCount} sélectionnée(s) — {existingCount} mise(s) à jour, {newCount} nouvelle(s)
+          {rows.length} ligne(s) — {newCount} nouvelle(s), {existingCount} mise(s) à jour
         </p>
       </div>
 
-      <div className="max-h-[420px] overflow-auto rounded-lg border border-border">
-        <table className="w-full min-w-[900px] border-collapse text-[11px] sm:text-sm">
-          <thead className="sticky top-0 bg-bg-soft">
+      <div className="max-h-[400px] overflow-auto rounded-lg border border-border">
+        <table className="w-full border-collapse text-[11px] sm:text-sm">
+          <thead className="sticky top-0 z-10 bg-bg-soft">
             <tr className="border-b border-border text-left text-ink-muted">
-              <th className="px-2 py-2"></th>
-              <th className="px-2 py-2 font-display font-medium whitespace-nowrap">Statut</th>
+              <th className="min-w-[40px] px-2 py-2"></th>
+              <th className="min-w-[50px] px-2 py-2 font-display font-medium whitespace-nowrap">Statut</th>
+              <th className="min-w-[50px] px-2 py-2 font-display font-medium whitespace-nowrap" title="Quasi-doublon détecté">⚠</th>
               {columns.map((c) => (
-                <th key={c.key} className="px-2 py-2 font-display font-medium whitespace-nowrap">{c.label}</th>
+                <th
+                  key={c.key}
+                  className={`px-2 py-2 font-display font-medium whitespace-nowrap ${c.numeric ? 'text-right' : 'text-left'}`}
+                  style={{ minWidth: c.wide ? '200px' : '100px' }}
+                >
+                  {c.label}
+                </th>
               ))}
-              <th className="px-2 py-2 font-display font-medium whitespace-nowrap" title="Quasi-doublon détecté">⚠</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.__key} className={`border-b border-border last:border-0 ${r.exists ? 'bg-yellow-500/10' : ''}`}>
-                <td className="px-2 py-1">
+                <td className="min-w-[40px] px-2 py-1">
                   <input type="checkbox" checked={r.selected} onChange={() => toggle(r.__key)} className="h-4 w-4 accent-terracotta" />
                 </td>
-                <td className="px-2 py-1 whitespace-nowrap">{r.exists ? '🔄 Mise à jour' : '🆕 Nouvelle'}</td>
-                {columns.map((c) => (
-                  <td key={c.key} className="px-2 py-1 whitespace-nowrap">
-                    {c.format ? c.format(r[c.key]) : r[c.key] || '—'}
-                  </td>
-                ))}
-                <td className="px-2 py-1 whitespace-nowrap">
+                <td className="min-w-[50px] px-2 py-1 whitespace-nowrap">{r.exists ? '🔄 Mise à jour' : '🆕 Nouvelle'}</td>
+                <td className="min-w-[50px] px-2 py-1 whitespace-nowrap">
                   {r.duplicateOf?.length > 0 && (
                     <span
                       className="cursor-help text-terracotta"
@@ -418,6 +429,16 @@ function Preview({ rows, setRows, columns, summary, importing, progress, selecte
                     </span>
                   )}
                 </td>
+                {columns.map((c) => (
+                  <td
+                    key={c.key}
+                    className={`px-2 py-1 ${c.numeric ? 'text-right whitespace-nowrap' : c.wide ? 'text-left' : 'max-w-[150px] truncate text-left'}`}
+                    style={{ minWidth: c.wide ? '200px' : '100px' }}
+                    title={!c.wide && !c.numeric ? String(r[c.key] ?? '') : undefined}
+                  >
+                    {c.format ? c.format(r[c.key]) : r[c.key] || '—'}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
