@@ -259,7 +259,7 @@ export default function ProdnetMatieres() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[900px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[2000px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th>Désignation</Th>
@@ -268,6 +268,15 @@ export default function ProdnetMatieres() {
                   <Th>Quantité</Th>
                   <Th>Prix moyen</Th>
                   <Th>Valeur totale</Th>
+                  <Th>Conso Importé Qté</Th>
+                  <Th>Conso Importé Valeur</Th>
+                  <Th>Conso Local Qté</Th>
+                  <Th>Conso Local Valeur</Th>
+                  <Th>Stock Importé Qté</Th>
+                  <Th>Stock Importé Valeur</Th>
+                  <Th>Stock Local Qté</Th>
+                  <Th>Stock Local Valeur</Th>
+                  <Th>Site Production</Th>
                   <Th>Actions</Th>
                 </tr>
               </thead>
@@ -285,6 +294,15 @@ export default function ProdnetMatieres() {
                       <Td><input type="number" step="0.001" value={editDraft.quantite} onChange={(e) => setEditDraft({ ...editDraft, quantite: e.target.value })} className={editInputClass} /></Td>
                       <Td><input type="number" step="0.01" value={editDraft.prix_moyen} onChange={(e) => setEditDraft({ ...editDraft, prix_moyen: e.target.value })} className={editInputClass} /></Td>
                       <Td><input type="number" step="0.01" value={editDraft.valeur_totale} onChange={(e) => setEditDraft({ ...editDraft, valeur_totale: e.target.value })} className={editInputClass} placeholder="auto" /></Td>
+                      <Td>{row.conso_importe_quantite != null ? formatQty(row.conso_importe_quantite) : '—'}</Td>
+                      <Td>{row.conso_importe_valeur != null ? formatDA(row.conso_importe_valeur) : '—'}</Td>
+                      <Td>{row.conso_local_quantite != null ? formatQty(row.conso_local_quantite) : '—'}</Td>
+                      <Td>{row.conso_local_valeur != null ? formatDA(row.conso_local_valeur) : '—'}</Td>
+                      <Td>{row.stock_importe_quantite != null ? formatQty(row.stock_importe_quantite) : '—'}</Td>
+                      <Td>{row.stock_importe_valeur != null ? formatDA(row.stock_importe_valeur) : '—'}</Td>
+                      <Td>{row.stock_local_quantite != null ? formatQty(row.stock_local_quantite) : '—'}</Td>
+                      <Td>{row.stock_local_valeur != null ? formatDA(row.stock_local_valeur) : '—'}</Td>
+                      <Td className="max-w-[160px] truncate" title={row.site_production}>{row.site_production || '—'}</Td>
                       <Td>
                         <div className="flex gap-2">
                           <button type="button" onClick={saveEdit} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">Enregistrer</button>
@@ -304,6 +322,15 @@ export default function ProdnetMatieres() {
                       </Td>
                       <Td className="text-right">{formatDA(row.prix_moyen)}</Td>
                       <Td className="text-right">{formatDA(row.valeur_totale)}</Td>
+                      <Td className="text-right">{row.conso_importe_quantite != null ? formatQty(row.conso_importe_quantite) : '—'}</Td>
+                      <Td className="text-right">{row.conso_importe_valeur != null ? formatDA(row.conso_importe_valeur) : '—'}</Td>
+                      <Td className="text-right">{row.conso_local_quantite != null ? formatQty(row.conso_local_quantite) : '—'}</Td>
+                      <Td className="text-right">{row.conso_local_valeur != null ? formatDA(row.conso_local_valeur) : '—'}</Td>
+                      <Td className="text-right">{row.stock_importe_quantite != null ? formatQty(row.stock_importe_quantite) : '—'}</Td>
+                      <Td className="text-right">{row.stock_importe_valeur != null ? formatDA(row.stock_importe_valeur) : '—'}</Td>
+                      <Td className="text-right">{row.stock_local_quantite != null ? formatQty(row.stock_local_quantite) : '—'}</Td>
+                      <Td className="text-right">{row.stock_local_valeur != null ? formatDA(row.stock_local_valeur) : '—'}</Td>
+                      <Td className="max-w-[160px] truncate" title={row.site_production}>{row.site_production || '—'}</Td>
                       <Td>
                         <div className="flex gap-1">
                           <button type="button" onClick={() => setHistoryMatiere(row)} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">Historique</button>

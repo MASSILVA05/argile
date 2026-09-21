@@ -6677,3 +6677,23 @@ $$;
 
 revoke all on function tva_record_payment(uuid, numeric, text, text, text, text, text) from public;
 grant execute on function tva_record_payment(uuid, numeric, text, text, text, text, text) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- Prodnet import V2 (2026-09-21) : le format V2 (export ERP tiers,
+-- « Produit Fini » / « Matiere Premiere ») expose bien plus de colonnes que
+-- ce qui était stocké jusqu'ici. On les persiste toutes pour ne plus rien
+-- perdre à l'import (voir src/lib/prodnetImportParser.js, ProdnetImport.jsx).
+-- ------------------------------------------------------------
+alter table prodnet_products add column if not exists unite text default 'U';
+alter table prodnet_products add column if not exists prod_quantite numeric(10,2) default 0;
+alter table prodnet_products add column if not exists site_production text;
+
+alter table prodnet_matieres add column if not exists conso_importe_quantite numeric(12,2) default 0;
+alter table prodnet_matieres add column if not exists conso_importe_valeur numeric(14,2) default 0;
+alter table prodnet_matieres add column if not exists conso_local_quantite numeric(12,2) default 0;
+alter table prodnet_matieres add column if not exists conso_local_valeur numeric(14,2) default 0;
+alter table prodnet_matieres add column if not exists stock_importe_quantite numeric(12,2) default 0;
+alter table prodnet_matieres add column if not exists stock_importe_valeur numeric(14,2) default 0;
+alter table prodnet_matieres add column if not exists stock_local_quantite numeric(12,2) default 0;
+alter table prodnet_matieres add column if not exists stock_local_valeur numeric(14,2) default 0;
+alter table prodnet_matieres add column if not exists site_production text;

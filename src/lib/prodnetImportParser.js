@@ -11,14 +11,16 @@ import { translateUniteLabel } from './prodnet'
 //  - produits finis, format V2 (nouveau) : « produitfinis_template.xlsx »
 //    (export type ERP tiers, en-têtes nommées, PAS de référence) :
 //      A: Produit Fini        -> designation (clé de rapprochement)
-//      B: Unite                  ignoré (constant sur tout le fichier)
-//      C: Prod Quantite          ignoré (cumul de production, pas le stock)
+//      B: Unite               -> unite (traduit vers un code court, voir
+//                                 translateUniteLabel dans lib/prodnet.js)
+//      C: Prod Quantite       -> prod_quantite (cumul de production, informatif)
 //      D: Prod Valeur          -> prix_moyen_ht
-//      E: (sans en-tête, =C*D)   ignoré
+//      E: (sans en-tête, =C*D)   informatif seulement (prod_total, non stocké,
+//                                 recalculé côté client = prod_quantite × prix_moyen_ht)
 //      F: Stock Quantite       -> quantite (stock ACTUEL)
 //      G: (sans en-tête, vide)   ignoré
 //      H: Stock Valeur         -> montant_ht (repli : F*D si absent)
-//      I: Site Production        ignoré
+//      I: Site Production      -> site_production
 //    Détecté par la présence de l'en-tête « Produit Fini » ; sans quoi on
 //    retombe sur le mapping V1 positionnel.
 //
@@ -40,14 +42,16 @@ import { translateUniteLabel } from './prodnet'
 //      A: Matiere Premiere    -> designation (clé de rapprochement)
 //      B: Unite               -> unite (traduit vers un code court, voir
 //                                 translateUniteLabel dans lib/prodnet.js)
-//      C-F: Conso Importé/Local Quantité/Valeur   ignorés (pas de colonne
-//           de consommation dans le schéma actuel)
-//      G: Stock Importé Quantite  ┐
-//      I: Stock Local Quantite    ┴-> quantite = G + I
-//      H: Stock Importé Valeur    ┐
-//      J: Stock Local Valeur      ┴-> valeur_totale = H + J
+//      C: Conso Importé Quantite -> conso_importe_quantite
+//      D: Conso Importé Valeur   -> conso_importe_valeur
+//      E: Conso Local Quantite   -> conso_local_quantite
+//      F: Conso Local Valeur     -> conso_local_valeur
+//      G: Stock Importé Quantite -> stock_importe_quantite  ┐
+//      I: Stock Local Quantite   -> stock_local_quantite     ┴-> quantite = G + I
+//      H: Stock Importé Valeur   -> stock_importe_valeur    ┐
+//      J: Stock Local Valeur     -> stock_local_valeur       ┴-> valeur_totale = H + J
 //                                     prix_moyen = valeur_totale / quantite
-//      K: Site Production        ignoré
+//      K: Site Production        -> site_production
 //    Détecté par la présence de l'en-tête « Matiere Premiere ». Ces lignes
 //    sont marquées `format: 'v2'` : n'ayant aucune position tarifaire, elles
 //    ne doivent JAMAIS écraser position_tarifaire à l'import (voir
@@ -130,9 +134,12 @@ function findHeaderByName(rows, resolve, requiredFields) {
 function resolveProductV2(h) {
   if (!h) return null
   if (h === 'PRODUIT FINI') return 'designation'
+  if (h === 'UNITE') return 'unite'
+  if (h === 'PROD QUANTITE') return 'prod_quantite'
   if (h === 'PROD VALEUR') return 'prod_valeur'
   if (h === 'STOCK QUANTITE') return 'stock_quantite'
   if (h === 'STOCK VALEUR') return 'stock_valeur'
+  if (h === 'SITE PRODUCTION') return 'site_production'
   return null
 }
 
@@ -150,12 +157,18 @@ function parseProductsV2(rows, header) {
     const prix = toNumber(get(row, 'prod_valeur'))
     let montant = toNumber(get(row, 'stock_valeur'))
     if (!montant && quantite && prix) montant = quantite * prix
+    const prodQuantite = toNumber(get(row, 'prod_quantite'))
     results.push({
       reference: '',
       designation,
+      unite: translateUniteLabel(get(row, 'unite')),
+      prod_quantite: prodQuantite,
+      prod_total: prodQuantite * prix, // informatif seulement, jamais stocké
       quantite,
       prix_moyen_ht: prix,
       montant_ht: montant,
+      site_production: firstNonBlank(get(row, 'site_production')),
+      format: 'v2',
     })
   }
   return results
@@ -201,6 +214,7 @@ function parseProductsV1(rows) {
       quantite,
       prix_moyen_ht: prix,
       montant_ht: montant,
+      format: 'v1',
     })
   }
   return results
@@ -227,7 +241,7 @@ export function parseProdnetProductsFile(arrayBuffer) {
     const results = parseProductsV1(rows)
     if (results.length > 0) return results
   }
-  throw new Error("Aucune donnée reconnue dans le fichier produits finis (attendu : Référence, Famille de produits, Quantité, Prix moyen HT, Montant HT -- ou, format V2, Produit Fini, Stock Quantite, Prod Valeur, Stock Valeur).")
+  throw new Error("Aucune donnée reconnue dans le fichier produits finis (attendu : Référence, Famille de produits, Quantité, Prix moyen HT, Montant HT -- ou, format V2, Produit Fini, Unite, Prod Quantite, Prod Valeur, Stock Quantite, Stock Valeur, Site Production).")
 }
 
 // ============================================================
@@ -317,10 +331,15 @@ function resolveMatiereV2(h) {
   if (!h) return null
   if (h === 'MATIERE PREMIERE') return 'designation'
   if (h === 'UNITE') return 'unite'
+  if (h === 'CONSO IMPORTE QUANTITE') return 'conso_imp_qte'
+  if (h === 'CONSO IMPORTE VALEUR') return 'conso_imp_val'
+  if (h === 'CONSO LOCAL QUANTITE') return 'conso_loc_qte'
+  if (h === 'CONSO LOCAL VALEUR') return 'conso_loc_val'
   if (h === 'STOCK IMPORTE QUANTITE') return 'stock_imp_qte'
   if (h === 'STOCK IMPORTE VALEUR') return 'stock_imp_val'
   if (h === 'STOCK LOCAL QUANTITE') return 'stock_loc_qte'
   if (h === 'STOCK LOCAL VALEUR') return 'stock_loc_val'
+  if (h === 'SITE PRODUCTION') return 'site_production'
   return null
 }
 
@@ -334,8 +353,12 @@ function parseMatieresV2(rows, header) {
     const designation = firstNonBlank(get(row, 'designation'))
     if (!designation) continue
     if (/^TOTAL\b/i.test(designation)) continue
-    const quantite = toNumber(get(row, 'stock_imp_qte')) + toNumber(get(row, 'stock_loc_qte'))
-    const valeur = toNumber(get(row, 'stock_imp_val')) + toNumber(get(row, 'stock_loc_val'))
+    const stockImpQte = toNumber(get(row, 'stock_imp_qte'))
+    const stockLocQte = toNumber(get(row, 'stock_loc_qte'))
+    const stockImpVal = toNumber(get(row, 'stock_imp_val'))
+    const stockLocVal = toNumber(get(row, 'stock_loc_val'))
+    const quantite = stockImpQte + stockLocQte
+    const valeur = stockImpVal + stockLocVal
     const prix = quantite > 0 ? valeur / quantite : 0
     results.push({
       designation,
@@ -344,6 +367,15 @@ function parseMatieresV2(rows, header) {
       quantite,
       prix_moyen: prix,
       valeur_totale: valeur,
+      conso_importe_quantite: toNumber(get(row, 'conso_imp_qte')),
+      conso_importe_valeur: toNumber(get(row, 'conso_imp_val')),
+      conso_local_quantite: toNumber(get(row, 'conso_loc_qte')),
+      conso_local_valeur: toNumber(get(row, 'conso_loc_val')),
+      stock_importe_quantite: stockImpQte,
+      stock_importe_valeur: stockImpVal,
+      stock_local_quantite: stockLocQte,
+      stock_local_valeur: stockLocVal,
+      site_production: firstNonBlank(get(row, 'site_production')),
       format: 'v2',
     })
   }

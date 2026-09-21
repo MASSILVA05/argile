@@ -239,7 +239,7 @@ export default function ProdnetProducts() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[980px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1280px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th>Référence</Th>
@@ -247,6 +247,9 @@ export default function ProdnetProducts() {
                   <Th>Quantité</Th>
                   <Th>Prix moyen HT</Th>
                   <Th>Montant HT</Th>
+                  <Th>Unité</Th>
+                  <Th>Prod Quantité</Th>
+                  <Th>Site Production</Th>
                   <Th>Constitution</Th>
                   <Th>Actions</Th>
                 </tr>
@@ -260,6 +263,9 @@ export default function ProdnetProducts() {
                       <Td><input type="number" step="0.01" value={editDraft.quantite} onChange={(e) => setEditDraft({ ...editDraft, quantite: e.target.value })} className={editInputClass} /></Td>
                       <Td><input type="number" step="0.01" value={editDraft.prix_moyen_ht} onChange={(e) => setEditDraft({ ...editDraft, prix_moyen_ht: e.target.value })} className={editInputClass} /></Td>
                       <Td><input type="number" step="0.01" value={editDraft.montant_ht} onChange={(e) => setEditDraft({ ...editDraft, montant_ht: e.target.value })} className={editInputClass} placeholder="auto" /></Td>
+                      <Td>{row.unite || '—'}</Td>
+                      <Td>{row.prod_quantite != null ? formatQty(row.prod_quantite) : '—'}</Td>
+                      <Td className="max-w-[160px] truncate" title={row.site_production}>{row.site_production || '—'}</Td>
                       <Td>—</Td>
                       <Td>
                         <div className="flex gap-2">
@@ -306,6 +312,9 @@ function FragmentRow({ row, expanded, onToggle, onEditConstitution, onEdit, onDe
         <Td>{formatQty(row.quantite)}</Td>
         <Td className="text-right">{formatDA(row.prix_moyen_ht)}</Td>
         <Td className="text-right">{formatDA(row.montant_ht)}</Td>
+        <Td>{row.unite || '—'}</Td>
+        <Td className="text-right">{row.prod_quantite != null ? formatQty(row.prod_quantite) : '—'}</Td>
+        <Td className="max-w-[160px] truncate" title={row.site_production}>{row.site_production || '—'}</Td>
         <Td>
           <button
             type="button"
@@ -325,7 +334,7 @@ function FragmentRow({ row, expanded, onToggle, onEditConstitution, onEdit, onDe
       </tr>
       {expanded && cons.length > 0 && (
         <tr className="border-b border-border bg-bg-soft last:border-0">
-          <td colSpan={7} className="px-3 py-3">
+          <td colSpan={10} className="px-3 py-3">
             <p className="mb-2 font-display text-ink">Constitution — {row.reference ? `${row.designation} [${row.reference}]` : row.designation}</p>
             <table className="w-full border-collapse text-[11px] sm:text-sm">
               <thead>
