@@ -6209,12 +6209,15 @@ grant execute on function admin_delete_cheque(uuid, text) to anon, authenticated
 --   ppi_products.sous_total      = quantite_autorisee * prix_unitaire
 --   ppi_imports.montant          = quantite * prix_unitaire
 --
--- ppi_record_import (RPC atomique, appelée à chaque saisie) :
+-- ppi_record_import (RPC atomique, appelée à chaque saisie mono-produit) :
 --   1. verrouille la ligne pays (FOR UPDATE), vérifie budget_restant >= montant
 --      (sinon ERREUR "Budget dépassé", rollback -- jamais de plafond dépassé)
 --   2. verrouille la ligne produit, vérifie qu'il existe
 --   3. incrémente ppi_countries.budget_consomme et ppi_products.stock_actuel
 --   4. insère la ligne ppi_imports
+-- ppi_record_batch_import (RPC atomique, formulaire multi-produits) : même
+-- logique appliquée à une liste de produits (même pays/fournisseur/facture),
+-- tout ou rien -- voir sa définition pour le détail.
 -- Un trigger AFTER DELETE (ppi_reverse_import) restaure budget_consomme et
 -- stock_actuel quand une importation est supprimée (registre dans les 72h,
 -- ou admin_delete_ppi_import au-delà) -- pas de duplication de logique entre
@@ -6420,6 +6423,119 @@ $$;
 
 revoke all on function ppi_record_import(jsonb) from public;
 grant execute on function ppi_record_import(jsonb) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- ppi_record_batch_import : enregistre atomiquement PLUSIEURS importations
+-- (même pays, même fournisseur/facture) en un seul appel -- formulaire PPI
+-- multi-produits. p = { entry_date, entry_time, country_id, numero_facture,
+-- fournisseur, observations, entered_by_user, produits: [{ product_id,
+-- quantite, prix_unitaire }, ...] }.
+--   1. verrouille la ligne pays (FOR UPDATE)
+--   2. 1ère passe : verrouille + vérifie chaque produit (appartient bien au
+--      pays), calcule le montant total de la liste
+--   3. refuse (rollback) si le total dépasse le budget restant du pays --
+--      jamais de dépassement, comme ppi_record_import
+--   4. 2e passe : incrémente budget_consomme (une fois, pour le total) et
+--      stock_actuel (par produit), insère une ligne ppi_imports par produit
+-- ppi_reverse_import (trigger AFTER DELETE sur ppi_imports) réutilise la
+-- même logique de restauration ligne par ligne, sans changement.
+-- ------------------------------------------------------------
+create or replace function ppi_record_batch_import(p jsonb)
+returns setof ppi_imports
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_country_id uuid := nullif(p->>'country_id', '')::uuid;
+  v_budget_restant numeric;
+  v_country_name text;
+  v_item jsonb;
+  v_product_id uuid;
+  v_qty integer;
+  v_pu numeric;
+  v_total numeric := 0;
+  v_product_designation text;
+  v_position_tarifaire text;
+  v_entry_date date := coalesce((p->>'entry_date')::date, current_date);
+  v_entry_time time := (p->>'entry_time')::time;
+  v_numero_facture text := nullif(trim(coalesce(p->>'numero_facture', '')), '');
+  v_fournisseur text := nullif(trim(coalesce(p->>'fournisseur', '')), '');
+  v_observations text := nullif(trim(coalesce(p->>'observations', '')), '');
+  v_entered_by text := nullif(trim(coalesce(p->>'entered_by_user', '')), '');
+  v_row ppi_imports;
+begin
+  if v_country_id is null then
+    raise exception 'Pays non spécifié.';
+  end if;
+  if coalesce(jsonb_array_length(p->'produits'), 0) = 0 then
+    raise exception 'Aucun produit sélectionné.';
+  end if;
+
+  select budget_restant, name_fr into v_budget_restant, v_country_name
+    from ppi_countries where id = v_country_id for update;
+  if v_country_name is null then
+    raise exception 'Pays introuvable.';
+  end if;
+
+  -- 1ère passe : vérifie l'existence/l'appartenance des produits + calcule le total
+  for v_item in select * from jsonb_array_elements(p->'produits')
+  loop
+    v_product_id := nullif(v_item->>'product_id', '')::uuid;
+    v_qty := coalesce((v_item->>'quantite')::int, 0);
+    v_pu := coalesce((v_item->>'prix_unitaire')::numeric, 0);
+    if v_product_id is null then
+      raise exception 'Produit non spécifié dans la liste.';
+    end if;
+    if v_qty <= 0 then
+      raise exception 'Quantité invalide pour un produit de la liste.';
+    end if;
+
+    select designation into v_product_designation
+      from ppi_products where id = v_product_id and country_id = v_country_id for update;
+    if v_product_designation is null then
+      raise exception 'Produit introuvable ou n''appartient pas au pays sélectionné.';
+    end if;
+
+    v_total := v_total + (v_qty * v_pu);
+  end loop;
+
+  if v_total > v_budget_restant then
+    raise exception 'Budget dépassé pour % : restant % €, total demandé % €.', v_country_name, v_budget_restant, v_total;
+  end if;
+
+  -- 2e passe : applique les mises à jour + insère une ligne par produit
+  update ppi_countries set budget_consomme = budget_consomme + v_total where id = v_country_id;
+
+  for v_item in select * from jsonb_array_elements(p->'produits')
+  loop
+    v_product_id := (v_item->>'product_id')::uuid;
+    v_qty := (v_item->>'quantite')::int;
+    v_pu := coalesce((v_item->>'prix_unitaire')::numeric, 0);
+
+    select designation, position_tarifaire into v_product_designation, v_position_tarifaire
+      from ppi_products where id = v_product_id;
+
+    update ppi_products set stock_actuel = stock_actuel + v_qty where id = v_product_id;
+
+    insert into ppi_imports (
+      entry_date, entry_time, product_id, product_designation, position_tarifaire, country_id, country_name_fr,
+      quantite, prix_unitaire, numero_facture, fournisseur, observations, entered_by_user
+    ) values (
+      v_entry_date, v_entry_time, v_product_id, v_product_designation, v_position_tarifaire, v_country_id, v_country_name,
+      v_qty, v_pu, v_numero_facture, v_fournisseur, v_observations, v_entered_by
+    )
+    returning * into v_row;
+
+    return next v_row;
+  end loop;
+
+  return;
+end;
+$$;
+
+revoke all on function ppi_record_batch_import(jsonb) from public;
+grant execute on function ppi_record_batch_import(jsonb) to anon, authenticated;
 
 -- ------------------------------------------------------------
 -- ppi_reverse_import : restaure budget_consomme (pays) et stock_actuel

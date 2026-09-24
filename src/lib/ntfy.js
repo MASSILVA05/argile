@@ -542,6 +542,29 @@ export function notifyPpiImport(entry) {
   return sendNtfy(TOPIC_PPI, `PPI — Nouvelle importation (${entry.country_name_fr})`, lines, 'globe_with_meridians')
 }
 
+// rows : lignes ppi_imports renvoyées par ppi_record_batch_import (même
+// pays/fournisseur/facture, un produit par ligne).
+export function notifyPpiBatchImport(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return
+  const first = rows[0]
+  const total = rows.reduce((s, r) => s + (Number(r.montant) || 0), 0)
+  const lines = [
+    `Date : ${first.entry_date}${first.entry_time ? ` à ${first.entry_time.slice(0, 5)}` : ''}`,
+    `Pays : ${first.country_name_fr}`,
+    `Produits : ${rows.length}`,
+  ]
+  for (const r of rows.slice(0, 15)) {
+    lines.push(`• ${r.product_designation} ×${r.quantite} = ${formatDA(r.montant)} €`)
+  }
+  if (rows.length > 15) lines.push(`… +${rows.length - 15} produit(s)`)
+  lines.push(`Total : ${formatDA(total)} €`)
+  if (first.numero_facture) lines.push(`N° Facture : ${first.numero_facture}`)
+  if (first.fournisseur) lines.push(`Fournisseur : ${first.fournisseur}`)
+  if (first.observations) lines.push(`Obs : ${first.observations}`)
+  if (first.entered_by_user) lines.push(`Saisi par : ${first.entered_by_user}`)
+  return sendNtfy(TOPIC_PPI, `PPI — Nouvelle importation (${rows.length} produits, ${first.country_name_fr})`, lines, 'globe_with_meridians')
+}
+
 export function notifyClientAdvance(advance) {
   const lines = [
     `Client : ${advance.client_name}`,
