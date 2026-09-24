@@ -5,6 +5,7 @@ import { formatDateTime } from './dateFormat'
 
 const COLUMNS = [
   { header: 'N° Facture', key: 'invoice_number', width: 16 },
+  { header: 'Entité', key: 'entity', width: 14 },
   { header: 'Date', key: 'entry_date', width: 14 },
   { header: 'Saisie le', key: 'created_at', width: 18 },
   { header: 'Client', key: 'client_name', width: 28 },
@@ -50,6 +51,7 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
   for (const entry of entries) {
     const row = sheet.addRow({
       invoice_number: entry.invoice_number,
+      entity: entry.entity ?? '',
       entry_date: entry.entry_date,
       created_at: formatDateTime(entry.created_at),
       client_name: entry.client_name,

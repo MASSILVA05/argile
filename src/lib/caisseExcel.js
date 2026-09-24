@@ -17,6 +17,7 @@ import { categoryLabel, signedAmount } from './caisse'
 
 const COLUMNS = [
   { header: 'N° Bon', key: 'bon_number', width: 12 },
+  { header: 'Entité', key: 'entity', width: 14 },
   { header: 'Date', key: 'entry_date', width: 14 },
   { header: 'Heure', key: 'entry_time', width: 10 },
   { header: 'Saisie le', key: 'created_at', width: 18 },
@@ -53,6 +54,7 @@ export async function downloadCaisseExcel(entries, { onProgress, includePhotos =
   for (const entry of entries) {
     const row = sheet.addRow({
       bon_number: entry.bon_number,
+      entity: entry.entity ?? '',
       entry_date: entry.entry_date,
       entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : '',
       created_at: formatDateTime(entry.created_at),

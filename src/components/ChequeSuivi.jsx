@@ -14,7 +14,7 @@ const SECTIONS = [
   { statut: 'Rejeté', title: 'Rejetés', hint: 'à traiter', next: null, nextLabel: null },
 ]
 
-export default function ChequeSuivi() {
+export default function ChequeSuivi({ entityFilter }) {
   const { isAdmin } = useAuth()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -28,11 +28,13 @@ export default function ChequeSuivi() {
     let active = true
     async function load() {
       setLoading(true)
-      const { data, error: fetchError } = await supabase
+      let query = supabase
         .from('cheques')
         .select('*')
         .in('statut', ['En attente', 'Remis en banque', 'Rejeté'])
         .order('cheque_date', { ascending: true })
+      if (entityFilter) query = query.eq('entity', entityFilter)
+      const { data, error: fetchError } = await query
       if (!active) return
       if (fetchError) setError(`Erreur de chargement : ${fetchError.message}`)
       else {
@@ -43,14 +45,17 @@ export default function ChequeSuivi() {
     }
     load()
     const channel = supabase
-      .channel('cheques-suivi')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cheques' }, load)
+      .channel(`cheques-suivi-${entityFilter ?? 'all'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'cheques',
+        ...(entityFilter ? { filter: `entity=eq.${entityFilter}` } : {}),
+      }, load)
       .subscribe()
     return () => {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [entityFilter])
 
   const grouped = useMemo(() => {
     const map = { 'En attente': [], 'Remis en banque': [], Rejeté: [] }

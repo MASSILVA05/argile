@@ -13,6 +13,8 @@ import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
+import LinkedRecordModal from './LinkedRecordModal'
+import { printInvoices } from '../lib/printRegistry'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -22,7 +24,7 @@ function designationLabel(entry) {
   return entry.designation === 'Autre' ? entry.designation_other || 'Autre' : entry.designation
 }
 
-export default function InvoiceRegistry() {
+export default function InvoiceRegistry({ entityFilter }) {
   const { isAdmin, isViewer } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -44,11 +46,14 @@ export default function InvoiceRegistry() {
   const [adminBusy, setAdminBusy] = useState(false)
   const [clientInfoByName, setClientInfoByName] = useState(new Map())
   const [sheetModalOpen, setSheetModalOpen] = useState(false)
+  const [chequesByInvoice, setChequesByInvoice] = useState(new Map())
+  const [linkedChequeId, setLinkedChequeId] = useState(null)
+  const [invoicePrintOpen, setInvoicePrintOpen] = useState(false)
 
   useEffect(() => {
     supabase
       .from('clients')
-      .select('name, client_code, balance')
+      .select('name, client_code, balance, city')
       .then(({ data }) => {
         setClientInfoByName(new Map((data ?? []).map((c) => [c.name, c])))
       })
@@ -59,11 +64,13 @@ export default function InvoiceRegistry() {
 
     async function load() {
       setLoading(true)
-      const { data, error: fetchError } = await supabase
+      let invoicesQuery = supabase
         .from('invoices')
         .select('*')
         .order('entry_date', { ascending: false })
         .order('created_at', { ascending: false })
+      if (entityFilter) invoicesQuery = invoicesQuery.eq('entity', entityFilter)
+      const { data, error: fetchError } = await invoicesQuery
       if (!active) return
       if (fetchError) {
         setError(`Erreur de chargement : ${fetchError.message}`)
@@ -77,8 +84,11 @@ export default function InvoiceRegistry() {
     load()
 
     const channel = supabase
-      .channel('invoices-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, (payload) => {
+      .channel(`invoices-registry-${entityFilter ?? 'all'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'invoices',
+        ...(entityFilter ? { filter: `entity=eq.${entityFilter}` } : {}),
+      }, (payload) => {
         setEntries((current) => applyRealtimeChange(current, payload))
       })
       .subscribe()
@@ -87,7 +97,29 @@ export default function InvoiceRegistry() {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [entityFilter])
+
+  // Chèques liés à une facture (voir liaison Factures ↔ Chèques ↔ Caisse) --
+  // une même facture peut en théorie avoir plusieurs chèques (paiements
+  // partiels successifs), on garde donc une liste par facture.
+  useEffect(() => {
+    let active = true
+    let chequesQuery = supabase.from('cheques').select('id, cheque_number, bank, linked_invoice_id').not('linked_invoice_id', 'is', null)
+    if (entityFilter) chequesQuery = chequesQuery.eq('entity', entityFilter)
+    chequesQuery.then(({ data }) => {
+      if (!active) return
+      const map = new Map()
+      for (const c of data ?? []) {
+        const list = map.get(c.linked_invoice_id) ?? []
+        list.push(c)
+        map.set(c.linked_invoice_id, list)
+      }
+      setChequesByInvoice(map)
+    })
+    return () => {
+      active = false
+    }
+  }, [entityFilter, entries])
 
   const banks = useMemo(
     () => [...new Set(entries.map((e) => e.cheque_bank).filter(Boolean))],
@@ -189,6 +221,26 @@ export default function InvoiceRegistry() {
         stamp_duty: formatDA(totals.stampDuty),
         total_net: formatDA(totals.totalNet),
       },
+    }
+  }
+
+  // Facture professionnelle imprimable (une page par facture, à remettre au
+  // client -- voir printInvoices dans printRegistry.js). Distinct du registre
+  // tabulaire ci-dessus (buildPrintConfig) : ici la modale de sélection ne
+  // sert qu'à choisir QUELLES factures imprimer, le rendu final n'a rien de
+  // tabulaire.
+  function buildInvoicePrintConfig() {
+    return {
+      title: 'SARL DPR AXXAM',
+      subtitle: 'Facture(s) client',
+      columns: [
+        { key: 'invoice_number', label: 'N° Facture' },
+        { key: 'entry_date', label: 'Date' },
+        { key: 'client_name', label: 'Client' },
+        { key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
+      ],
+      rows: filtered,
+      onPrint: (rows) => printInvoices(rows, { clientInfoByName, chequesByInvoice }),
     }
   }
 
@@ -496,6 +548,14 @@ export default function InvoiceRegistry() {
             Imprimer
           </button>
           <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
+          <button
+            type="button"
+            onClick={() => setInvoicePrintOpen(true)}
+            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+          >
+            Imprimer facture
+          </button>
+          <PrintSelectionModal open={invoicePrintOpen} onClose={() => setInvoicePrintOpen(false)} {...buildInvoicePrintConfig()} />
           {!isViewer && (
             <button
               type="button"
@@ -574,10 +634,11 @@ export default function InvoiceRegistry() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[2400px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[2600px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>N° Facture</Th>
+                  <Th>Entité</Th>
                   <Th>Date</Th>
                   <Th>Saisie le</Th>
                   <Th>Client</Th>
@@ -606,6 +667,7 @@ export default function InvoiceRegistry() {
                   <Th>Paiement</Th>
                   <Th>Observations</Th>
                   <Th>Saisi par</Th>
+                  <Th>Chèque</Th>
                   <Th className="no-print">Actions</Th>
                 </tr>
               </thead>
@@ -621,10 +683,13 @@ export default function InvoiceRegistry() {
                       bankSuggestions={banks}
                       paymentTypeSuggestions={paymentTypes}
                       clientCode={clientInfoByName.get(entry.client_name)?.client_code}
+                      linkedCheques={chequesByInvoice.get(entry.id)}
+                      onOpenCheque={setLinkedChequeId}
                     />
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.invoice_number}</Td>
+                      <Td>{entry.entity ?? '—'}</Td>
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{entry.client_name}</Td>
@@ -661,13 +726,40 @@ export default function InvoiceRegistry() {
                         {entry.observations ?? '—'}
                       </Td>
                       <Td>{entry.entered_by_user ?? '—'}</Td>
+                      <Td>
+                        {(chequesByInvoice.get(entry.id) ?? []).length === 0 ? (
+                          '—'
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {chequesByInvoice.get(entry.id).map((c) => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => setLinkedChequeId(c.id)}
+                                className="text-left text-ocre underline-offset-2 hover:underline"
+                              >
+                                {c.cheque_number}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </Td>
                       <Td className="no-print">
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => printInvoices([entry], { clientInfoByName, chequesByInvoice })}
+                            className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10"
+                          >
+                            Imprimer facture
+                          </button>
+                          <RowActions
+                            entry={entry}
+                            onEdit={() => startEdit(entry)}
+                            onDelete={() => handleDelete(entry)}
+                            onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                          />
+                        </div>
                       </Td>
                     </tr>
                   )
@@ -677,6 +769,8 @@ export default function InvoiceRegistry() {
           </div>
         </div>
       )}
+
+      <LinkedRecordModal type="cheque" id={linkedChequeId} onClose={() => setLinkedChequeId(null)} />
 
       <ExportFilterModal
         open={exportModalOpen}
@@ -724,7 +818,7 @@ function PaidBadge({ status }) {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTypeSuggestions, clientCode }) {
+function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTypeSuggestions, clientCode, linkedCheques, onOpenCheque }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
@@ -751,6 +845,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       <Td sticky="bg-bg-soft">
         <input type="text" value={draft.invoice_number} onChange={(e) => set('invoice_number', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{draft.entity ?? '—'}</Td>
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
@@ -886,6 +981,17 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
         />
       </Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
+      <Td>
+        {(linkedCheques ?? []).length === 0 ? '—' : (
+          <div className="flex flex-col gap-0.5">
+            {linkedCheques.map((c) => (
+              <button key={c.id} type="button" onClick={() => onOpenCheque(c.id)} className="text-left text-ocre underline-offset-2 hover:underline">
+                {c.cheque_number}
+              </button>
+            ))}
+          </div>
+        )}
+      </Td>
       <Td className="no-print">
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">

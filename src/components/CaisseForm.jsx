@@ -5,7 +5,8 @@ import { sendCaisseEmail } from '../lib/email'
 import { uploadCaissePhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { getSession } from '../lib/auth'
-import { OPERATION_TYPES, PAYMENT_MODES, CATEGORIES } from '../lib/caisse'
+import { ENTITIES } from '../lib/tvaPayment'
+import { OPERATION_TYPES, PAYMENT_MODES, CATEGORIES, formatDA } from '../lib/caisse'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -26,10 +27,11 @@ const emptyDraft = {
   category: 'Autre',
   category_other: '',
   observations: '',
+  linked_invoice_id: '',
 }
 
-export default function CaisseForm() {
-  const [draft, setDraft] = useState(emptyDraft)
+export default function CaisseForm({ entity, canChooseEntity }) {
+  const [draft, setDraft] = useState({ ...emptyDraft, entity })
   const [beneficiaries, setBeneficiaries] = useState([])
   const [clients, setClients] = useState([])
   const [banks, setBanks] = useState([])
@@ -37,11 +39,33 @@ export default function CaisseForm() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [clock, setClock] = useState(() => formatHHMM(new Date()))
+  const [unpaidInvoices, setUnpaidInvoices] = useState([])
 
   useEffect(() => {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // Resynchronise l'entité si le sélecteur au niveau de la page change, et
+  // recharge la liste des factures non payées de cette entité (pour "Lier à
+  // une facture").
+  useEffect(() => {
+    setDraft((d) => ({ ...d, entity, linked_invoice_id: '' }))
+    let active = true
+    supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, total_net, montant_paye')
+      .eq('entity', entity)
+      .order('entry_date', { ascending: false })
+      .limit(300)
+      .then(({ data }) => {
+        if (!active) return
+        setUnpaidInvoices((data ?? []).filter((inv) => Number(inv.total_net) > Number(inv.montant_paye)))
+      })
+    return () => {
+      active = false
+    }
+  }, [entity])
 
   function dedupe(list) {
     return [...new Set((list ?? []).filter(Boolean))]
@@ -71,6 +95,20 @@ export default function CaisseForm() {
 
   function update(field, value) {
     setDraft((d) => ({ ...d, [field]: value }))
+  }
+
+  function linkInvoice(invoiceId) {
+    if (!invoiceId) {
+      update('linked_invoice_id', '')
+      return
+    }
+    const invoice = unpaidInvoices.find((inv) => inv.id === invoiceId)
+    setDraft((d) => ({
+      ...d,
+      linked_invoice_id: invoiceId,
+      amount: invoice ? String(Number(invoice.total_net) - Number(invoice.montant_paye)) : d.amount,
+      beneficiary: invoice?.client_name ?? d.beneficiary,
+    }))
   }
 
   const isCheque = draft.payment_mode === 'Chèque'
@@ -146,13 +184,12 @@ export default function CaisseForm() {
         category_other: isOtherCategory ? draft.category_other.trim() : null,
         observations: draft.observations.trim() || null,
         entered_by_user: getSession()?.username ?? null,
+        entity: draft.entity,
       }
 
-      const { data, error: insertError } = await supabase
-        .from('caisse_entries')
-        .insert(payload)
-        .select()
-        .single()
+      const { data, error: insertError } = draft.linked_invoice_id
+        ? await supabase.rpc('record_caisse_with_invoice', { p: { ...payload, linked_invoice_id: draft.linked_invoice_id } })
+        : await supabase.from('caisse_entries').insert(payload).select().single()
 
       if (insertError) {
         setLoading(false)
@@ -176,8 +213,11 @@ export default function CaisseForm() {
         bon_number: bonNumber + 1,
         entry_date: draft.entry_date,
         operation_type: draft.operation_type,
+        entity: draft.entity,
       })
-      setSuccess(`Bon n° ${bonNumber} enregistré.`)
+      setSuccess(
+        `Bon n° ${bonNumber} enregistré.${draft.linked_invoice_id ? ' Facture mise à jour.' : ''}`
+      )
     } catch (err) {
       setError(`Erreur d'enregistrement : ${err.message}`)
     } finally {
@@ -187,6 +227,16 @@ export default function CaisseForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {canChooseEntity && (
+        <Field label="Entité" required>
+          <select value={draft.entity} onChange={(e) => update('entity', e.target.value)} className={inputClass}>
+            {ENTITIES.map((e) => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="N° de bon" required>
           <input
@@ -249,6 +299,22 @@ export default function CaisseForm() {
           className={inputClass}
           required
         />
+      </Field>
+
+      <Field label="Lier à une facture (optionnel)">
+        <select value={draft.linked_invoice_id} onChange={(e) => linkInvoice(e.target.value)} className={inputClass}>
+          <option value="">— aucune —</option>
+          {unpaidInvoices.map((inv) => (
+            <option key={inv.id} value={inv.id}>
+              {inv.invoice_number} — {inv.client_name} — Montant {formatDA(inv.total_net)} DA — Reste {formatDA(Number(inv.total_net) - Number(inv.montant_paye))} DA
+            </option>
+          ))}
+        </select>
+        {draft.linked_invoice_id && (
+          <span className="text-xs text-ink-muted">
+            Montant et bénéficiaire pré-remplis depuis la facture (reste à payer) ; elle sera mise à jour automatiquement.
+          </span>
+        )}
       </Field>
 
       <Field label="Fournisseur / Bénéficiaire">

@@ -150,7 +150,7 @@ export function notifyInvoiceEntry(entry) {
   if (entry.truck_plate) lines.push(`Immat : ${entry.truck_plate}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy(TOPIC_FACTURES, 'Nouvelle facture', lines, 'receipt')
+  return sendNtfy(TOPIC_FACTURES, `Facture ${entry.entity ?? 'Briqueterie'} — Nouvelle facture`, lines, 'receipt')
 }
 
 export function notifyTvaEntry(entry) {
@@ -235,7 +235,7 @@ export function notifyCaisseEntry(entry) {
   lines.push(`Catégorie : ${category}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy(TOPIC_CAISSE, `Caisse — ${entry.operation_type}`, lines, 'moneybag')
+  return sendNtfy(TOPIC_CAISSE, `Caisse ${entry.entity ?? 'Briqueterie'} — ${entry.operation_type}`, lines, 'moneybag')
 }
 
 export function notifyMagasinVente(vente) {
@@ -510,7 +510,7 @@ export function notifyCheque(entry) {
   if (entry.motif) lines.push(`Motif : ${entry.motif}`)
   if (entry.observations) lines.push(`Obs : ${entry.observations}`)
   if (entry.entered_by_user) lines.push(`Saisi par : ${entry.entered_by_user}`)
-  return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.type} — ${entry.beneficiary}`, lines, 'moneybag')
+  return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.entity ?? 'Briqueterie'} — ${entry.type} — ${entry.beneficiary}`, lines, 'moneybag')
 }
 
 export function notifyChequeStatut(entry) {
@@ -521,7 +521,7 @@ export function notifyChequeStatut(entry) {
     `Nouveau statut : ${entry.statut}`,
   ]
   if (entry.statut === 'Rejeté' && entry.motif_rejet) lines.push(`Motif de rejet : ${entry.motif_rejet}`)
-  return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.cheque_number} — ${entry.statut}`, lines, 'warning')
+  return sendNtfy(TOPIC_CHEQUES, `Chèque ${entry.entity ?? 'Briqueterie'} — ${entry.cheque_number} — ${entry.statut}`, lines, 'warning')
 }
 
 // --- PPI (Programme Prévisionnel d'Importation) ------------------------

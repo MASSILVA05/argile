@@ -4,7 +4,8 @@ import { getSession } from '../lib/auth'
 import { notifyCheque } from '../lib/ntfy'
 import { uploadChequePhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
-import { CHEQUE_TYPES, CHEQUE_STATUTS, CHEQUE_BANKS, CHEQUE_MOTIFS } from '../lib/cheques'
+import { ENTITIES } from '../lib/tvaPayment'
+import { CHEQUE_TYPES, CHEQUE_STATUTS, CHEQUE_BANKS, CHEQUE_MOTIFS, formatDA } from '../lib/cheques'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -24,16 +25,18 @@ const emptyDraft = {
   motif_rejet: '',
   photo_file: null,
   observations: '',
+  linked_invoice_id: '',
 }
 
-export default function ChequeForm() {
-  const [draft, setDraft] = useState(emptyDraft)
+export default function ChequeForm({ entity, canChooseEntity }) {
+  const [draft, setDraft] = useState({ ...emptyDraft, entity })
   const [beneficiaries, setBeneficiaries] = useState([])
   const [banks, setBanks] = useState(CHEQUE_BANKS)
   const [motifs, setMotifs] = useState(CHEQUE_MOTIFS)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [unpaidInvoices, setUnpaidInvoices] = useState([])
 
   function dedupe(list) {
     return [...new Set((list ?? []).filter(Boolean))]
@@ -54,8 +57,43 @@ export default function ChequeForm() {
     loadSuggestions()
   }, [])
 
+  // Resynchronise l'entité si le sélecteur au niveau de la page change, et
+  // recharge la liste des factures non payées de cette entité (pour "Lier à
+  // une facture").
+  useEffect(() => {
+    setDraft((d) => ({ ...d, entity, linked_invoice_id: '' }))
+    let active = true
+    supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, total_net, montant_paye')
+      .eq('entity', entity)
+      .order('entry_date', { ascending: false })
+      .limit(300)
+      .then(({ data }) => {
+        if (!active) return
+        setUnpaidInvoices((data ?? []).filter((inv) => Number(inv.total_net) > Number(inv.montant_paye)))
+      })
+    return () => {
+      active = false
+    }
+  }, [entity])
+
   function update(field, value) {
     setDraft((d) => ({ ...d, [field]: value }))
+  }
+
+  function linkInvoice(invoiceId) {
+    if (!invoiceId) {
+      update('linked_invoice_id', '')
+      return
+    }
+    const invoice = unpaidInvoices.find((inv) => inv.id === invoiceId)
+    setDraft((d) => ({
+      ...d,
+      linked_invoice_id: invoiceId,
+      amount: invoice ? String(Number(invoice.total_net) - Number(invoice.montant_paye)) : d.amount,
+      beneficiary: invoice?.client_name ?? d.beneficiary,
+    }))
   }
 
   function setStatut(statut) {
@@ -118,9 +156,12 @@ export default function ChequeForm() {
         photo_url,
         observations: draft.observations.trim() || null,
         entered_by_user: getSession()?.username ?? null,
+        entity: draft.entity,
       }
 
-      const { data, error: insertError } = await supabase.from('cheques').insert(payload).select().single()
+      const { data, error: insertError } = draft.linked_invoice_id
+        ? await supabase.rpc('record_cheque_with_invoice', { p: { ...payload, linked_invoice_id: draft.linked_invoice_id } })
+        : await supabase.from('cheques').insert(payload).select().single()
 
       if (insertError) {
         setError(`Erreur d'enregistrement : ${insertError.message}`)
@@ -132,8 +173,12 @@ export default function ChequeForm() {
       setBanks((p) => dedupe([payload.bank, ...p]))
       if (payload.motif) setMotifs((p) => dedupe([payload.motif, ...p]))
 
-      setSuccess(`Chèque n° ${payload.cheque_number} (${payload.type}) enregistré.`)
-      setDraft({ ...emptyDraft, type: draft.type, cheque_date: draft.cheque_date })
+      setSuccess(
+        `Chèque n° ${payload.cheque_number} (${payload.type}) enregistré.${
+          draft.linked_invoice_id ? ' Facture mise à jour et écriture caisse générée automatiquement.' : ''
+        }`
+      )
+      setDraft({ ...emptyDraft, type: draft.type, cheque_date: draft.cheque_date, entity: draft.entity })
     } catch (err) {
       setError(`Erreur d'upload de la photo : ${err.message}`)
     } finally {
@@ -143,6 +188,16 @@ export default function ChequeForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {canChooseEntity && (
+        <Field label="Entité" required>
+          <select value={draft.entity} onChange={(e) => update('entity', e.target.value)} className={inputClass}>
+            {ENTITIES.map((e) => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Type" required>
           <select value={draft.type} onChange={(e) => update('type', e.target.value)} className={inputClass}>
@@ -158,6 +213,22 @@ export default function ChequeForm() {
 
       <Field label="Date du chèque" required>
         <input type="date" value={draft.cheque_date} onChange={(e) => update('cheque_date', e.target.value)} className={inputClass} required />
+      </Field>
+
+      <Field label="Lier à une facture (optionnel)">
+        <select value={draft.linked_invoice_id} onChange={(e) => linkInvoice(e.target.value)} className={inputClass}>
+          <option value="">— aucune —</option>
+          {unpaidInvoices.map((inv) => (
+            <option key={inv.id} value={inv.id}>
+              {inv.invoice_number} — {inv.client_name} — reste {formatDA(Number(inv.total_net) - Number(inv.montant_paye))} DA
+            </option>
+          ))}
+        </select>
+        {draft.linked_invoice_id && (
+          <span className="text-xs text-ink-muted">
+            Montant et bénéficiaire pré-remplis depuis la facture ; la facture et la caisse seront mises à jour automatiquement.
+          </span>
+        )}
       </Field>
 
       <Field label={draft.type === 'Émis' ? 'Bénéficiaire' : 'Émetteur'} required>

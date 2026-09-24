@@ -19,6 +19,7 @@ import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import PrintSelectionModal from './PrintSelectionModal'
+import LinkedRecordModal from './LinkedRecordModal'
 
 const SHEET_TYPES = [{ id: 'beneficiary', label: 'Bénéficiaire / Émetteur', nameLabel: 'Bénéficiaire / Émetteur' }]
 
@@ -35,7 +36,7 @@ const STATUT_BADGE = {
   'Annulé': 'border-border bg-bg-soft text-ink-muted line-through',
 }
 
-export default function ChequeRegistry() {
+export default function ChequeRegistry({ entityFilter }) {
   const { isAdmin } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -58,15 +59,16 @@ export default function ChequeRegistry() {
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
   const [sheetModal, setSheetModal] = useState(null)
+  const [invoicesById, setInvoicesById] = useState(new Map())
+  const [linkedInvoiceId, setLinkedInvoiceId] = useState(null)
 
   useEffect(() => {
     let active = true
     async function load() {
       setLoading(true)
-      const { data, error: fetchError } = await supabase
-        .from('cheques')
-        .select('*')
-        .order('created_at', { ascending: false })
+      let chequesQuery = supabase.from('cheques').select('*').order('created_at', { ascending: false })
+      if (entityFilter) chequesQuery = chequesQuery.eq('entity', entityFilter)
+      const { data, error: fetchError } = await chequesQuery
       if (!active) return
       if (fetchError) setError(`Erreur de chargement : ${fetchError.message}`)
       else {
@@ -77,8 +79,11 @@ export default function ChequeRegistry() {
     }
     load()
     const channel = supabase
-      .channel('cheques-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'cheques' }, (payload) => {
+      .channel(`cheques-registry-${entityFilter ?? 'all'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'cheques',
+        ...(entityFilter ? { filter: `entity=eq.${entityFilter}` } : {}),
+      }, (payload) => {
         setEntries((current) => applyRealtime(current, payload))
       })
       .subscribe()
@@ -86,7 +91,28 @@ export default function ChequeRegistry() {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [entityFilter])
+
+  // Facture liée à chaque chèque (voir liaison Factures ↔ Chèques ↔ Caisse).
+  useEffect(() => {
+    let active = true
+    const ids = [...new Set(entries.map((e) => e.linked_invoice_id).filter(Boolean))]
+    if (ids.length === 0) {
+      setInvoicesById(new Map())
+      return
+    }
+    supabase
+      .from('invoices')
+      .select('id, invoice_number')
+      .in('id', ids)
+      .then(({ data }) => {
+        if (!active) return
+        setInvoicesById(new Map((data ?? []).map((i) => [i.id, i])))
+      })
+    return () => {
+      active = false
+    }
+  }, [entries])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -338,10 +364,11 @@ export default function ChequeRegistry() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1400px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1600px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th>N° Chèque</Th>
+                  <Th>Entité</Th>
                   <Th>Date chèque</Th>
                   <Th>Type</Th>
                   <Th>Bénéficiaire</Th>
@@ -354,16 +381,26 @@ export default function ChequeRegistry() {
                   <Th className="no-print">Photo</Th>
                   <Th>Saisi par</Th>
                   <Th>Saisie le</Th>
+                  <Th>Facture</Th>
                   <Th className="no-print">Actions</Th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((entry) =>
                   editingId === entry.id ? (
-                    <EditRow key={entry.id} draft={editDraft} onChange={setEditDraft} onSave={saveEdit} onCancel={cancelEdit} />
+                    <EditRow
+                      key={entry.id}
+                      draft={editDraft}
+                      onChange={setEditDraft}
+                      onSave={saveEdit}
+                      onCancel={cancelEdit}
+                      linkedInvoice={invoicesById.get(entry.linked_invoice_id)}
+                      onOpenInvoice={setLinkedInvoiceId}
+                    />
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td className="font-medium text-ink">{entry.cheque_number}</Td>
+                      <Td>{entry.entity ?? '—'}</Td>
                       <Td>{entry.cheque_date}</Td>
                       <Td>
                         <span className={`inline-block rounded-full border px-2 py-0.5 text-xs whitespace-nowrap ${TYPE_BADGE[entry.type] ?? ''}`}>
@@ -397,6 +434,19 @@ export default function ChequeRegistry() {
                       </Td>
                       <Td>{entry.entered_by_user ?? '—'}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
+                      <Td>
+                        {entry.linked_invoice_id ? (
+                          <button
+                            type="button"
+                            onClick={() => setLinkedInvoiceId(entry.linked_invoice_id)}
+                            className="text-left text-ocre underline-offset-2 hover:underline"
+                          >
+                            {invoicesById.get(entry.linked_invoice_id)?.invoice_number ?? '…'}
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </Td>
                       <Td className="no-print">
                         <RowActions
                           entry={entry}
@@ -413,6 +463,8 @@ export default function ChequeRegistry() {
           </div>
         </>
       )}
+
+      <LinkedRecordModal type="invoice" id={linkedInvoiceId} onClose={() => setLinkedInvoiceId(null)} />
 
       {lightboxUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setLightboxUrl(null)}>
@@ -465,7 +517,7 @@ function Total({ label, value, className }) {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel }) {
+function EditRow({ draft, onChange, onSave, onCancel, linkedInvoice, onOpenInvoice }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
@@ -475,6 +527,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
       <Td><input type="text" value={draft.cheque_number ?? ''} onChange={(e) => set('cheque_number', e.target.value)} className={editInputClass} /></Td>
+      <Td>{draft.entity ?? '—'}</Td>
       <Td><input type="date" value={draft.cheque_date ?? ''} onChange={(e) => set('cheque_date', e.target.value)} className={editInputClass} /></Td>
       <Td>
         <select value={draft.type} onChange={(e) => set('type', e.target.value)} className={editInputClass}>
@@ -518,6 +571,13 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td className="no-print">{draft.photo_url ? <img src={draft.photo_url} alt="" className="h-10 w-10 rounded object-cover" /> : '—'}</Td>
       <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>{formatDateTime(draft.created_at)}</Td>
+      <Td>
+        {draft.linked_invoice_id ? (
+          <button type="button" onClick={() => onOpenInvoice(draft.linked_invoice_id)} className="text-left text-ocre underline-offset-2 hover:underline">
+            {linkedInvoice?.invoice_number ?? '…'}
+          </button>
+        ) : '—'}
+      </Td>
       <Td className="no-print">
         <div className="flex gap-2">
           <button type="button" onClick={onSave} className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10">Enregistrer</button>

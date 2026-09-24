@@ -11,6 +11,8 @@
 // qu'un contenu contenant « < » casse le tableau ; la structure HTML du
 // document n'est jamais échappée.
 
+import { numberToFrenchWords } from './numberToWords'
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -549,6 +551,283 @@ export function printProductsConstitution(products) {
   <p class="doc-title">Produits finis — Constitution</p>
   <hr class="doc-rule">
   ${blocks}
+</body>
+</html>`
+
+  openAndPrint(html)
+}
+
+// ============================================================
+// FACTURE CLIENT : document officiel A4 portrait à remettre au client
+// (en-tête société, identité client, détail produits, totaux, situation du
+// compte, montant en lettres, signatures). Une page par facture -- PAS de
+// "Saisi par", pas de date/heure d'impression, pas d'URL : c'est un document
+// destiné au client, pas un registre interne.
+// ============================================================
+
+function invoiceDesignationLabel(inv) {
+  return inv.designation === 'Autre' ? inv.designation_other || 'Autre' : inv.designation
+}
+
+// Une ligne par produit avec quantité > 0 (B8 / B12 / Autre-H). Repli sur une
+// ligne unique si aucune quantité (facture sans détail produit, ex. import
+// G50 avec amount_override).
+function invoiceDetailRows(inv) {
+  const rows = []
+  if (Number(inv.qty_b8) > 0) rows.push({ label: 'Brique B8', qty: Number(inv.qty_b8), price: Number(inv.price_b8) })
+  if (Number(inv.qty_b12) > 0) rows.push({ label: 'Brique B12', qty: Number(inv.qty_b12), price: Number(inv.price_b12) })
+  if (Number(inv.qty_h) > 0) {
+    const label = inv.designation === 'Autre' && inv.designation_other ? inv.designation_other : 'Autre (H)'
+    rows.push({ label, qty: Number(inv.qty_h), price: Number(inv.price_h) })
+  }
+  if (rows.length === 0) {
+    rows.push({ label: invoiceDesignationLabel(inv), qty: 1, price: Number(inv.amount_override ?? inv.amount) || 0 })
+  }
+  return rows
+}
+
+// Mode de paiement affiché : priorité aux chèques LIÉS (record_cheque_with_invoice,
+// peuvent être postérieurs à la saisie) ; à défaut, le chèque saisi
+// directement sur la facture (payment_status = 'Chèque') ; sinon le mode de
+// règlement classique, ou « — » si rien n'a encore été réglé.
+function invoicePaymentModeText(inv, linkedCheques) {
+  if (linkedCheques && linkedCheques.length > 0) {
+    return linkedCheques.map((c) => `Chèque N° ${c.cheque_number}${c.bank ? ` (${c.bank})` : ''}`).join(', ')
+  }
+  if (inv.payment_status === 'Chèque' && inv.cheque_number) {
+    return `Chèque N° ${inv.cheque_number}${inv.cheque_bank ? ` (${inv.cheque_bank})` : ''}`
+  }
+  if (inv.payment_status && inv.payment_status !== 'Non payé') return inv.payment_status
+  return '—'
+}
+
+function factureFicheHtml(inv, { clientInfo, linkedCheques } = {}) {
+  const totalNet = Number(inv.total_net) || 0
+  const montantPaye = Number(inv.montant_paye) || 0
+  const balanceBefore = Number(inv.balance_before) || 0
+  const nouveauSolde = balanceBefore + totalNet - montantPaye
+
+  const detailRows = invoiceDetailRows(inv)
+  const detailRowsHtml = detailRows
+    .map(
+      (r, i) => `<tr>
+        <td class="center">${i + 1}</td>
+        <td>${escapeHtml(r.label)}</td>
+        <td class="right">${escapeHtml(nfQty(r.qty))}</td>
+        <td class="right">${escapeHtml(nf2(r.price))}</td>
+        <td class="right">${escapeHtml(nf2(r.qty * r.price))}</td>
+      </tr>`
+    )
+    .join('')
+
+  // NB : la remise est appliquée AVANT le calcul de la TVA (total_tva =
+  // (amount - discount_amount) * 0.19, colonne générée -- voir schema.sql),
+  // donc affichée ici juste après le HT brut plutôt qu'en toute dernière
+  // ligne comme certaines maquettes papier : ça reste la seule présentation
+  // dont l'addition des lignes reconstitue exactement total_net.
+  const discountAmount = Number(inv.discount_amount) || 0
+  const totalsRowsHtml = [
+    { label: 'TOTAL HT', value: inv.amount },
+    ...(discountAmount > 0 ? [{ label: 'Remise', value: -discountAmount }] : []),
+    { label: 'TVA (19%)', value: inv.total_tva },
+    { label: 'Total TTC', value: inv.total_ttc },
+    { label: 'Timbre', value: inv.stamp_duty },
+  ]
+    .map(
+      (t) => `<tr>
+        <td colspan="3">${escapeHtml(t.label)}</td>
+        <td class="right">${escapeHtml(nf2(t.value))}</td>
+      </tr>`
+    )
+    .join('')
+
+  const situationRows = [
+    { label: 'Ancien solde', value: `${nf2(balanceBefore)} DA` },
+    { label: 'Montant de cette facture', value: `${nf2(totalNet)} DA` },
+    ...(montantPaye > 0 ? [{ label: 'Règlement reçu', value: `${nf2(montantPaye)} DA` }] : []),
+    { label: 'Mode de paiement', value: invoicePaymentModeText(inv, linkedCheques) },
+  ]
+    .map((r) => `<tr><td class="k">${escapeHtml(r.label)}</td><td class="right">${escapeHtml(r.value)}</td></tr>`)
+    .join('')
+
+  const clientRows = [
+    { label: 'Nom', value: inv.client_name },
+    { label: 'Code client', value: clientInfo?.client_code },
+    { label: 'Adresse', value: clientInfo?.city },
+    { label: 'NIF', value: clientInfo?.nif },
+  ]
+    .map((r) => `<tr><td class="k">${escapeHtml(r.label)}</td><td>${escapeHtml(r.value || '—')}</td></tr>`)
+    .join('')
+
+  return `<section class="fiche">
+  ${companyHeaderHtml()}
+
+  <p class="fiche-title">FACTURE N° ${escapeHtml(inv.invoice_number)}<br><span class="fiche-date">Date : ${escapeHtml(dateFR(inv.entry_date))}</span></p>
+
+  <p class="sec-label">CLIENT</p>
+  <table class="kv">
+    <colgroup><col style="width:28%"><col style="width:72%"></colgroup>
+    <tbody>${clientRows}</tbody>
+  </table>
+
+  <p class="sec-label">DÉTAIL DE LA FACTURE</p>
+  <table class="detail">
+    <colgroup><col style="width:6%"><col style="width:40%"><col style="width:16%"><col style="width:17%"><col style="width:21%"></colgroup>
+    <thead>
+      <tr>
+        <th class="center">N°</th>
+        <th>Désignation</th>
+        <th class="right">Quantité</th>
+        <th class="right">Prix U. (DA)</th>
+        <th class="right">Total (DA)</th>
+      </tr>
+    </thead>
+    <tbody>${detailRowsHtml}</tbody>
+    <tfoot>
+      ${totalsRowsHtml}
+      <tr class="net-row">
+        <td colspan="3">TOTAL NET À PAYER</td>
+        <td class="right">${escapeHtml(nf2(totalNet))}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <p class="sec-label">SITUATION DU COMPTE</p>
+  <table class="kv">
+    <colgroup><col style="width:45%"><col style="width:55%"></colgroup>
+    <tbody>
+      ${situationRows}
+      <tr class="net-row"><td>NOUVEAU SOLDE</td><td class="right">${escapeHtml(nf2(nouveauSolde))} DA</td></tr>
+    </tbody>
+  </table>
+
+  <p class="montant-lettres">
+    Arrêté la présente facture à la somme de :<br>
+    <strong>${escapeHtml(numberToFrenchWords(totalNet))}</strong>
+  </p>
+
+  <div class="fiche-sign">
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Client</span></div>
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Directeur</span></div>
+  </div>
+</section>`
+}
+
+// invoices : lignes de la table `invoices` (sélectionnées dans InvoiceRegistry).
+// extra.clientInfoById : Map<nom_client, { client_code, city }> (déjà chargée
+// par le registre). extra.chequesByInvoice : Map<invoice_id, cheque[]>
+// (chèques liés, déjà chargée par le registre pour sa colonne "Chèque").
+export function printInvoices(invoices, extra = {}) {
+  const list = Array.isArray(invoices) ? invoices : []
+  const clientInfoByName = extra.clientInfoByName ?? new Map()
+  const chequesByInvoice = extra.chequesByInvoice ?? new Map()
+
+  const sections = list.length
+    ? list
+        .map((inv) =>
+          factureFicheHtml(inv, {
+            clientInfo: clientInfoByName.get(inv.client_name),
+            linkedCheques: chequesByInvoice.get(inv.id),
+          })
+        )
+        .join('')
+    : `<p class="empty">Aucune facture sélectionnée.</p>`
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
+  body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 10pt; }
+
+  @page { size: A4 portrait; margin: 2cm; }
+  @media print {
+    @page { margin: 2cm; }
+  }
+
+  .fiche { page-break-after: always; }
+  .fiche:last-child { page-break-after: auto; }
+
+  ${COMPANY_HEADER_CSS}
+
+  .fiche-title {
+    text-align: center;
+    font-size: 13pt;
+    font-weight: bold;
+    margin: 12px 0 14px;
+    padding: 6px 0;
+    border-top: 3px double #000000;
+    border-bottom: 3px double #000000;
+  }
+  .fiche-date { font-size: 10pt; font-weight: normal; }
+
+  .sec-label {
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 14px 0 4px;
+    padding-bottom: 2px;
+    border-bottom: 1.5px solid #000000;
+  }
+
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.kv, table.detail { border: 3px double #000000; }
+  th, td {
+    border: 1px solid #000000;
+    padding: 4px 7px;
+    font-size: 10pt;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  th { background: #e8e8e8; font-weight: bold; }
+  .right { text-align: right; }
+  .center { text-align: center; }
+
+  table.kv td.k { background: #f2f2f2; font-weight: bold; width: 40%; }
+
+  table.detail tfoot td {
+    font-weight: bold;
+    background: #f0f0f0;
+    border-top: 1px solid #000000;
+  }
+  table.detail tfoot tr.net-row td {
+    background: #dedede;
+    font-size: 12pt;
+    border-top: 2px solid #000000;
+  }
+  table.kv tr.net-row td {
+    background: #dedede;
+    font-weight: bold;
+    font-size: 12pt;
+  }
+
+  .montant-lettres {
+    margin: 14px 0 0;
+    font-size: 10pt;
+    line-height: 1.5;
+  }
+
+  .fiche-sign {
+    display: flex;
+    justify-content: space-between;
+    gap: 40px;
+    margin-top: 56px;
+  }
+  .sign-box { flex: 1; text-align: center; }
+  .sign-line { display: block; border-top: 1px solid #000000; margin: 0 24px; }
+  .sign-label { display: block; font-size: 10pt; margin-top: 4px; font-weight: bold; }
+
+  p.empty { text-align: center; color: #555555; font-style: italic; padding: 24px 0; }
+
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+  ${sections}
 </body>
 </html>`
 

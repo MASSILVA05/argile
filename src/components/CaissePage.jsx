@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { computeSolde, formatDA } from '../lib/caisse'
+import { useAuth, salesEntityAccessForRole } from '../lib/auth'
+import { ENTITIES } from '../lib/tvaPayment'
 import CaisseForm from './CaisseForm'
 import CaisseRegistry from './CaisseRegistry'
 
@@ -12,32 +14,60 @@ const TABS = [
 export default function CaissePage() {
   const [view, setView] = useState('form')
   const [solde, setSolde] = useState(null)
+  const { role } = useAuth()
+  const { fixedEntity, canSeeAllEntities } = salesEntityAccessForRole(role)
+  const canChooseEntity = fixedEntity == null
+  const [selectedEntity, setSelectedEntity] = useState(fixedEntity ?? 'Briqueterie')
+
+  const entityFilter = fixedEntity ?? (selectedEntity === 'Tout' ? null : selectedEntity)
+  const formEntity = fixedEntity ?? (selectedEntity === 'Tout' ? 'Briqueterie' : selectedEntity)
 
   useEffect(() => {
     let active = true
 
     async function loadSolde() {
-      const { data } = await supabase.from('caisse_entries').select('operation_type, amount')
+      let query = supabase.from('caisse_entries').select('operation_type, amount')
+      if (entityFilter) query = query.eq('entity', entityFilter)
+      const { data } = await query
       if (active && data) setSolde(computeSolde(data))
     }
 
     loadSolde()
 
     const channel = supabase
-      .channel('caisse-solde')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_entries' }, loadSolde)
+      .channel(`caisse-solde-${entityFilter ?? 'all'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'caisse_entries',
+        ...(entityFilter ? { filter: `entity=eq.${entityFilter}` } : {}),
+      }, loadSolde)
       .subscribe()
 
     return () => {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [entityFilter])
 
   const positive = solde == null || solde >= 0
 
   return (
     <div className="flex flex-col gap-4">
+      {canChooseEntity && (
+        <div className="no-print flex items-center gap-2">
+          <span className="text-sm text-ink-muted">Entité :</span>
+          <select
+            value={selectedEntity}
+            onChange={(e) => setSelectedEntity(e.target.value)}
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+          >
+            {ENTITIES.map((e) => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+            {canSeeAllEntities && <option value="Tout">Tout</option>}
+          </select>
+        </div>
+      )}
+
       <div
         className={`rounded-lg border p-4 ${
           positive ? 'border-green-500/50 bg-green-500/10' : 'border-terracotta/60 bg-terracotta/10'
@@ -66,7 +96,11 @@ export default function CaissePage() {
         ))}
       </nav>
 
-      {view === 'form' ? <CaisseForm /> : <CaisseRegistry />}
+      {view === 'form' ? (
+        <CaisseForm entity={formEntity} canChooseEntity={canChooseEntity} />
+      ) : (
+        <CaisseRegistry entityFilter={entityFilter} />
+      )}
     </div>
   )
 }

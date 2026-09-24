@@ -6697,3 +6697,410 @@ alter table prodnet_matieres add column if not exists stock_importe_valeur numer
 alter table prodnet_matieres add column if not exists stock_local_quantite numeric(12,2) default 0;
 alter table prodnet_matieres add column if not exists stock_local_valeur numeric(14,2) default 0;
 alter table prodnet_matieres add column if not exists site_production text;
+
+-- ============================================================
+-- CLOISONNEMENT PAR ENTITÉ (2026-09-24) : Factures / Chèques / Caisse
+-- suivent désormais le même cloisonnement Briqueterie/AVADOU que la TVA
+-- (voir tva_entries.entity plus haut, et request_login_code qui fixe déjà
+-- l'entité de Halim -> 'Briqueterie' et AVADOU -> 'AVADOU' ; tous les
+-- autres comptes choisissent librement -- aucun changement nécessaire côté
+-- request_login_code, ce mécanisme est déjà générique). Voir ROLE_TABS
+-- dans src/lib/auth.js (tva_only et tva_prodnet gagnent 'invoices',
+-- 'cheques', 'caisse') et le sélecteur d'entité ajouté à InvoicesPage.jsx /
+-- ChequesPage.jsx / CaissePage.jsx (même logique que TVAPage.jsx).
+-- ============================================================
+
+alter table invoices add column if not exists entity text not null default 'Briqueterie'
+  check (entity in ('Briqueterie', 'AVADOU'));
+alter table cheques add column if not exists entity text not null default 'Briqueterie'
+  check (entity in ('Briqueterie', 'AVADOU'));
+alter table caisse_entries add column if not exists entity text not null default 'Briqueterie'
+  check (entity in ('Briqueterie', 'AVADOU'));
+
+create index if not exists invoices_entity_idx on invoices (entity);
+create index if not exists cheques_entity_idx on cheques (entity);
+create index if not exists caisse_entries_entity_idx on caisse_entries (entity);
+
+comment on column invoices.entity is 'Entité comptable : Briqueterie (DPR AXXAM) ou AVADOU';
+comment on column cheques.entity is 'Entité comptable : Briqueterie (DPR AXXAM) ou AVADOU';
+comment on column caisse_entries.entity is 'Entité comptable : Briqueterie (DPR AXXAM) ou AVADOU';
+
+-- Migration des données existantes : la colonne est NOT NULL DEFAULT
+-- 'Briqueterie', donc déjà backfillée automatiquement par le ADD COLUMN
+-- ci-dessus -- ces UPDATE sont un filet de sécurité idempotent (no-op tant
+-- qu'aucune ligne n'a entity = NULL).
+update invoices set entity = 'Briqueterie' where entity is null;
+update cheques set entity = 'Briqueterie' where entity is null;
+update caisse_entries set entity = 'Briqueterie' where entity is null;
+
+-- ------------------------------------------------------------
+-- LIAISON Factures ↔ Chèques ↔ Caisse.
+--
+-- `invoices` n'avait jusqu'ici aucun suivi de règlement APRÈS la saisie
+-- (payment_status est le mode de règlement choisi à la saisie -- 'Espèces'
+-- / 'Versement' / 'Chèque' / 'Non payé' -- pas un statut de solde évolutif
+-- comme sur tva_entries). `montant_paye` ajoute ce suivi, uniquement
+-- consulté :
+--   - par record_cheque_with_invoice / record_caisse_with_invoice
+--     ci-dessous (paiement partiel/total après coup, via chèque ou caisse
+--     liés) ;
+--   - par le nouveau statut 'Partiel' dans sync_client_balance_from_invoice
+--     (voir plus bas -- les statuts historiques 'Espèces'/'Versement'/
+--     'Chèque'/'Payé' continuent de compter `total_net` en entier, comme
+--     avant, donc AUCUN changement de comportement pour la saisie
+--     classique).
+-- "Reste à payer" n'est PAS une colonne stockée (total_net est une colonne
+-- générée -- une colonne générée ne peut pas être lue depuis un trigger
+-- BEFORE, voir commentaire plus haut dans ce fichier) : il se calcule à la
+-- volée = total_net - montant_paye, côté SQL (RPC) comme côté client
+-- (sélection des factures non payées dans ChequeForm.jsx / CaisseForm.jsx).
+-- ------------------------------------------------------------
+
+alter table invoices add column if not exists montant_paye numeric(12, 2) not null default 0;
+comment on column invoices.montant_paye is 'Montant réglé sur cette facture (saisie initiale + chèques/caisse liés) ; reste à payer = total_net - montant_paye, calculé à la volée';
+
+-- Backfill : préserve exactement ce que total_paid comptait déjà pour cette
+-- facture côté clients (l'ancien calcul traitait tout payment_status <>
+-- 'Non payé' comme facture intégralement réglée = total_net).
+update invoices set montant_paye = case when payment_status <> 'Non payé' then total_net else 0 end
+where montant_paye = 0 and payment_status <> 'Non payé';
+
+alter table invoices drop constraint if exists invoices_payment_status_check;
+alter table invoices add constraint invoices_payment_status_check
+  check (payment_status in ('Espèces', 'Versement', 'Chèque', 'Non payé', 'Partiel', 'Payé'));
+
+-- sync_client_balance_from_invoice : ajoute le cas 'Partiel' (utilise
+-- montant_paye, pas total_net en entier) -- tous les autres statuts gardent
+-- exactement le calcul historique (total_net en entier si != 'Non payé').
+create or replace function sync_client_balance_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_client_id uuid;
+  v_new_client_id uuid;
+  v_old_paid numeric;
+  v_new_paid numeric;
+begin
+  if TG_OP = 'UPDATE' or TG_OP = 'DELETE' then
+    v_old_paid := case
+      when OLD.payment_status = 'Non payé' then 0
+      when OLD.payment_status = 'Partiel' then coalesce(OLD.montant_paye, 0)
+      else OLD.total_net
+    end;
+    select id into v_old_client_id from clients where lower(name) = lower(OLD.client_name) limit 1;
+    if v_old_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced - OLD.total_net,
+        total_paid = total_paid - v_old_paid,
+        updated_at = now()
+      where id = v_old_client_id;
+    end if;
+  end if;
+
+  if TG_OP = 'INSERT' or TG_OP = 'UPDATE' then
+    v_new_paid := case
+      when NEW.payment_status = 'Non payé' then 0
+      when NEW.payment_status = 'Partiel' then coalesce(NEW.montant_paye, 0)
+      else NEW.total_net
+    end;
+    select id into v_new_client_id from clients where lower(name) = lower(NEW.client_name) limit 1;
+    if v_new_client_id is not null then
+      update clients set
+        total_invoiced = total_invoiced + NEW.total_net,
+        total_paid = total_paid + v_new_paid,
+        updated_at = now()
+      where id = v_new_client_id;
+    end if;
+  end if;
+
+  update clients set balance = total_invoiced - total_paid
+  where id = v_old_client_id or id = v_new_client_id;
+
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+-- Colonnes de liaison.
+alter table cheques add column if not exists linked_invoice_id uuid references invoices(id) on delete set null;
+alter table caisse_entries add column if not exists linked_invoice_id uuid references invoices(id) on delete set null;
+alter table caisse_entries add column if not exists linked_cheque_id uuid references cheques(id) on delete set null;
+
+create index if not exists cheques_linked_invoice_idx on cheques (linked_invoice_id);
+create index if not exists caisse_entries_linked_invoice_idx on caisse_entries (linked_invoice_id);
+create index if not exists caisse_entries_linked_cheque_idx on caisse_entries (linked_cheque_id);
+
+comment on column cheques.linked_invoice_id is 'Facture réglée par ce chèque (optionnel) -- voir record_cheque_with_invoice';
+comment on column caisse_entries.linked_invoice_id is 'Facture réglée par cette entrée caisse (optionnel) -- voir record_caisse_with_invoice';
+comment on column caisse_entries.linked_cheque_id is 'Chèque à l''origine de cette entrée caisse générée automatiquement (optionnel)';
+
+-- ------------------------------------------------------------
+-- record_cheque_with_invoice : enregistre un chèque, et si p->>'linked_invoice_id'
+-- est renseigné, dans la MÊME transaction (atomique) :
+--   1. INSERT cheque (avec linked_invoice_id)
+--   2. UPDATE invoices.montant_paye (+ montant du chèque) et payment_status
+--      ('Payé' si reste à payer = 0, sinon 'Partiel')
+--   3. INSERT caisse_entries généré automatiquement (Décaissement si chèque
+--      Émis, Encaissement si Reçu), avec linked_invoice_id ET linked_cheque_id
+-- Sans facture liée : comportement inchangé (simple INSERT du chèque).
+-- ------------------------------------------------------------
+create or replace function record_cheque_with_invoice(p jsonb)
+returns cheques
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_cheque cheques;
+  v_invoice invoices;
+  v_invoice_id uuid;
+  v_amount numeric;
+  v_reste numeric;
+  v_new_montant_paye numeric;
+  v_new_status text;
+  v_caisse_bon integer;
+  v_entity text;
+begin
+  v_amount := (p->>'amount')::numeric;
+  if v_amount is null or v_amount <= 0 then
+    raise exception 'Le montant du chèque doit être supérieur à 0.';
+  end if;
+
+  v_invoice_id := nullif(p->>'linked_invoice_id', '')::uuid;
+  v_entity := coalesce(nullif(p->>'entity', ''), 'Briqueterie');
+
+  insert into cheques (
+    type, cheque_number, cheque_date, entry_date, entry_time, beneficiary, amount, bank,
+    bank_account, motif, statut, date_remise, date_encaissement, motif_rejet, photo_url,
+    observations, entered_by_user, entity, linked_invoice_id
+  ) values (
+    p->>'type',
+    p->>'cheque_number',
+    (p->>'cheque_date')::date,
+    coalesce(nullif(p->>'entry_date', '')::date, current_date),
+    nullif(p->>'entry_time', '')::time,
+    p->>'beneficiary',
+    v_amount,
+    p->>'bank',
+    nullif(p->>'bank_account', ''),
+    nullif(p->>'motif', ''),
+    coalesce(nullif(p->>'statut', ''), 'En attente'),
+    nullif(p->>'date_remise', '')::date,
+    nullif(p->>'date_encaissement', '')::date,
+    nullif(p->>'motif_rejet', ''),
+    nullif(p->>'photo_url', ''),
+    nullif(p->>'observations', ''),
+    nullif(p->>'entered_by_user', ''),
+    v_entity,
+    v_invoice_id
+  )
+  returning * into v_cheque;
+
+  if v_invoice_id is not null then
+    select * into v_invoice from invoices where id = v_invoice_id for update;
+    if v_invoice.id is null then
+      raise exception 'Facture liée introuvable.';
+    end if;
+    if v_invoice.entity is distinct from v_entity then
+      raise exception 'La facture liée n''appartient pas à la même entité que le chèque.';
+    end if;
+
+    v_reste := v_invoice.total_net - coalesce(v_invoice.montant_paye, 0);
+    if v_amount > v_reste then
+      raise exception 'Le montant du chèque (% DA) dépasse le reste à payer de la facture (% DA).', round(v_amount, 2), round(v_reste, 2);
+    end if;
+
+    v_new_montant_paye := coalesce(v_invoice.montant_paye, 0) + v_amount;
+    v_new_status := case when v_invoice.total_net - v_new_montant_paye <= 0 then 'Payé' else 'Partiel' end;
+
+    update invoices set
+      montant_paye = v_new_montant_paye,
+      payment_status = v_new_status
+    where id = v_invoice_id;
+
+    select coalesce(max(bon_number), 0) + 1 into v_caisse_bon from caisse_entries;
+
+    insert into caisse_entries (
+      bon_number, entry_date, entry_time, operation_type, description, amount,
+      beneficiary, payment_mode, cheque_number, cheque_bank, observations,
+      entered_by_user, entity, linked_invoice_id, linked_cheque_id
+    ) values (
+      v_caisse_bon,
+      coalesce(nullif(p->>'entry_date', '')::date, current_date),
+      nullif(p->>'entry_time', '')::time,
+      case when v_cheque.type = 'Émis' then 'Décaissement' else 'Encaissement' end,
+      'Chèque N° ' || v_cheque.cheque_number || ' — Facture N° ' || v_invoice.invoice_number,
+      v_amount,
+      v_cheque.beneficiary,
+      'Chèque',
+      v_cheque.cheque_number,
+      v_cheque.bank,
+      '(Auto) Chèque n° ' || v_cheque.cheque_number || ' — Facture n° ' || v_invoice.invoice_number,
+      v_cheque.entered_by_user,
+      v_entity,
+      v_invoice_id,
+      v_cheque.id
+    );
+  end if;
+
+  return v_cheque;
+end;
+$$;
+
+revoke all on function record_cheque_with_invoice(jsonb) from public;
+grant execute on function record_cheque_with_invoice(jsonb) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- record_caisse_with_invoice : même principe que record_cheque_with_invoice,
+-- mais pour une entrée caisse liée directement à une facture (sans passer
+-- par un chèque) :
+--   1. INSERT caisse_entries (avec linked_invoice_id)
+--   2. UPDATE invoices.montant_paye / payment_status (même calcul que
+--      record_cheque_with_invoice)
+-- Sans facture liée : comportement inchangé (simple INSERT de l'entrée).
+-- ------------------------------------------------------------
+create or replace function record_caisse_with_invoice(p jsonb)
+returns caisse_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_entry caisse_entries;
+  v_invoice invoices;
+  v_invoice_id uuid;
+  v_amount numeric;
+  v_reste numeric;
+  v_new_montant_paye numeric;
+  v_new_status text;
+  v_entity text;
+begin
+  v_amount := (p->>'amount')::numeric;
+  if v_amount is null or v_amount <= 0 then
+    raise exception 'Le montant doit être supérieur à 0.';
+  end if;
+
+  v_invoice_id := nullif(p->>'linked_invoice_id', '')::uuid;
+  v_entity := coalesce(nullif(p->>'entity', ''), 'Briqueterie');
+
+  insert into caisse_entries (
+    bon_number, entry_date, entry_time, operation_type, description, amount,
+    beneficiary, client_name, payment_mode, cheque_number, cheque_bank, piece_number,
+    photo_url, category, category_other, observations, entered_by_user, entity,
+    linked_invoice_id
+  ) values (
+    (p->>'bon_number')::integer,
+    coalesce(nullif(p->>'entry_date', '')::date, current_date),
+    nullif(p->>'entry_time', '')::time,
+    p->>'operation_type',
+    p->>'description',
+    v_amount,
+    nullif(p->>'beneficiary', ''),
+    nullif(p->>'client_name', ''),
+    coalesce(nullif(p->>'payment_mode', ''), 'Espèces'),
+    nullif(p->>'cheque_number', ''),
+    nullif(p->>'cheque_bank', ''),
+    nullif(p->>'piece_number', ''),
+    nullif(p->>'photo_url', ''),
+    coalesce(nullif(p->>'category', ''), 'Autre'),
+    nullif(p->>'category_other', ''),
+    nullif(p->>'observations', ''),
+    nullif(p->>'entered_by_user', ''),
+    v_entity,
+    v_invoice_id
+  )
+  returning * into v_entry;
+
+  if v_invoice_id is not null then
+    select * into v_invoice from invoices where id = v_invoice_id for update;
+    if v_invoice.id is null then
+      raise exception 'Facture liée introuvable.';
+    end if;
+    if v_invoice.entity is distinct from v_entity then
+      raise exception 'La facture liée n''appartient pas à la même entité que l''entrée caisse.';
+    end if;
+
+    v_reste := v_invoice.total_net - coalesce(v_invoice.montant_paye, 0);
+    if v_amount > v_reste then
+      raise exception 'Le montant (% DA) dépasse le reste à payer de la facture (% DA).', round(v_amount, 2), round(v_reste, 2);
+    end if;
+
+    v_new_montant_paye := coalesce(v_invoice.montant_paye, 0) + v_amount;
+    v_new_status := case when v_invoice.total_net - v_new_montant_paye <= 0 then 'Payé' else 'Partiel' end;
+
+    update invoices set
+      montant_paye = v_new_montant_paye,
+      payment_status = v_new_status
+    where id = v_invoice_id;
+  end if;
+
+  return v_entry;
+end;
+$$;
+
+revoke all on function record_caisse_with_invoice(jsonb) from public;
+grant execute on function record_caisse_with_invoice(jsonb) to anon, authenticated;
+
+-- ============================================================
+-- CORRECTION DES ACCÈS ENTITÉ Factures/Chèques/Caisse (2026-09-27) :
+-- purement côté application (src/lib/auth.js, salesEntityAccessForRole),
+-- aucun changement de schéma nécessaire -- request_login_code n'a PAS été
+-- touché (l'entité TVA de Bureau reste un choix libre, voir commentaire
+-- dans auth.js). Seul le rôle admin choisit librement l'entité Factures/
+-- Chèques/Caisse (avec option "Tout") ; AVADOU est fixé sur 'AVADOU' ;
+-- editor (Halim, Bureau) et youcef_role sont fixés sur 'Briqueterie' sans
+-- accès à AVADOU ; tva_only (Tahar) n'a plus du tout accès à ces pages.
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- FACTURE IMPRIMABLE (2026-09-27) : « ancien solde » affiché sur la facture
+-- imprimée = solde RÉEL du client immédiatement avant cette facture, figé à
+-- la saisie (contrairement à clients.balance qui est un solde COURANT,
+-- recalculé en continu -- il ne permet pas de retrouver le solde tel qu'il
+-- était au moment d'une facture passée). Voir printInvoices dans
+-- src/lib/printRegistry.js ; InvoiceForm.jsx renseigne cette colonne à
+-- chaque nouvelle facture depuis "Solde précédent" (déjà affiché dans le
+-- formulaire, jusqu'ici jamais persisté).
+-- ------------------------------------------------------------
+
+alter table invoices add column if not exists balance_before numeric(12, 2) not null default 0;
+comment on column invoices.balance_before is 'Solde du client immédiatement avant cette facture (figé à la saisie) ; "nouveau solde" sur la facture imprimée = balance_before + total_net - montant_paye (montant_paye courant, incluant les paiements liés ultérieurs)';
+
+-- Backfill des factures existantes : rejoue l'historique de CHAQUE client
+-- dans l'ordre chronologique (entry_date, created_at) pour reconstituer le
+-- solde réel avant chaque facture -- même logique que
+-- sync_client_balance_from_invoice (payment_status = 'Non payé' -> 0 payé,
+-- 'Partiel' -> montant_paye, sinon -> total_net en entier).
+-- LIMITE CONNUE : si un client avait un solde de départ importé depuis
+-- "fiche client.xls" / Situation_Globale.xlsx (colonne clients.source =
+-- 'import_historique') AVANT sa première facture saisie dans l'application,
+-- ce solde initial n'est pas connu ici -- balance_before de sa toute
+-- première facture sera calculé comme 0 au lieu de ce solde de départ réel.
+-- Sans conséquence pour les factures saisies après cette migration (déjà
+-- correctement renseignées par InvoiceForm.jsx).
+with ordered as (
+  select
+    id,
+    coalesce(
+      sum(total_net) over (
+        partition by lower(client_name) order by entry_date, created_at
+        rows between unbounded preceding and 1 preceding
+      ), 0
+    ) as invoiced_before,
+    coalesce(
+      sum(case
+        when payment_status = 'Non payé' then 0
+        when payment_status = 'Partiel' then coalesce(montant_paye, 0)
+        else total_net
+      end) over (
+        partition by lower(client_name) order by entry_date, created_at
+        rows between unbounded preceding and 1 preceding
+      ), 0
+    ) as paid_before
+  from invoices
+)
+update invoices i set balance_before = o.invoiced_before - o.paid_before
+from ordered o
+where i.id = o.id and i.balance_before = 0;

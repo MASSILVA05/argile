@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { notifyInvoiceEntry } from '../lib/ntfy'
 import { sendInvoiceEmail } from '../lib/email'
 import { getSession } from '../lib/auth'
+import { ENTITIES } from '../lib/tvaPayment'
 import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES } from '../lib/invoicePayment'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -35,8 +36,8 @@ const emptyDraft = {
   observations: '',
 }
 
-export default function InvoiceForm() {
-  const [draft, setDraft] = useState(emptyDraft)
+export default function InvoiceForm({ entity, canChooseEntity }) {
+  const [draft, setDraft] = useState({ ...emptyDraft, entity })
   const [clients, setClients] = useState([])
   const [clientCodes, setClientCodes] = useState([])
   const [banks, setBanks] = useState([])
@@ -56,6 +57,12 @@ export default function InvoiceForm() {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  // Resynchronise l'entité si le sélecteur au niveau de la page change
+  // (admin/Tahar/Bureau/Youcef basculant entre Briqueterie/AVADOU).
+  useEffect(() => {
+    setDraft((d) => ({ ...d, entity }))
+  }, [entity])
 
   // Recherche le client dans `clients` (solde historique), dans
   // `client_advances` (avance active) et ses matricules connues (factures
@@ -264,6 +271,16 @@ export default function InvoiceForm() {
       cheque_bank: isCheque ? draft.cheque_bank.trim() || null : null,
       observations: draft.observations.trim() || null,
       entered_by_user: getSession()?.username ?? null,
+      entity: draft.entity,
+      // Facture classique (sans chèque/caisse lié ultérieurement) : reflète
+      // au plus près le calcul historique de sync_client_balance_from_invoice
+      // (payment_status != 'Non payé' => facture considérée réglée en
+      // entier), pour que le sélecteur "factures non payées" (liaison
+      // chèque/caisse) exclue correctement ces factures.
+      montant_paye: draft.payment_status === 'Non payé' ? 0 : totalNet,
+      // Solde client figé au moment de la saisie -- sert d'"ancien solde" sur
+      // la facture imprimée (voir printInvoices dans printRegistry.js).
+      balance_before: previousBalance,
     }
 
     try {
@@ -322,6 +339,7 @@ export default function InvoiceForm() {
         ...emptyDraft,
         invoice_number: String((Number(invoiceNumber) || 0) + 1),
         entry_date: d.entry_date,
+        entity: d.entity,
       }))
       setSuccess(`Facture n° ${invoiceNumber} enregistrée.`)
     } catch (err) {
@@ -333,6 +351,16 @@ export default function InvoiceForm() {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {canChooseEntity && (
+        <Field label="Entité" required>
+          <select value={draft.entity} onChange={(e) => update('entity', e.target.value)} className={inputClass}>
+            {ENTITIES.map((e) => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="N° Facture" required>
           <input

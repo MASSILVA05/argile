@@ -21,6 +21,7 @@ import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
+import LinkedRecordModal from './LinkedRecordModal'
 
 const CAISSE_SHEET_TYPES = [
   { id: 'beneficiary', label: 'Fournisseur / Bénéficiaire', nameLabel: 'Fournisseur / Bénéficiaire' },
@@ -38,7 +39,7 @@ function paymentLabel(entry) {
   return entry.payment_mode ?? '—'
 }
 
-export default function CaisseRegistry() {
+export default function CaisseRegistry({ entityFilter }) {
   const { isAdmin, isViewer } = useAuth()
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -61,16 +62,17 @@ export default function CaisseRegistry() {
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
   const [sheetModal, setSheetModal] = useState(null)
+  const [invoicesById, setInvoicesById] = useState(new Map())
+  const [linkedModal, setLinkedModal] = useState(null)
 
   useEffect(() => {
     let active = true
 
     async function load() {
       setLoading(true)
-      const { data, error: fetchError } = await supabase
-        .from('caisse_entries')
-        .select('*')
-        .order('created_at', { ascending: false })
+      let caisseQuery = supabase.from('caisse_entries').select('*').order('created_at', { ascending: false })
+      if (entityFilter) caisseQuery = caisseQuery.eq('entity', entityFilter)
+      const { data, error: fetchError } = await caisseQuery
       if (!active) return
       if (fetchError) {
         setError(`Erreur de chargement : ${fetchError.message}`)
@@ -84,8 +86,11 @@ export default function CaisseRegistry() {
     load()
 
     const channel = supabase
-      .channel('caisse-entries-registry')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'caisse_entries' }, (payload) => {
+      .channel(`caisse-entries-registry-${entityFilter ?? 'all'}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'caisse_entries',
+        ...(entityFilter ? { filter: `entity=eq.${entityFilter}` } : {}),
+      }, (payload) => {
         setEntries((current) => applyRealtimeChange(current, payload))
       })
       .subscribe()
@@ -94,7 +99,29 @@ export default function CaisseRegistry() {
       active = false
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, [entityFilter])
+
+  // Facture liée à chaque entrée caisse (liaison directe ou via un chèque --
+  // voir liaison Factures ↔ Chèques ↔ Caisse).
+  useEffect(() => {
+    let active = true
+    const ids = [...new Set(entries.map((e) => e.linked_invoice_id).filter(Boolean))]
+    if (ids.length === 0) {
+      setInvoicesById(new Map())
+      return
+    }
+    supabase
+      .from('invoices')
+      .select('id, invoice_number')
+      .in('id', ids)
+      .then(({ data }) => {
+        if (!active) return
+        setInvoicesById(new Map((data ?? []).map((i) => [i.id, i])))
+      })
+    return () => {
+      active = false
+    }
+  }, [entries])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -475,10 +502,11 @@ export default function CaisseRegistry() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1700px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1900px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Bon</Th>
+                  <Th>Entité</Th>
                   <Th>Date</Th>
                   <Th>Heure</Th>
                   <Th>Saisie le</Th>
@@ -493,6 +521,7 @@ export default function CaisseRegistry() {
                   <Th>Photo</Th>
                   <Th>Saisi par</Th>
                   <Th>Observations</Th>
+                  <Th>Facture</Th>
                   <Th className="no-print">Actions</Th>
                 </tr>
               </thead>
@@ -505,10 +534,13 @@ export default function CaisseRegistry() {
                       onChange={setEditDraft}
                       onSave={saveEdit}
                       onCancel={cancelEdit}
+                      linkedInvoice={invoicesById.get(entry.linked_invoice_id)}
+                      onOpenInvoice={(id) => setLinkedModal({ type: 'invoice', id })}
                     />
                   ) : (
                     <tr key={entry.id} className="border-b border-border last:border-0">
                       <Td sticky>{entry.bon_number}</Td>
+                      <Td>{entry.entity ?? '—'}</Td>
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
@@ -545,6 +577,19 @@ export default function CaisseRegistry() {
                       <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>
                         {entry.observations ?? '—'}
                       </Td>
+                      <Td>
+                        {entry.linked_invoice_id ? (
+                          <button
+                            type="button"
+                            onClick={() => setLinkedModal({ type: 'invoice', id: entry.linked_invoice_id })}
+                            className="text-left text-ocre underline-offset-2 hover:underline"
+                          >
+                            {invoicesById.get(entry.linked_invoice_id)?.invoice_number ?? '…'}
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </Td>
                       <Td className="no-print">
                         <RowActions
                           entry={entry}
@@ -561,6 +606,8 @@ export default function CaisseRegistry() {
           </div>
         </div>
       )}
+
+      <LinkedRecordModal type={linkedModal?.type} id={linkedModal?.id} onClose={() => setLinkedModal(null)} />
 
       {lightboxUrl && (
         <div
@@ -617,7 +664,7 @@ function Total({ label, value, className }) {
   )
 }
 
-function EditRow({ draft, onChange, onSave, onCancel }) {
+function EditRow({ draft, onChange, onSave, onCancel, linkedInvoice, onOpenInvoice }) {
   function set(field, value) {
     onChange({ ...draft, [field]: value })
   }
@@ -630,6 +677,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td sticky="bg-bg-soft">
         <input type="number" value={draft.bon_number} onChange={(e) => set('bon_number', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{draft.entity ?? '—'}</Td>
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />
       </Td>
@@ -712,6 +760,13 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>{draft.entered_by_user ?? '—'}</Td>
       <Td>
         <input type="text" value={draft.observations ?? ''} onChange={(e) => set('observations', e.target.value)} className={editInputClass} />
+      </Td>
+      <Td>
+        {draft.linked_invoice_id ? (
+          <button type="button" onClick={() => onOpenInvoice(draft.linked_invoice_id)} className="text-left text-ocre underline-offset-2 hover:underline">
+            {linkedInvoice?.invoice_number ?? '…'}
+          </button>
+        ) : '—'}
       </Td>
       <Td className="no-print">
         <div className="flex gap-2">

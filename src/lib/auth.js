@@ -117,29 +117,41 @@ export function clearSession() {
 //                    Bureau a techniquement accès aux pages TVA comme Halim
 //                    (contrairement à ce que documentait ce commentaire
 //                    avant l'ajout du cloisonnement par entité ci-dessous).
-//                    Seul Halim est cloisonné sur l'entité 'Briqueterie'
-//                    (voir request_login_code dans schema.sql) ; Bureau,
-//                    n'ayant pas d'entité fixe, verrait un choix libre
-//                    Briqueterie/AVADOU comme Tahar s'il ouvrait ces pages.
+//                    Seul Halim est cloisonné sur l'entité 'Briqueterie' pour
+//                    la TVA (voir request_login_code dans schema.sql) ;
+//                    Bureau, n'ayant pas d'entité TVA fixe, y verrait un choix
+//                    libre Briqueterie/AVADOU comme Tahar s'il ouvrait ces
+//                    pages. Sur Factures/Chèques/Caisse en revanche, editor
+//                    ET youcef_role sont TOUS DEUX fixés sur 'Briqueterie'
+//                    sans sélecteur (aucun accès aux données AVADOU) -- voir
+//                    salesEntityAccessForRole ci-dessous, indépendant de
+//                    l'entité TVA (session.entity) : Bureau garde son choix
+//                    libre sur TVA tout en étant cloisonné sur Factures/
+//                    Chèques/Caisse.
 // viewer (Bilal)   : Chargement (saisie + registre) + Maintenance (saisie +
 //                    registre), aucune autre page, pas d'export Excel
 // maintenance_only (Karim, Sofiane, Abderhmane) : Maintenance (saisie +
 //                    registre) + Production (saisie + registre + tableau de
 //                    bord), export Excel autorisé, accès 24h, pas de code admin
 // tva_only (Tahar) : uniquement TVA récupération + TVA à payer, aucune autre
-//                    page, export Excel autorisé, pas de code admin. Tahar
-//                    choisit librement l'entité (Briqueterie/AVADOU) --
-//                    voir TVAPage.jsx / TVAPayerPage.jsx.
-// tva_prodnet (AVADOU) : identique à tva_only (TVA récup + TVA à payer, mêmes
-//                    restrictions export / pas de code admin) + accès à la page
-//                    Prodnet (coût de revient produits finis). AVADOU est
-//                    cloisonné sur l'entité 'AVADOU'. Rôle distinct de tva_only
-//                    pour que Tahar n'ait PAS Prodnet.
-// youcef_role (Youcef) : uniquement Carburant + Sable + Factures, export
-//                    Excel autorisé, modification/suppression dans les 72h,
-//                    pas de code admin. Dans Factures, limité aux sous-onglets
-//                    Saisie + Registre (pas Avances/Stock/Mouvements/G50) --
-//                    voir InvoicesPage.jsx.
+//                    page (PAS Factures/Chèques/Caisse), export Excel
+//                    autorisé, pas de code admin. Tahar choisit librement
+//                    l'entité TVA (Briqueterie/AVADOU), sans option "Tout"
+//                    (réservée à l'admin) -- voir TVAPage.jsx / TVAPayerPage.jsx.
+// tva_prodnet (AVADOU) : TVA récup + TVA à payer (mêmes restrictions export /
+//                    pas de code admin) + Prodnet (coût de revient produits
+//                    finis) + Factures/Chèques/Caisse. AVADOU est cloisonné
+//                    sur l'entité 'AVADOU' PARTOUT (TVA -- session.entity --
+//                    ET Factures/Chèques/Caisse -- salesEntityAccessForRole),
+//                    sans sélecteur, aucun accès aux données Briqueterie.
+//                    Rôle distinct de tva_only pour que Tahar n'ait PAS Prodnet.
+// youcef_role (Youcef) : uniquement Carburant + Sable + Factures/Chèques/
+//                    Caisse, export Excel autorisé, modification/suppression
+//                    dans les 72h, pas de code admin. Dans Factures, limité
+//                    aux sous-onglets Saisie + Registre (pas Avances/Stock/
+//                    Mouvements/G50) -- voir InvoicesPage.jsx. Fixé sur
+//                    l'entité 'Briqueterie', sans sélecteur, aucun accès aux
+//                    données AVADOU -- voir salesEntityAccessForRole.
 // magasin_only (Aziz) : la page Magasin (Bejaia) -- stock, ventes, crédits
 //                    clients, import -- ET la page Résidence (location
 //                    saisonnière). Aucune autre page, pas de code admin. Les
@@ -173,17 +185,20 @@ export function clearSession() {
 //
 // Onglets (App.jsx / SideNav.jsx) visibles par rôle. Un rôle absent de
 // cette table (ne devrait pas arriver) retombe sur le plus restrictif.
-// La page Caisse (saisie + registre) est réservée aux rôles admin, editor et
-// youcef_role -> concrètement Youcef, Halim, Bureau et les admins (Massilva,
-// Ahcene). Les autres (Bilal/viewer, Karim/maintenance_only, Tahar/tva_only,
-// AVADOU/tva_prodnet) n'y ont pas accès.
+// La page Caisse (saisie + registre) est réservée aux rôles admin, editor,
+// youcef_role et tva_prodnet -> concrètement Youcef, Halim, Bureau, AVADOU et
+// les admins (Massilva, Ahcene, Mazigh). Les autres (Bilal/viewer, Karim/
+// maintenance_only, Tahar/tva_only) n'y ont pas accès. Même règle pour
+// Factures et Chèques (voir cloisonnement par entité Briqueterie/AVADOU fixé
+// par rôle dans salesEntityAccessForRole ci-dessous, utilisé par
+// InvoicesPage.jsx / ChequesPage.jsx / CaissePage.jsx).
 export const ROLE_TABS = {
   admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station', 'cheques', 'ppi'],
   editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'cheques', 'ppi'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
   tva_only: ['tva', 'tva-payer'],
-  tva_prodnet: ['tva', 'tva-payer', 'prodnet', 'ppi'],
+  tva_prodnet: ['tva', 'tva-payer', 'prodnet', 'ppi', 'invoices', 'cheques', 'caisse'],
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse', 'cheques'],
   magasin_only: ['magasin', 'residence'],
   station_only: ['station'],
@@ -191,6 +206,20 @@ export const ROLE_TABS = {
 
 export function allowedTabsForRole(role) {
   return ROLE_TABS[role] ?? ROLE_TABS.viewer
+}
+
+// Entité fixe pour les pages Factures / Chèques / Caisse -- INDÉPENDANT de
+// l'entité TVA (session.entity / useAuth().entity), qui reste utilisée telle
+// quelle par TVAPage.jsx / TVAPayerPage.jsx (Tahar et Bureau y gardent leur
+// choix libre). Seul le rôle admin choisit librement ici (avec option
+// "Tout") ; AVADOU (tva_prodnet) est fixé sur 'AVADOU' ; editor (Halim,
+// Bureau) et youcef_role sont fixés sur 'Briqueterie' -- aucun accès aux
+// données AVADOU pour ces deux rôles. tva_only (Tahar) n'a plus du tout accès
+// à ces pages (absentes de ROLE_TABS.tva_only), donc jamais consulté pour lui.
+export function salesEntityAccessForRole(role) {
+  if (role === 'admin') return { fixedEntity: null, canSeeAllEntities: true }
+  if (role === 'tva_prodnet') return { fixedEntity: 'AVADOU', canSeeAllEntities: false }
+  return { fixedEntity: 'Briqueterie', canSeeAllEntities: false }
 }
 
 export function useAuth() {

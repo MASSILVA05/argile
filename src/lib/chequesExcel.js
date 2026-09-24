@@ -17,6 +17,7 @@ import { isEmis } from './cheques'
 
 const COLUMNS = [
   { header: 'N° Chèque', key: 'cheque_number', width: 16 },
+  { header: 'Entité', key: 'entity', width: 14 },
   { header: 'Date chèque', key: 'cheque_date', width: 14 },
   { header: 'Date saisie', key: 'entry_date', width: 14 },
   { header: 'Saisie le', key: 'created_at', width: 18 },
@@ -53,6 +54,7 @@ export async function downloadChequesExcel(rows, { onProgress, includePhotos = t
   for (const r of rows) {
     const row = sheet.addRow({
       cheque_number: r.cheque_number,
+      entity: r.entity ?? '',
       cheque_date: r.cheque_date,
       entry_date: r.entry_date,
       created_at: formatDateTime(r.created_at),
