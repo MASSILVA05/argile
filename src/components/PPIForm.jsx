@@ -67,7 +67,7 @@ export default function PPIForm() {
       const next = { ...cur }
       if (checked) {
         const product = products.find((p) => p.id === id)
-        next[id] = { quantite: '', prix_unitaire: String(product?.prix_unitaire ?? '') }
+        next[id] = { quantite: '1', prix_unitaire: String(product?.prix_unitaire ?? '') }
       } else {
         delete next[id]
       }
