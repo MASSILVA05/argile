@@ -55,9 +55,9 @@ export default function LinkedRecordModal({ type, id, onClose }) {
             <Row label="Entité" value={row.entity} />
             <Row label="Date" value={row.entry_date} />
             <Row label="Client" value={row.client_name} />
-            <Row label="Total Net" value={`${formatDA(row.total_net)} DA`} />
+            <Row label="Total HT" value={`${formatDA(row.montant_solde)} DA`} />
             <Row label="Montant payé" value={`${formatDA(row.montant_paye)} DA`} />
-            <Row label="Reste à payer" value={`${formatDA(Number(row.total_net) - Number(row.montant_paye))} DA`} />
+            <Row label="Reste à payer" value={`${formatDA(Number(row.montant_solde) - Number(row.montant_paye))} DA`} />
             <Row label="Statut" value={row.payment_status} />
             <Row label="Observations" value={row.observations || '—'} />
           </dl>

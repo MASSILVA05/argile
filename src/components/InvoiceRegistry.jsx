@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { downloadInvoicesExcel } from '../lib/invoicesExcel'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
@@ -14,10 +14,14 @@ import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
 import LinkedRecordModal from './LinkedRecordModal'
-import { printInvoices } from '../lib/printRegistry'
+import { printInvoices, INVOICE_PRINT_MODES } from '../lib/printRegistry'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
+}
+
+function clientCodeOf(entry, clientInfoByName) {
+  return entry.client_code || clientInfoByName.get(entry.client_name)?.client_code
 }
 
 function designationLabel(entry) {
@@ -48,12 +52,15 @@ export default function InvoiceRegistry({ entityFilter }) {
   const [sheetModalOpen, setSheetModalOpen] = useState(false)
   const [chequesByInvoice, setChequesByInvoice] = useState(new Map())
   const [linkedChequeId, setLinkedChequeId] = useState(null)
-  const [invoicePrintOpen, setInvoicePrintOpen] = useState(false)
+  // Impression facture / bon de livraison : { mode, rows } -- rows = null
+  // pour proposer toutes les factures filtrées, sinon une seule facture
+  // (menu de la ligne).
+  const [invoicePrint, setInvoicePrint] = useState(null)
 
   useEffect(() => {
     supabase
       .from('clients')
-      .select('name, client_code, balance, city')
+      .select('name, client_code, balance, city, nif, nis, address')
       .then(({ data }) => {
         setClientInfoByName(new Map((data ?? []).map((c) => [c.name, c])))
       })
@@ -189,7 +196,7 @@ export default function InvoiceRegistry({ entityFilter }) {
         { key: 'price_h', label: 'Prix H', align: 'right' },
         { key: 'amount', label: 'Montant', align: 'right', format: (v) => formatDA(v) },
         { key: 'discount_amount', label: 'Remise', align: 'right', format: (v) => formatDA(v) },
-        { key: 'total', label: 'Total', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total', label: 'Total HT', align: 'right', format: (v) => formatDA(v) },
         { key: 'settlement', label: 'Règlement', align: 'right', format: (v) => formatDA(v) },
         { key: 'disbursement', label: 'Décaissement', align: 'right', format: (v) => formatDA(v) },
         { key: 'driver_name', label: 'Chauffeur' },
@@ -207,7 +214,7 @@ export default function InvoiceRegistry({ entityFilter }) {
       rows: filtered.map((e) => ({
         ...e,
         designation_label: designationLabel(e),
-        client_code: clientInfoByName.get(e.client_name)?.client_code ?? '',
+        client_code: clientCodeOf(e, clientInfoByName) ?? '',
       })),
       totals: {
         invoice_number: 'TOTAL',
@@ -230,17 +237,30 @@ export default function InvoiceRegistry({ entityFilter }) {
   // sert qu'à choisir QUELLES factures imprimer, le rendu final n'a rien de
   // tabulaire.
   function buildInvoicePrintConfig() {
+    const mode = invoicePrint?.mode ?? 'facture'
+    const isFacture = mode === 'facture'
     return {
       title: 'SARL DPR AXXAM',
-      subtitle: 'Facture(s) client',
+      subtitle: INVOICE_PRINT_MODES[mode],
       columns: [
         { key: 'invoice_number', label: 'N° Facture' },
         { key: 'entry_date', label: 'Date' },
         { key: 'client_name', label: 'Client' },
-        { key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total', label: 'Total HT', align: 'right', format: (v) => formatDA(v) },
+        ...(isFacture ? [{ key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) }] : []),
       ],
-      rows: filtered,
-      onPrint: (rows) => printInvoices(rows, { clientInfoByName, chequesByInvoice }),
+      rows: invoicePrint?.rows ?? filtered,
+      // Ancien / nouveau solde : confidentiel, masqué par défaut.
+      options: isFacture
+        ? [{ key: 'showAccountSituation', label: 'Afficher la situation du compte (ancien/nouveau solde)', defaultValue: false }]
+        : [],
+      onPrint: (rows, opts) =>
+        printInvoices(rows, {
+          clientInfoByName,
+          chequesByInvoice,
+          mode,
+          showAccountSituation: isFacture && Boolean(opts?.showAccountSituation),
+        }),
     }
   }
 
@@ -280,7 +300,7 @@ export default function InvoiceRegistry({ entityFilter }) {
       discount_amount: Number(editDraft.discount_amount) || 0,
       settlement: Number(editDraft.settlement) || 0,
       disbursement: Number(editDraft.disbursement) || 0,
-      stamp_duty: Number(editDraft.stamp_duty) || 0,
+      stamp_duty: editDraft.tva_applied ? Number(editDraft.stamp_duty) || 0 : 0,
       amount_override: editDraft.amount_override === '' || editDraft.amount_override == null ? null : Number(editDraft.amount_override),
       driver_name: editDraft.driver_name?.trim() || null,
       truck_plate: editDraft.truck_plate?.trim() || null,
@@ -292,8 +312,15 @@ export default function InvoiceRegistry({ entityFilter }) {
       ref_livraison: editDraft.ref_livraison?.trim() || null,
       observations: editDraft.observations?.trim() || null,
     }
+    const extraPayload = {
+      tva_applied: Boolean(editDraft.tva_applied),
+      client_code: editDraft.client_code?.trim() || null,
+      client_nif: editDraft.client_nif?.trim() || null,
+      client_nis: editDraft.client_nis?.trim() || null,
+      client_address: editDraft.client_address?.trim() || null,
+    }
 
-    const { data, error: updateError } = usingAdminCode
+    let { data, error: updateError } = usingAdminCode
       ? await supabase.rpc('admin_update_invoice', {
           p_id: editingId,
           p_admin_code: editAdminCode,
@@ -324,7 +351,21 @@ export default function InvoiceRegistry({ entityFilter }) {
           p_ref_livraison: payload.ref_livraison,
           p_observations: payload.observations,
         })
-      : await supabase.from('invoices').update(payload).eq('id', editingId).select().single()
+      : await supabase.from('invoices').update({ ...payload, ...extraPayload }).eq('id', editingId).select().single()
+
+    // Facture verrouillée : TVA + infos client via une RPC dédiée (la
+    // signature d'admin_update_invoice reste inchangée).
+    if (usingAdminCode && !updateError) {
+      ;({ data, error: updateError } = await supabase.rpc('admin_update_invoice_extra', {
+        p_id: editingId,
+        p_admin_code: editAdminCode,
+        p_tva_applied: extraPayload.tva_applied,
+        p_client_code: extraPayload.client_code,
+        p_client_nif: extraPayload.client_nif,
+        p_client_nis: extraPayload.client_nis,
+        p_client_address: extraPayload.client_address,
+      }))
+    }
 
     if (updateError) {
       setError(`Erreur de mise à jour : ${updateError.message}`)
@@ -548,14 +589,8 @@ export default function InvoiceRegistry({ entityFilter }) {
             Imprimer
           </button>
           <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
-          <button
-            type="button"
-            onClick={() => setInvoicePrintOpen(true)}
-            className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
-          >
-            Imprimer facture
-          </button>
-          <PrintSelectionModal open={invoicePrintOpen} onClose={() => setInvoicePrintOpen(false)} {...buildInvoicePrintConfig()} />
+          <InvoicePrintMenu onSelect={(mode) => setInvoicePrint({ mode, rows: null })} />
+          <PrintSelectionModal open={invoicePrint != null} onClose={() => setInvoicePrint(null)} {...buildInvoicePrintConfig()} />
           {!isViewer && (
             <button
               type="button"
@@ -604,7 +639,7 @@ export default function InvoiceRegistry({ entityFilter }) {
               <p className="font-display text-xl text-ocre">{formatDA(totals.discount)}</p>
             </div>
             <div>
-              <p className="text-xs text-ink-muted">Total</p>
+              <p className="text-xs text-ink-muted">Total HT</p>
               <p className="font-display text-xl text-ocre">{formatDA(totals.total)}</p>
             </div>
             <div>
@@ -653,7 +688,7 @@ export default function InvoiceRegistry({ entityFilter }) {
                   <Th>Prix H</Th>
                   <Th>Montant</Th>
                   <Th>Remise</Th>
-                  <Th>Total</Th>
+                  <Th>Total HT</Th>
                   <Th>Règlement</Th>
                   <Th>Décaissement</Th>
                   <Th>Chauffeur</Th>
@@ -682,7 +717,7 @@ export default function InvoiceRegistry({ entityFilter }) {
                       onCancel={cancelEdit}
                       bankSuggestions={banks}
                       paymentTypeSuggestions={paymentTypes}
-                      clientCode={clientInfoByName.get(entry.client_name)?.client_code}
+                      clientCode={clientCodeOf(entry, clientInfoByName)}
                       linkedCheques={chequesByInvoice.get(entry.id)}
                       onOpenCheque={setLinkedChequeId}
                     />
@@ -693,7 +728,7 @@ export default function InvoiceRegistry({ entityFilter }) {
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
                       <Td>{entry.client_name}</Td>
-                      <Td>{clientInfoByName.get(entry.client_name)?.client_code ?? '—'}</Td>
+                      <Td>{clientCodeOf(entry, clientInfoByName) ?? '—'}</Td>
                       <Td>{designationLabel(entry)}</Td>
                       <Td>{entry.bl_number ?? '—'}</Td>
                       <Td>{entry.qty_b8}</Td>
@@ -746,13 +781,17 @@ export default function InvoiceRegistry({ entityFilter }) {
                       </Td>
                       <Td className="no-print">
                         <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => printInvoices([entry], { clientInfoByName, chequesByInvoice })}
-                            className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10"
+                          <select
+                            value=""
+                            onChange={(e) => e.target.value && setInvoicePrint({ mode: e.target.value, rows: [entry] })}
+                            className="rounded border border-ocre bg-bg-card px-2 py-1 text-ocre hover:bg-ocre/10"
+                            aria-label="Imprimer"
                           >
-                            Imprimer facture
-                          </button>
+                            <option value="">Imprimer…</option>
+                            {Object.entries(INVOICE_PRINT_MODES).map(([key, label]) => (
+                              <option key={key} value={key}>{label}</option>
+                            ))}
+                          </select>
                           <RowActions
                             entry={entry}
                             onEdit={() => startEdit(entry)}
@@ -805,6 +844,50 @@ export default function InvoiceRegistry({ entityFilter }) {
   )
 }
 
+// Menu « Imprimer facture » : Facture / Bon de Livraison avec ou sans prix.
+function InvoicePrintMenu({ onSelect }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e) => {
+      if (!ref.current?.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="min-h-11 rounded-lg border border-ocre px-4 py-2 font-display text-ocre transition-colors hover:bg-ocre/10"
+      >
+        Imprimer facture ▾
+      </button>
+      {open && (
+        <div className="absolute right-0 z-30 mt-1 flex min-w-64 flex-col overflow-hidden rounded-lg border border-border bg-bg-card shadow-lg">
+          {Object.entries(INVOICE_PRINT_MODES).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onSelect(key)
+              }}
+              className="px-4 py-2.5 text-left text-sm text-ink hover:bg-border/40"
+            >
+              Imprimer {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PaidBadge({ status }) {
   const paid = isInvoicePaid(status)
   return (
@@ -835,9 +918,10 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
   const amount = amountOverride ?? (qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH)
   const total = amount - discountAmount
   const balance = total - settlement
-  const stampDuty = Number(draft.stamp_duty) || 0
-  const totalTva = total * 0.19
-  const totalTtc = total * 1.19
+  const tvaApplied = Boolean(draft.tva_applied)
+  const stampDuty = tvaApplied ? Number(draft.stamp_duty) || 0 : 0
+  const totalTva = tvaApplied ? total * 0.19 : 0
+  const totalTtc = total + totalTva
   const totalNet = totalTtc + stampDuty
 
   return (
@@ -853,7 +937,14 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       <Td>
         <input type="text" value={draft.client_name} onChange={(e) => set('client_name', e.target.value)} className={editInputClass} />
       </Td>
-      <Td>{clientCode ?? '—'}</Td>
+      <Td>
+        <input
+          type="text"
+          value={draft.client_code ?? clientCode ?? ''}
+          onChange={(e) => set('client_code', e.target.value)}
+          className={editInputClass}
+        />
+      </Td>
       <Td>
         <div className="flex min-w-32 flex-col gap-1">
           <select value={draft.designation} onChange={(e) => set('designation', e.target.value)} className={editInputClass}>
@@ -929,10 +1020,28 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       <Td>
         <span className={balance > 0 ? 'text-terracotta' : 'text-green-500'}>{formatDA(balance)}</span>
       </Td>
-      <Td>{formatDA(totalTva)}</Td>
+      <Td>
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={tvaApplied}
+            onChange={(e) => set('tva_applied', e.target.checked)}
+            className="h-4 w-4 accent-terracotta"
+            title="Appliquer la TVA (19%)"
+          />
+          {formatDA(totalTva)}
+        </label>
+      </Td>
       <Td>{formatDA(totalTtc)}</Td>
       <Td>
-        <input type="number" step="0.01" value={draft.stamp_duty} onChange={(e) => set('stamp_duty', e.target.value)} className={editInputClass} />
+        <input
+          type="number"
+          step="0.01"
+          value={tvaApplied ? draft.stamp_duty : 0}
+          onChange={(e) => set('stamp_duty', e.target.value)}
+          disabled={!tvaApplied}
+          className={editInputClass}
+        />
       </Td>
       <Td>
         <span className="font-display text-ocre">{formatDA(totalNet)}</span>

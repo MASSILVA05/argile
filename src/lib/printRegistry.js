@@ -601,68 +601,153 @@ function invoicePaymentModeText(inv, linkedCheques) {
   return '—'
 }
 
-function factureFicheHtml(inv, { clientInfo, linkedCheques } = {}) {
+// Modes d'impression d'une facture (menu « Imprimer » de InvoiceRegistry) :
+//   - facture      : document fiscal complet (TVA / TTC / timbre)
+//   - bl_prix      : BON DE LIVRAISON avec prix, sans TVA/TTC/timbre
+//   - bl_sans_prix : BON DE LIVRAISON, quantités uniquement
+export const INVOICE_PRINT_MODES = {
+  facture: 'Facture',
+  bl_prix: 'Bon de Livraison (avec prix)',
+  bl_sans_prix: 'Bon de Livraison (sans prix)',
+}
+
+function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', showAccountSituation = false } = {}) {
+  const isFacture = mode === 'facture'
+  const withPrices = mode !== 'bl_sans_prix'
   const totalNet = Number(inv.total_net) || 0
+  const discountAmount = Number(inv.discount_amount) || 0
+  const totalHt = (Number(inv.amount) || 0) - discountAmount
+  // Montant imputé au compte client = total HT (montant_solde, voir
+  // schema.sql) -- jamais la TVA ni le timbre.
+  const montantSolde = Number(inv.montant_solde ?? totalHt) || 0
   const montantPaye = Number(inv.montant_paye) || 0
   const balanceBefore = Number(inv.balance_before) || 0
-  const nouveauSolde = balanceBefore + totalNet - montantPaye
+  const nouveauSolde = balanceBefore + montantSolde - montantPaye
 
   const detailRows = invoiceDetailRows(inv)
   const detailRowsHtml = detailRows
-    .map(
-      (r, i) => `<tr>
+    .map((r, i) =>
+      withPrices
+        ? `<tr>
         <td class="center">${i + 1}</td>
         <td>${escapeHtml(r.label)}</td>
         <td class="right">${escapeHtml(nfQty(r.qty))}</td>
         <td class="right">${escapeHtml(nf2(r.price))}</td>
         <td class="right">${escapeHtml(nf2(r.qty * r.price))}</td>
       </tr>`
-    )
-    .join('')
-
-  // NB : la remise est appliquée AVANT le calcul de la TVA (total_tva =
-  // (amount - discount_amount) * 0.19, colonne générée -- voir schema.sql),
-  // donc affichée ici juste après le HT brut plutôt qu'en toute dernière
-  // ligne comme certaines maquettes papier : ça reste la seule présentation
-  // dont l'addition des lignes reconstitue exactement total_net.
-  const discountAmount = Number(inv.discount_amount) || 0
-  const totalsRowsHtml = [
-    { label: 'TOTAL HT', value: inv.amount },
-    ...(discountAmount > 0 ? [{ label: 'Remise', value: -discountAmount }] : []),
-    { label: 'TVA (19%)', value: inv.total_tva },
-    { label: 'Total TTC', value: inv.total_ttc },
-    { label: 'Timbre', value: inv.stamp_duty },
-  ]
-    .map(
-      (t) => `<tr>
-        <td colspan="3">${escapeHtml(t.label)}</td>
-        <td class="right">${escapeHtml(nf2(t.value))}</td>
+        : `<tr>
+        <td class="center">${i + 1}</td>
+        <td>${escapeHtml(r.label)}</td>
+        <td class="right">${escapeHtml(nfQty(r.qty))}</td>
       </tr>`
     )
     .join('')
 
-  const situationRows = [
-    { label: 'Ancien solde', value: `${nf2(balanceBefore)} DA` },
-    { label: 'Montant de cette facture', value: `${nf2(totalNet)} DA` },
-    ...(montantPaye > 0 ? [{ label: 'Règlement reçu', value: `${nf2(montantPaye)} DA` }] : []),
-    { label: 'Mode de paiement', value: invoicePaymentModeText(inv, linkedCheques) },
+  // NB : la remise est appliquée AVANT le calcul de la TVA (total_tva =
+  // (amount - discount_amount) * 0.19 si tva_applied, colonne générée --
+  // voir schema.sql), donc affichée ici juste après le HT brut : c'est la
+  // seule présentation dont l'addition des lignes reconstitue exactement
+  // total_net. Bon de livraison avec prix : HT uniquement.
+  const tvaApplied = Boolean(inv.tva_applied)
+  const totalsRows = [
+    { label: 'TOTAL HT', value: inv.amount },
+    ...(discountAmount > 0 ? [{ label: 'Remise', value: -discountAmount }] : []),
+    ...(isFacture
+      ? [
+          { label: tvaApplied ? 'TVA (19%)' : 'TVA (non appliquée)', value: inv.total_tva },
+          { label: 'Total TTC', value: inv.total_ttc },
+          { label: 'Timbre', value: tvaApplied ? inv.stamp_duty : 0 },
+        ]
+      : []),
   ]
-    .map((r) => `<tr><td class="k">${escapeHtml(r.label)}</td><td class="right">${escapeHtml(r.value)}</td></tr>`)
-    .join('')
+  const netLabel = isFacture ? 'TOTAL NET À PAYER' : 'TOTAL HT NET'
+  const netValue = isFacture ? totalNet : totalHt
+  const tfootHtml = withPrices
+    ? `<tfoot>
+      ${
+        (isFacture || discountAmount > 0 ? totalsRows : [])
+          .map((t) => `<tr><td colspan="4">${escapeHtml(t.label)}</td><td class="right">${escapeHtml(nf2(t.value))}</td></tr>`)
+          .join('')
+      }
+      <tr class="net-row">
+        <td colspan="4">${netLabel}</td>
+        <td class="right">${escapeHtml(nf2(netValue))}</td>
+      </tr>
+    </tfoot>`
+    : ''
 
+  const paymentMode = invoicePaymentModeText(inv, linkedCheques)
+  const situationHtml = isFacture && showAccountSituation
+    ? `<p class="sec-label">SITUATION DU COMPTE</p>
+  <table class="kv">
+    <colgroup><col style="width:45%"><col style="width:55%"></colgroup>
+    <tbody>
+      ${[
+        { label: 'Ancien solde', value: `${nf2(balanceBefore)} DA` },
+        { label: 'Montant de cette facture (HT)', value: `${nf2(montantSolde)} DA` },
+        ...(montantPaye > 0 ? [{ label: 'Règlement reçu', value: `${nf2(montantPaye)} DA` }] : []),
+        { label: 'Mode de paiement', value: paymentMode },
+      ]
+        .map((r) => `<tr><td class="k">${escapeHtml(r.label)}</td><td class="right">${escapeHtml(r.value)}</td></tr>`)
+        .join('')}
+      <tr class="net-row"><td>NOUVEAU SOLDE</td><td class="right">${escapeHtml(nf2(nouveauSolde))} DA</td></tr>
+    </tbody>
+  </table>`
+    : isFacture
+      ? `<p class="payment-line"><strong>Mode de paiement :</strong> ${escapeHtml(paymentMode)}</p>`
+      : ''
+
+  // Infos client figées sur la facture (saisie) ; repli sur la fiche client
+  // pour les factures antérieures à ces colonnes.
   const clientRows = [
     { label: 'Nom', value: inv.client_name },
-    { label: 'Code client', value: clientInfo?.client_code },
-    { label: 'Adresse', value: clientInfo?.city },
-    { label: 'NIF', value: clientInfo?.nif },
+    { label: 'Code client', value: inv.client_code || clientInfo?.client_code },
+    { label: 'NIF', value: inv.client_nif || clientInfo?.nif },
+    { label: 'NIS', value: inv.client_nis || clientInfo?.nis },
+    { label: 'Adresse', value: inv.client_address || clientInfo?.address || clientInfo?.city },
+    ...(!isFacture && inv.driver_name ? [{ label: 'Chauffeur', value: inv.driver_name }] : []),
+    ...(!isFacture && inv.truck_plate ? [{ label: 'Immatriculation', value: inv.truck_plate }] : []),
   ]
     .map((r) => `<tr><td class="k">${escapeHtml(r.label)}</td><td>${escapeHtml(r.value || '—')}</td></tr>`)
     .join('')
 
+  const title = isFacture
+    ? `FACTURE N° ${escapeHtml(inv.invoice_number)}`
+    : `BON DE LIVRAISON N° ${escapeHtml(inv.bl_number || inv.invoice_number)}`
+  const detailLabel = isFacture ? 'DÉTAIL DE LA FACTURE' : 'DÉTAIL DE LA LIVRAISON'
+  const detailHead = withPrices
+    ? `<colgroup><col style="width:6%"><col style="width:40%"><col style="width:16%"><col style="width:17%"><col style="width:21%"></colgroup>
+    <thead>
+      <tr>
+        <th class="center">N°</th>
+        <th>Désignation</th>
+        <th class="right">Quantité</th>
+        <th class="right">Prix U. (DA)</th>
+        <th class="right">Total HT (DA)</th>
+      </tr>
+    </thead>`
+    : `<colgroup><col style="width:8%"><col style="width:67%"><col style="width:25%"></colgroup>
+    <thead>
+      <tr>
+        <th class="center">N°</th>
+        <th>Désignation</th>
+        <th class="right">Quantité</th>
+      </tr>
+    </thead>`
+
+  const lettresHtml = withPrices
+    ? `<p class="montant-lettres">
+    Arrêté ${isFacture ? 'la présente facture' : 'le présent bon de livraison'} à la somme de :<br>
+    <strong>${escapeHtml(numberToFrenchWords(netValue))}</strong>
+  </p>`
+    : ''
+
+  const [signLeft, signRight] = isFacture ? ['Le Client', 'Le Directeur'] : ['Le Livreur', 'Le Client']
+
   return `<section class="fiche">
   ${companyHeaderHtml()}
 
-  <p class="fiche-title">FACTURE N° ${escapeHtml(inv.invoice_number)}<br><span class="fiche-date">Date : ${escapeHtml(dateFR(inv.entry_date))}</span></p>
+  <p class="fiche-title">${title}<br><span class="fiche-date">Date : ${escapeHtml(dateFR(inv.entry_date))}</span></p>
 
   <p class="sec-label">CLIENT</p>
   <table class="kv">
@@ -670,57 +755,36 @@ function factureFicheHtml(inv, { clientInfo, linkedCheques } = {}) {
     <tbody>${clientRows}</tbody>
   </table>
 
-  <p class="sec-label">DÉTAIL DE LA FACTURE</p>
+  <p class="sec-label">${detailLabel}</p>
   <table class="detail">
-    <colgroup><col style="width:6%"><col style="width:40%"><col style="width:16%"><col style="width:17%"><col style="width:21%"></colgroup>
-    <thead>
-      <tr>
-        <th class="center">N°</th>
-        <th>Désignation</th>
-        <th class="right">Quantité</th>
-        <th class="right">Prix U. (DA)</th>
-        <th class="right">Total (DA)</th>
-      </tr>
-    </thead>
+    ${detailHead}
     <tbody>${detailRowsHtml}</tbody>
-    <tfoot>
-      ${totalsRowsHtml}
-      <tr class="net-row">
-        <td colspan="3">TOTAL NET À PAYER</td>
-        <td class="right">${escapeHtml(nf2(totalNet))}</td>
-      </tr>
-    </tfoot>
+    ${tfootHtml}
   </table>
 
-  <p class="sec-label">SITUATION DU COMPTE</p>
-  <table class="kv">
-    <colgroup><col style="width:45%"><col style="width:55%"></colgroup>
-    <tbody>
-      ${situationRows}
-      <tr class="net-row"><td>NOUVEAU SOLDE</td><td class="right">${escapeHtml(nf2(nouveauSolde))} DA</td></tr>
-    </tbody>
-  </table>
+  ${situationHtml}
 
-  <p class="montant-lettres">
-    Arrêté la présente facture à la somme de :<br>
-    <strong>${escapeHtml(numberToFrenchWords(totalNet))}</strong>
-  </p>
+  ${lettresHtml}
 
   <div class="fiche-sign">
-    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Client</span></div>
-    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Directeur</span></div>
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">${signLeft}</span></div>
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">${signRight}</span></div>
   </div>
 </section>`
 }
 
 // invoices : lignes de la table `invoices` (sélectionnées dans InvoiceRegistry).
-// extra.clientInfoById : Map<nom_client, { client_code, city }> (déjà chargée
-// par le registre). extra.chequesByInvoice : Map<invoice_id, cheque[]>
-// (chèques liés, déjà chargée par le registre pour sa colonne "Chèque").
+// extra.clientInfoByName : Map<nom_client, { client_code, nif, nis, address,
+// city }> (déjà chargée par le registre). extra.chequesByInvoice :
+// Map<invoice_id, cheque[]> (chèques liés). extra.mode : clé de
+// INVOICE_PRINT_MODES ('facture' par défaut). extra.showAccountSituation :
+// affiche ancien/nouveau solde (facture uniquement, masqué par défaut --
+// information confidentielle).
 export function printInvoices(invoices, extra = {}) {
   const list = Array.isArray(invoices) ? invoices : []
   const clientInfoByName = extra.clientInfoByName ?? new Map()
   const chequesByInvoice = extra.chequesByInvoice ?? new Map()
+  const mode = INVOICE_PRINT_MODES[extra.mode] ? extra.mode : 'facture'
 
   const sections = list.length
     ? list
@@ -728,6 +792,8 @@ export function printInvoices(invoices, extra = {}) {
           factureFicheHtml(inv, {
             clientInfo: clientInfoByName.get(inv.client_name),
             linkedCheques: chequesByInvoice.get(inv.id),
+            mode,
+            showAccountSituation: Boolean(extra.showAccountSituation),
           })
         )
         .join('')
@@ -804,6 +870,8 @@ export function printInvoices(invoices, extra = {}) {
     font-weight: bold;
     font-size: 12pt;
   }
+
+  .payment-line { margin: 10px 0 0; font-size: 10pt; }
 
   .montant-lettres {
     margin: 14px 0 0;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { notifyInvoiceEntry } from '../lib/ntfy'
 import { sendInvoiceEmail } from '../lib/email'
@@ -13,6 +13,10 @@ const emptyDraft = {
   invoice_number: '',
   entry_date: todayISO(),
   client_name: '',
+  client_code: '',
+  client_nif: '',
+  client_nis: '',
+  client_address: '',
   designation: 'Brique B12',
   designation_other: '',
   bl_number: '',
@@ -25,6 +29,7 @@ const emptyDraft = {
   discount_amount: '0',
   settlement: '0',
   disbursement: '0',
+  tva_applied: false,
   stamp_duty: '0',
   driver_name: '',
   truck_plate: '',
@@ -40,6 +45,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
   const [draft, setDraft] = useState({ ...emptyDraft, entity })
   const [clients, setClients] = useState([])
   const [clientCodes, setClientCodes] = useState([])
+  const [clientNameByCode, setClientNameByCode] = useState(new Map())
   const [banks, setBanks] = useState([])
   const [drivers, setDrivers] = useState([])
   const [plates, setPlates] = useState([])
@@ -52,6 +58,10 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
   const [advanceInfo, setAdvanceInfo] = useState(null)
   const [clientPlates, setClientPlates] = useState([])
   const [previousBalanceTouched, setPreviousBalanceTouched] = useState(false)
+  // Nom du client dont code/NIF/NIS/adresse ont été pré-remplis -- permet de
+  // vider ces champs si le nom saisi ne correspond plus à ce client (sans
+  // effacer ce que le gestionnaire a tapé pour un nouveau client).
+  const prefilledFrom = useRef(null)
 
   useEffect(() => {
     const id = setInterval(() => setClock(formatHHMM(new Date())), 30_000)
@@ -82,12 +92,12 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       const [{ data: clientByName }, { data: clientByCode }, { data: advances }, { data: invoiceRows }] = await Promise.all([
         supabase
           .from('clients')
-          .select('name, client_code, total_invoiced, total_paid, balance')
+          .select(CLIENT_LOOKUP_FIELDS)
           .ilike('name', name)
           .maybeSingle(),
         supabase
           .from('clients')
-          .select('name, client_code, total_invoiced, total_paid, balance')
+          .select(CLIENT_LOOKUP_FIELDS)
           .ilike('client_code', name)
           .maybeSingle(),
         supabase.from('client_advances').select('bons_remaining').ilike('client_name', name).gt('bons_remaining', 0),
@@ -96,6 +106,19 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       if (cancelled) return
       const client = clientByName ?? clientByCode
       setClientInfo(client ? { found: true, ...client } : { found: false })
+      if (client) {
+        prefilledFrom.current = client.name
+        setDraft((d) => ({
+          ...d,
+          client_code: client.client_code ?? '',
+          client_nif: client.nif ?? '',
+          client_nis: client.nis ?? '',
+          client_address: client.address || client.city || '',
+        }))
+      } else if (prefilledFrom.current) {
+        prefilledFrom.current = null
+        setDraft((d) => ({ ...d, client_code: '', client_nif: '', client_nis: '', client_address: '' }))
+      }
       // Trouvé par code (pas par nom exact) : corrige le champ avec le vrai
       // nom du client, pour que la suite (solde, matricules, enregistrement)
       // utilise systématiquement le nom, jamais le code.
@@ -153,6 +176,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
 
     setClients(dedupe(clientRows?.map((r) => r.name)))
     setClientCodes(dedupe(clientRows?.map((r) => r.client_code)))
+    setClientNameByCode(new Map((clientRows ?? []).filter((r) => r.client_code).map((r) => [r.client_code.toLowerCase(), r.name])))
     setBanks(dedupe(invoiceRows?.map((r) => r.cheque_bank)))
     setDrivers(dedupe(invoiceRows?.map((r) => r.driver_name)))
     setPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
@@ -173,6 +197,14 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
     setDraft((d) => ({ ...d, [field]: value }))
   }
 
+  // Code client choisi dans l'autocomplétion : sélectionne le client
+  // correspondant (le pré-remplissage NIF/NIS/adresse suit via le nom).
+  function handleClientCodeChange(value) {
+    update('client_code', value)
+    const name = clientNameByCode.get(value.trim().toLowerCase())
+    if (name && name.toLowerCase() !== draft.client_name.trim().toLowerCase()) update('client_name', name)
+  }
+
   const qtyB8 = Number(draft.qty_b8) || 0
   const qtyB12 = Number(draft.qty_b12) || 0
   const qtyH = Number(draft.qty_h) || 0
@@ -185,12 +217,17 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
   const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
   const total = amount - discountAmount
   const balance = total - settlement
-  const stampDuty = Number(draft.stamp_duty) || 0
-  const totalTva = total * 0.19
-  const totalTtc = total * 1.19
+  // TVA / TTC / timbre : informations fiscales imprimées sur la facture
+  // uniquement, si le gestionnaire coche "Appliquer la TVA". Le solde client
+  // et la caisse ne voient JAMAIS que le total HT (voir montant_solde dans
+  // schema.sql).
+  const tvaApplied = draft.tva_applied
+  const stampDuty = tvaApplied ? Number(draft.stamp_duty) || 0 : 0
+  const totalTva = tvaApplied ? total * 0.19 : 0
+  const totalTtc = total + totalTva
   const totalNet = totalTtc + stampDuty
   const previousBalance = Number(draft.previous_balance) || 0
-  const newClientBalance = previousBalance + totalNet - settlement
+  const newClientBalance = previousBalance + total - settlement
 
   function validate() {
     if (!draft.invoice_number.trim()) return 'Le n° de facture est obligatoire.'
@@ -209,6 +246,56 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       return 'Le n° de chèque est obligatoire.'
     }
     return ''
+  }
+
+  // Crée la fiche client si le nom est inconnu (avec code/NIF/NIS/adresse),
+  // sinon complète la fiche existante avec les infos saisies. Retourne un
+  // message d'erreur bloquant, ou '' si tout va bien.
+  async function syncClientRecord(clientName, fields) {
+    const { data: existing, error: lookupError } = await supabase
+      .from('clients')
+      .select('id, client_code, nif, nis, address')
+      .ilike('name', clientName)
+      .maybeSingle()
+    if (lookupError) return `Erreur de vérification client : ${lookupError.message}`
+
+    if (fields.client_code) {
+      const { data: codeOwner } = await supabase
+        .from('clients')
+        .select('id, name')
+        .ilike('client_code', fields.client_code)
+        .maybeSingle()
+      if (codeOwner && codeOwner.id !== existing?.id) {
+        return `Le code client ${fields.client_code} est déjà attribué à ${codeOwner.name}.`
+      }
+    }
+
+    if (!existing) {
+      const { error: insertError } = await supabase.from('clients').insert({
+        name: clientName,
+        client_code: fields.client_code,
+        nif: fields.client_nif,
+        nis: fields.client_nis,
+        address: fields.client_address,
+        total_invoiced: 0,
+        total_paid: 0,
+        balance: 0,
+        source: 'manual',
+      })
+      return insertError ? `Erreur de création du client : ${insertError.message}` : ''
+    }
+
+    const changes = {}
+    if (fields.client_code && !existing.client_code) changes.client_code = fields.client_code
+    if (fields.client_nif && fields.client_nif !== existing.nif) changes.nif = fields.client_nif
+    if (fields.client_nis && fields.client_nis !== existing.nis) changes.nis = fields.client_nis
+    if (fields.client_address && fields.client_address !== existing.address) changes.address = fields.client_address
+    if (Object.keys(changes).length === 0) return ''
+    const { error: updateError } = await supabase
+      .from('clients')
+      .update({ ...changes, updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+    return updateError ? `Erreur de mise à jour du client : ${updateError.message}` : ''
   }
 
   async function handleSubmit(e) {
@@ -244,12 +331,28 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
     const isCheque = draft.payment_status === 'Chèque'
 
     const clientName = draft.client_name.trim().toUpperCase()
+    const clientFields = {
+      client_code: draft.client_code.trim() || null,
+      client_nif: draft.client_nif.trim() || null,
+      client_nis: draft.client_nis.trim() || null,
+      client_address: draft.client_address.trim() || null,
+    }
+
+    // Fiche client AVANT la facture : le trigger invoices_sync_client_balance
+    // n'impute le solde qu'à un client existant.
+    const clientError = await syncClientRecord(clientName, clientFields)
+    if (clientError) {
+      setLoading(false)
+      setError(clientError)
+      return
+    }
 
     const payload = {
       invoice_number: invoiceNumber,
       entry_date: draft.entry_date,
       entry_time: formatHHMM(new Date()),
       client_name: clientName,
+      ...clientFields,
       designation: draft.designation,
       designation_other: draft.designation === 'Autre' ? draft.designation_other.trim() : null,
       bl_number: draft.bl_number.trim() || null,
@@ -262,6 +365,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       discount_amount: discountAmount,
       settlement: settlement,
       disbursement: Number(draft.disbursement) || 0,
+      tva_applied: tvaApplied,
       stamp_duty: stampDuty,
       driver_name: draft.driver_name.trim() || null,
       truck_plate: draft.truck_plate.trim() || null,
@@ -276,8 +380,9 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       // au plus près le calcul historique de sync_client_balance_from_invoice
       // (payment_status != 'Non payé' => facture considérée réglée en
       // entier), pour que le sélecteur "factures non payées" (liaison
-      // chèque/caisse) exclue correctement ces factures.
-      montant_paye: draft.payment_status === 'Non payé' ? 0 : totalNet,
+      // chèque/caisse) exclue correctement ces factures. Toujours sur le
+      // total HT (montant_solde), jamais TVA/timbre.
+      montant_paye: draft.payment_status === 'Non payé' ? 0 : total,
       // Solde client figé au moment de la saisie -- sert d'"ancien solde" sur
       // la facture imprimée (voir printInvoices dans printRegistry.js).
       balance_before: previousBalance,
@@ -330,6 +435,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
         }
       }
 
+      prefilledFrom.current = null
       setDrivers((p) => dedupe([payload.driver_name, ...p]))
       setPlates((p) => dedupe([payload.truck_plate, ...p]))
       setBanks((p) => dedupe([payload.cheque_bank, ...p]))
@@ -411,6 +517,56 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
             {advanceInfo.bonsRemaining > 1 ? 's' : ''}
           </p>
         )}
+      </Field>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Code client">
+          <input
+            type="text"
+            list="invoice-client-codes-list"
+            value={draft.client_code}
+            onChange={(e) => handleClientCodeChange(e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+            placeholder="ex : CL-0042"
+          />
+          <datalist id="invoice-client-codes-list">
+            {clientCodes.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="NIF client">
+          <input
+            type="text"
+            value={draft.client_nif}
+            onChange={(e) => update('client_nif', e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+            placeholder="optionnel"
+          />
+        </Field>
+        <Field label="NIS client">
+          <input
+            type="text"
+            value={draft.client_nis}
+            onChange={(e) => update('client_nis', e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+            placeholder="optionnel"
+          />
+        </Field>
+      </div>
+
+      <Field label="Adresse client">
+        <input
+          type="text"
+          value={draft.client_address}
+          onChange={(e) => update('client_address', e.target.value)}
+          className={inputClass}
+          autoComplete="off"
+          placeholder="optionnel"
+        />
       </Field>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -575,7 +731,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
             className={inputClass}
           />
         </Field>
-        <Field label="Total (DA)">
+        <Field label="Total HT (DA)">
           <input
             type="text"
             value={total.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
@@ -586,49 +742,66 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
         </Field>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="TVA (DA)">
-          <input
-            type="text"
-            value={totalTva.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-            readOnly
-            disabled
-            className={`${inputClass} cursor-not-allowed opacity-60`}
-          />
-        </Field>
-        <Field label="TTC (DA)">
-          <input
-            type="text"
-            value={totalTtc.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-            readOnly
-            disabled
-            className={`${inputClass} cursor-not-allowed opacity-60`}
-          />
-        </Field>
-      </div>
+      <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+        <input
+          type="checkbox"
+          checked={draft.tva_applied}
+          onChange={(e) => update('tva_applied', e.target.checked)}
+          className="h-4 w-4 accent-terracotta"
+        />
+        <span className="text-ink">Appliquer la TVA (19%)</span>
+      </label>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Timbre (DA)">
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            min="0"
-            value={draft.stamp_duty}
-            onChange={(e) => update('stamp_duty', e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Total Net (DA)">
-          <input
-            type="text"
-            value={totalNet.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-            readOnly
-            disabled
-            className={`${inputClass} cursor-not-allowed font-display text-ocre`}
-          />
-        </Field>
-      </div>
+      {tvaApplied && (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="TVA (DA)">
+              <input
+                type="text"
+                value={totalTva.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+                readOnly
+                disabled
+                className={`${inputClass} cursor-not-allowed opacity-60`}
+              />
+            </Field>
+            <Field label="TTC (DA)">
+              <input
+                type="text"
+                value={totalTtc.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+                readOnly
+                disabled
+                className={`${inputClass} cursor-not-allowed opacity-60`}
+              />
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Timbre (DA)">
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                value={draft.stamp_duty}
+                onChange={(e) => update('stamp_duty', e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Total Net (DA)">
+              <input
+                type="text"
+                value={totalNet.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+                readOnly
+                disabled
+                className={`${inputClass} cursor-not-allowed font-display text-ocre`}
+              />
+            </Field>
+          </div>
+          <p className="-mt-2 text-xs text-ink-muted">
+            TVA, TTC et timbre sont imprimés sur la facture uniquement : le solde client et la caisse restent sur le total HT.
+          </p>
+        </>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Règlement (DA)">
@@ -799,6 +972,8 @@ function Field({ label, required, children }) {
     </label>
   )
 }
+
+const CLIENT_LOOKUP_FIELDS = 'name, client_code, nif, nis, address, city, total_invoiced, total_paid, balance'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })

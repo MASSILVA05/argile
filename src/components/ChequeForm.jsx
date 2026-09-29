@@ -65,13 +65,13 @@ export default function ChequeForm({ entity, canChooseEntity }) {
     let active = true
     supabase
       .from('invoices')
-      .select('id, invoice_number, client_name, total_net, montant_paye')
+      .select('id, invoice_number, client_name, montant_solde, montant_paye')
       .eq('entity', entity)
       .order('entry_date', { ascending: false })
       .limit(300)
       .then(({ data }) => {
         if (!active) return
-        setUnpaidInvoices((data ?? []).filter((inv) => Number(inv.total_net) > Number(inv.montant_paye)))
+        setUnpaidInvoices((data ?? []).filter((inv) => Number(inv.montant_solde) > Number(inv.montant_paye)))
       })
     return () => {
       active = false
@@ -91,7 +91,7 @@ export default function ChequeForm({ entity, canChooseEntity }) {
     setDraft((d) => ({
       ...d,
       linked_invoice_id: invoiceId,
-      amount: invoice ? String(Number(invoice.total_net) - Number(invoice.montant_paye)) : d.amount,
+      amount: invoice ? String(Number(invoice.montant_solde) - Number(invoice.montant_paye)) : d.amount,
       beneficiary: invoice?.client_name ?? d.beneficiary,
     }))
   }
@@ -220,7 +220,7 @@ export default function ChequeForm({ entity, canChooseEntity }) {
           <option value="">— aucune —</option>
           {unpaidInvoices.map((inv) => (
             <option key={inv.id} value={inv.id}>
-              {inv.invoice_number} — {inv.client_name} — reste {formatDA(Number(inv.total_net) - Number(inv.montant_paye))} DA
+              {inv.invoice_number} — {inv.client_name} — reste {formatDA(Number(inv.montant_solde) - Number(inv.montant_paye))} DA
             </option>
           ))}
         </select>

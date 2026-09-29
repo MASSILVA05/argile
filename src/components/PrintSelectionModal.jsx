@@ -60,9 +60,14 @@ export default function PrintSelectionModal({
   // à imprimer (utilisé par le registre de fabrication pour son format « une
   // fiche par fabrication »).
   onPrint,
+  // Optionnel : cases à cocher supplémentaires [{ key, label, defaultValue }]
+  // affichées au-dessus des boutons ; leurs valeurs sont passées en second
+  // argument à onPrint (ex. « Afficher la situation du compte » des factures).
+  options = [],
 }) {
   const [checked, setChecked] = useState(() => new Set())
   const [query, setQuery] = useState('')
+  const [optionValues, setOptionValues] = useState({})
 
   // Réinitialise (tout coché) à l'ouverture. `rows` étant recréé à chaque
   // render par le parent, on NE dépend PAS de son identité (sinon boucle de
@@ -72,7 +77,9 @@ export default function PrintSelectionModal({
     if (open) {
       setChecked(new Set(Array.from({ length: rowCount }, (_, i) => i)))
       setQuery('')
+      setOptionValues(Object.fromEntries(options.map((o) => [o.key, Boolean(o.defaultValue)])))
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rowCount])
 
   const visibleIdx = useMemo(() => {
@@ -101,7 +108,7 @@ export default function PrintSelectionModal({
   function printSelection() {
     if (selectedRows.length === 0) return
     if (onPrint) {
-      onPrint(selectedRows)
+      onPrint(selectedRows, optionValues)
     } else {
       printRegistry({
         title,
@@ -119,7 +126,7 @@ export default function PrintSelectionModal({
 
   function printAll() {
     if (onPrint) {
-      onPrint(rows)
+      onPrint(rows, optionValues)
     } else {
       printRegistry({ title, subtitle, columns, rows, totals, filters, orientation, fontSizePt })
     }
@@ -205,6 +212,22 @@ export default function PrintSelectionModal({
             </tbody>
           </table>
         </div>
+
+        {options.length > 0 && (
+          <div className="mt-3 flex flex-col gap-2">
+            {options.map((o) => (
+              <label key={o.key} className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={Boolean(optionValues[o.key])}
+                  onChange={(e) => setOptionValues((v) => ({ ...v, [o.key]: e.target.checked }))}
+                  className="h-4 w-4 accent-terracotta"
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-border px-4 py-2 text-sm text-ink-muted hover:border-ink-muted">

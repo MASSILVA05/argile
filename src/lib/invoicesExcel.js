@@ -19,7 +19,7 @@ const COLUMNS = [
   { header: 'Prix H (DA)', key: 'price_h', width: 12 },
   { header: 'Montant (DA)', key: 'amount', width: 16 },
   { header: 'Remise (DA)', key: 'discount_amount', width: 14 },
-  { header: 'Total (DA)', key: 'total', width: 16 },
+  { header: 'Total HT (DA)', key: 'total', width: 16 },
   { header: 'Règlement (DA)', key: 'settlement', width: 16 },
   { header: 'Décaissement (DA)', key: 'disbursement', width: 16 },
   { header: 'Chauffeur', key: 'driver_name', width: 22 },
