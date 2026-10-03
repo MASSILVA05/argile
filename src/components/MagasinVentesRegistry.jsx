@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { formatDateTime } from '../lib/dateFormat'
 import { buildExportFilename } from '../lib/exportFilters'
-import { PAYMENT_MODES, formatDA, itemsSummary, itemsText, computeVenteTotals, buildMagasinClientSheet } from '../lib/magasin'
+import { PAYMENT_MODES, formatDA, formatQty, itemsSummary, itemsText, computeVenteTotals, buildMagasinClientSheet } from '../lib/magasin'
 import { downloadMagasinVentesExcel } from '../lib/magasinVentesExcel'
 import PrintSelectionModal from './PrintSelectionModal'
 import RowActions from './RowActions'
@@ -44,6 +44,7 @@ export default function MagasinVentesRegistry() {
   const [exportError, setExportError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [lightboxUrl, setLightboxUrl] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -377,14 +378,27 @@ export default function MagasinVentesRegistry() {
                   editingId === v.id ? (
                     <EditRow key={v.id} draft={editDraft} onChange={setEditDraft} onSave={saveEdit} onCancel={cancelEdit} />
                   ) : (
-                    <tr key={v.id} className="border-b border-border last:border-0">
+                    <Fragment key={v.id}>
+                    <tr className="border-b border-border last:border-0">
                       <Td>{v.bon_number}</Td>
                       <Td>{v.entry_date}</Td>
                       <Td>{formatTime(v.entry_time)}</Td>
                       <Td>{formatDateTime(v.created_at)}</Td>
                       <Td>{v.client_name ?? '—'}</Td>
                       <Td className="max-w-[280px] truncate" title={itemsText(v.items)}>
-                        {itemsSummary(v.items)}
+                        {v.items?.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedId((id) => (id === v.id ? null : v.id))}
+                            className="max-w-full truncate text-left hover:text-ocre"
+                          >
+                            <span className="no-print mr-1 text-ink-muted">{expandedId === v.id ? '▾' : '▸'}</span>
+                            {v.items.length > 1 && <span className="text-ink-muted">({v.items.length} articles) </span>}
+                            {itemsSummary(v.items)}
+                          </button>
+                        ) : (
+                          itemsSummary(v.items)
+                        )}
                       </Td>
                       <Td className="text-right">{formatDA(v.total_ht)}</Td>
                       <Td className="text-right">{formatDA(v.remise)}</Td>
@@ -409,6 +423,8 @@ export default function MagasinVentesRegistry() {
                         />
                       </Td>
                     </tr>
+                    {expandedId === v.id && <ItemsDetailRow items={v.items} />}
+                    </Fragment>
                   )
                 )}
               </tbody>
@@ -530,6 +546,37 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
           </button>
         </div>
       </Td>
+    </tr>
+  )
+}
+
+function ItemsDetailRow({ items }) {
+  return (
+    <tr className="border-b border-border bg-bg-soft/50">
+      <td colSpan={13} className="px-3 py-2">
+        <table className="w-full max-w-3xl text-[11px] sm:text-sm">
+          <thead>
+            <tr className="text-left text-ink-muted">
+              <th className="px-2 py-1 font-medium">Référence</th>
+              <th className="px-2 py-1 font-medium">Désignation</th>
+              <th className="px-2 py-1 text-right font-medium">Qté</th>
+              <th className="px-2 py-1 text-right font-medium">P.U.</th>
+              <th className="px-2 py-1 text-right font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => (
+              <tr key={i} className="border-t border-border/50">
+                <td className="px-2 py-1">{it.reference ?? '—'}</td>
+                <td className="px-2 py-1">{it.designation}</td>
+                <td className="px-2 py-1 text-right">{formatQty(it.quantite)}</td>
+                <td className="px-2 py-1 text-right">{formatDA(it.prix_unitaire)}</td>
+                <td className="px-2 py-1 text-right">{formatDA(it.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </td>
     </tr>
   )
 }

@@ -18,7 +18,6 @@ const newLine = () => ({
   designation: '',
   quantite: '',
   prix_unitaire: '',
-  stock_qty: null,
 })
 
 const emptyDraft = {
@@ -72,6 +71,8 @@ export default function MagasinVenteForm() {
     return map
   }, [stock])
 
+  const stockById = useMemo(() => new Map(stock.map((item) => [item.id, item])), [stock])
+
   function update(field, value) {
     setDraft((d) => ({ ...d, [field]: value }))
   }
@@ -89,10 +90,9 @@ export default function MagasinVenteForm() {
         reference: match.reference ?? '',
         designation: match.designation,
         prix_unitaire: match.prix_detail ? String(match.prix_detail) : '',
-        stock_qty: Number(match.quantite) || 0,
       })
     } else {
-      setLine(key, { search: value, stock_id: null, designation: value, reference: '', stock_qty: null })
+      setLine(key, { search: value, stock_id: null, designation: value, reference: '' })
     }
   }
 
@@ -119,7 +119,29 @@ export default function MagasinVenteForm() {
 
   const { totalHt, total } = computeVenteTotals(items, draft.remise)
 
-  const shortLines = validLines.filter((l) => l.stock_qty != null && Number(l.quantite) > l.stock_qty)
+  // Quantité demandée par article (un même article peut figurer sur plusieurs
+  // lignes : le contrôle de stock porte sur la somme).
+  const requestedByStock = new Map()
+  for (const l of lines) {
+    if (l.stock_id) requestedByStock.set(l.stock_id, (requestedByStock.get(l.stock_id) ?? 0) + (Number(l.quantite) || 0))
+  }
+
+  function stockQty(line) {
+    const item = line.stock_id ? stockById.get(line.stock_id) : null
+    return item ? Number(item.quantite) || 0 : null
+  }
+
+  // Motif bloquant d'une ligne (null = ligne OK ou vide).
+  function lineIssue(line) {
+    if (!line.search.trim()) return null
+    if (!line.stock_id) return 'Article introuvable dans le stock — choisissez-le dans la liste.'
+    const available = stockQty(line)
+    if (available <= 0) return 'Produit en rupture de stock'
+    if (requestedByStock.get(line.stock_id) > available) return `Stock insuffisant ! Disponible : ${formatQty(available)}`
+    return null
+  }
+
+  const hasBlockingLine = lines.some((l) => lineIssue(l))
 
   const isCheque = draft.payment_mode === 'Chèque'
   const isCredit = draft.payment_mode === 'Crédit'
@@ -128,6 +150,7 @@ export default function MagasinVenteForm() {
     if (!draft.bon_number) return 'Le n° de bon est obligatoire.'
     if (!draft.entry_date) return 'La date est obligatoire.'
     if (items.length === 0) return 'Ajoutez au moins un article (désignation, quantité et prix).'
+    if (hasBlockingLine) return 'Stock insuffisant sur au moins un article.'
     if (isCredit && !draft.client_name.trim()) return 'Le client est obligatoire pour une vente à crédit.'
     if (isCheque) {
       if (!draft.cheque_number.trim()) return 'Le n° de chèque est obligatoire.'
@@ -199,15 +222,18 @@ export default function MagasinVenteForm() {
           ? 'Ce n° de bon existe déjà.'
           : `Erreur d'enregistrement : ${rpcError.message}`
       )
+      // Le stock a pu bouger depuis l'ouverture du formulaire (autre vente) :
+      // on le recharge pour que les contrôles affichent les vraies quantités.
+      const { data: stockRows } = await supabase
+        .from('magasin_stock')
+        .select('id, reference, designation, prix_detail, prix_gros, quantite')
+      if (stockRows) setStock(stockRows)
       return
     }
 
     notifyMagasinVente(data)
 
-    const warn = shortLines.length
-      ? ` (stock insuffisant sur ${shortLines.length} article(s), stock ajusté quand même)`
-      : ''
-    setSuccess(`Bon de vente n° ${bonNumber} enregistré${warn}.`)
+    setSuccess(`Bon de vente n° ${bonNumber} enregistré (${items.length} article${items.length > 1 ? 's' : ''}).`)
     setDraft({ ...emptyDraft, bon_number: bonNumber + 1, entry_date: draft.entry_date })
     setLines([newLine()])
     // Recharge stock (quantités à jour) et clients (client éventuellement créé).
@@ -267,16 +293,19 @@ export default function MagasinVenteForm() {
         <span className="text-sm text-ink-muted">Articles</span>
         <datalist id="magasin-stock-list">
           {stock.map((item) => (
-            <option key={item.id} value={stockLabel(item)} />
+            <option key={item.id} value={stockLabel(item)}>
+              {Number(item.quantite) > 0 ? `Stock : ${formatQty(item.quantite)}` : 'Rupture de stock'}
+            </option>
           ))}
         </datalist>
 
         <div className="flex flex-col gap-2">
           {lines.map((line) => {
             const lineTotal = itemLineTotal(line.quantite, line.prix_unitaire)
-            const short = line.stock_qty != null && Number(line.quantite) > line.stock_qty
+            const available = stockQty(line)
+            const issue = lineIssue(line)
             return (
-              <div key={line.key} className="rounded-lg border border-border bg-bg-soft p-3">
+              <div key={line.key} className={`rounded-lg border bg-bg-soft p-3 ${issue ? 'border-terracotta' : 'border-border'}`}>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-12">
                   <div className="sm:col-span-5">
                     <input
@@ -288,10 +317,9 @@ export default function MagasinVenteForm() {
                       autoComplete="off"
                       placeholder="Rechercher un article (référence ou désignation)"
                     />
-                    {line.stock_qty != null && (
-                      <p className="mt-1 text-xs text-ink-muted">
-                        En stock : {formatQty(line.stock_qty)}
-                        {line.stock_id && ' · prix détail pré-rempli'}
+                    {available != null && (
+                      <p className={`mt-1 text-xs ${available > 0 ? 'text-ink-muted' : 'text-terracotta'}`}>
+                        Stock disponible : {formatQty(available)}
                       </p>
                     )}
                   </div>
@@ -303,7 +331,7 @@ export default function MagasinVenteForm() {
                       min="0"
                       value={line.quantite}
                       onChange={(e) => setLine(line.key, { quantite: e.target.value })}
-                      className={`${inputClass} ${short ? 'border-terracotta' : ''}`}
+                      className={`${inputClass} ${issue ? 'border-terracotta' : ''}`}
                       placeholder="Qté"
                     />
                   </div>
@@ -321,35 +349,27 @@ export default function MagasinVenteForm() {
                   </div>
                   <div className="flex items-center justify-between gap-2 sm:col-span-3">
                     <span className="font-display text-ink">{formatDA(lineTotal)} DA</span>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={addLine}
-                        className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10"
-                        title="Ajouter une ligne"
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removeLine(line.key)}
-                        className="rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10"
-                        title="Supprimer la ligne"
-                      >
-                        −
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeLine(line.key)}
+                      className="rounded border border-terracotta/50 px-2 py-1 text-sm text-terracotta hover:bg-terracotta/10"
+                    >
+                      Retirer
+                    </button>
                   </div>
                 </div>
-                {short && (
-                  <p className="mt-2 text-xs text-terracotta">
-                    ⚠ Quantité demandée ({formatQty(line.quantite)}) supérieure au stock ({formatQty(line.stock_qty)}).
-                  </p>
-                )}
+                {issue && <p className="mt-2 text-sm font-medium text-terracotta">{issue}</p>}
               </div>
             )
           })}
         </div>
+        <button
+          type="button"
+          onClick={addLine}
+          className="self-start rounded-lg border border-ocre px-3 py-2 text-sm text-ocre hover:bg-ocre/10"
+        >
+          + Ajouter un article
+        </button>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -423,10 +443,10 @@ export default function MagasinVenteForm() {
 
       <button
         type="submit"
-        disabled={loading}
+        disabled={loading || hasBlockingLine}
         className="min-h-12 rounded-lg bg-terracotta px-4 py-3 font-display text-lg font-medium tracking-wide text-ink transition-colors hover:bg-terracotta-hover disabled:opacity-50"
       >
-        {loading ? 'Enregistrement…' : 'Enregistrer la vente'}
+        {loading ? 'Enregistrement…' : hasBlockingLine ? 'Stock insuffisant' : 'Enregistrer la vente'}
       </button>
     </form>
   )

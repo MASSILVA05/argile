@@ -7665,3 +7665,293 @@ grant execute on function admin_update_invoice_extra(uuid, text, boolean, text, 
 -- update invoices set solde_sur_ttc = false where solde_sur_ttc;
 -- alter table invoices enable trigger invoices_sync_client_balance;
 -- commit;
+
+-- ============================================================
+-- AJOUT 2026-10-03 : CAISSE MAGASIN ALIMENTÉE AUTOMATIQUEMENT
+--   - Vente (Espèces / Chèque / Versement)      -> Encaissement (catégorie Client)
+--   - Règlement client (MagasinCredits, is_payment) -> Encaissement (catégorie Client)
+--   - Vente à Crédit                             -> rien (le client paie plus tard)
+--   - Achat (Espèces / Chèque)                   -> Décaissement (catégorie Fournisseur)
+--   - Achat à Crédit                             -> rien (fournisseur payé plus tard)
+-- L'écriture caisse est liée à sa source (source_vente_id / source_achat_id) :
+--   modification du bon -> écriture resynchronisée ; suppression -> cascade.
+-- ============================================================
+
+alter table magasin_caisse add column if not exists source_vente_id uuid
+  references magasin_ventes (id) on delete cascade;
+alter table magasin_caisse add column if not exists source_achat_id uuid
+  references magasin_achats (id) on delete cascade;
+create unique index if not exists magasin_caisse_source_vente_unique
+  on magasin_caisse (source_vente_id) where source_vente_id is not null;
+create unique index if not exists magasin_caisse_source_achat_unique
+  on magasin_caisse (source_achat_id) where source_achat_id is not null;
+
+comment on column magasin_caisse.source_vente_id is 'Écriture générée automatiquement depuis magasin_ventes (vente ou règlement client)';
+comment on column magasin_caisse.source_achat_id is 'Écriture générée automatiquement depuis magasin_achats';
+
+-- N° de bon caisse suivant, sérialisé (verrou transactionnel) pour éviter
+-- deux écritures automatiques simultanées avec le même numéro.
+create or replace function magasin_caisse_next_bon()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtext('magasin_caisse_bon_number'));
+  return (select coalesce(max(bon_number), 0) + 1 from magasin_caisse);
+end;
+$$;
+
+-- magasin_ventes -> magasin_caisse (insert + update)
+create or replace function magasin_vente_to_caisse()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_mode text := coalesce(new.payment_mode, 'Espèces');
+  v_desc text;
+begin
+  -- Crédit ou montant nul : pas de mouvement de caisse (on retire l'éventuelle
+  -- écriture si le bon vient d'être modifié en ce sens).
+  if v_mode = 'Crédit' or coalesce(new.total, 0) <= 0 then
+    if tg_op = 'UPDATE' then
+      delete from magasin_caisse where source_vente_id = new.id;
+    end if;
+    return new;
+  end if;
+
+  v_desc := case when new.is_payment
+    then 'Règlement client Bon N° ' || new.bon_number || ' — ' || coalesce(new.client_name, 'Comptoir')
+    else 'Vente Bon N° ' || new.bon_number || ' — ' || coalesce(new.client_name, 'Comptoir')
+  end;
+
+  update magasin_caisse set
+    entry_date = new.entry_date,
+    entry_time = new.entry_time,
+    description = v_desc,
+    amount = new.total,
+    beneficiary = new.client_name,
+    client_name = new.client_name,
+    payment_mode = v_mode,
+    cheque_number = new.cheque_number,
+    cheque_bank = new.cheque_bank
+  where source_vente_id = new.id;
+
+  if not found then
+    insert into magasin_caisse (
+      bon_number, entry_date, entry_time, operation_type, description,
+      amount, beneficiary, client_name, payment_mode,
+      cheque_number, cheque_bank, category, entered_by_user, source_vente_id
+    ) values (
+      magasin_caisse_next_bon(), new.entry_date, new.entry_time, 'Encaissement', v_desc,
+      new.total, new.client_name, new.client_name, v_mode,
+      new.cheque_number, new.cheque_bank, 'Client', new.entered_by_user, new.id
+    );
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_magasin_vente_caisse on magasin_ventes;
+create trigger trg_magasin_vente_caisse
+  after insert or update of entry_date, entry_time, client_name, total, payment_mode,
+    cheque_number, cheque_bank, is_payment, bon_number
+  on magasin_ventes
+  for each row execute function magasin_vente_to_caisse();
+
+-- magasin_achats -> magasin_caisse (insert + update)
+create or replace function magasin_achat_to_caisse()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_mode text := coalesce(new.payment_mode, 'Espèces');
+  v_desc text := 'Achat Bon N° ' || new.bon_number || ' — ' || new.fournisseur;
+begin
+  if v_mode = 'Crédit' or coalesce(new.total, 0) <= 0 then
+    if tg_op = 'UPDATE' then
+      delete from magasin_caisse where source_achat_id = new.id;
+    end if;
+    return new;
+  end if;
+
+  update magasin_caisse set
+    entry_date = new.entry_date,
+    entry_time = new.entry_time,
+    description = v_desc,
+    amount = new.total,
+    beneficiary = new.fournisseur,
+    payment_mode = v_mode,
+    cheque_number = new.cheque_number,
+    cheque_bank = new.cheque_bank
+  where source_achat_id = new.id;
+
+  if not found then
+    insert into magasin_caisse (
+      bon_number, entry_date, entry_time, operation_type, description,
+      amount, beneficiary, payment_mode,
+      cheque_number, cheque_bank, category, entered_by_user, source_achat_id
+    ) values (
+      magasin_caisse_next_bon(), new.entry_date, new.entry_time, 'Décaissement', v_desc,
+      new.total, new.fournisseur, v_mode,
+      new.cheque_number, new.cheque_bank, 'Fournisseur', new.entered_by_user, new.id
+    );
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_magasin_achat_caisse on magasin_achats;
+create trigger trg_magasin_achat_caisse
+  after insert or update of entry_date, entry_time, fournisseur, total, payment_mode,
+    cheque_number, cheque_bank, bon_number
+  on magasin_achats
+  for each row execute function magasin_achat_to_caisse();
+
+-- OPTIONNEL -- NE PAS exécuter sans décision explicite : rattrape les ventes,
+-- règlements et achats déjà saisis AVANT ce trigger (ajoute leurs écritures
+-- caisse). À ne pas lancer si ces mouvements ont déjà été saisis à la main
+-- dans la caisse magasin (doublons).
+--
+-- begin;
+-- update magasin_ventes set total = total
+--   where coalesce(payment_mode, 'Espèces') <> 'Crédit' and total > 0
+--     and not exists (select 1 from magasin_caisse c where c.source_vente_id = magasin_ventes.id);
+-- update magasin_achats set total = total
+--   where coalesce(payment_mode, 'Espèces') <> 'Crédit' and total > 0
+--     and not exists (select 1 from magasin_caisse c where c.source_achat_id = magasin_achats.id);
+-- commit;
+
+-- ============================================================
+-- AJOUT 2026-10-03 (2) : VENTE MAGASIN BLOQUÉE SI STOCK INSUFFISANT
+-- magasin_record_vente vérifie, AVANT toute écriture, que chaque article du
+-- bon existe dans magasin_stock et que la quantité demandée (cumulée si le
+-- même article figure sur plusieurs lignes) est disponible. Les lignes de
+-- stock sont verrouillées (FOR UPDATE) : deux ventes simultanées ne peuvent
+-- pas vendre le même stock. Sinon -> exception, rien n'est enregistré
+-- (bon, stock, client, caisse : tout est annulé).
+-- Les règlements clients (is_payment) ne sont pas concernés.
+-- ============================================================
+create or replace function magasin_record_vente(p jsonb)
+returns magasin_ventes
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row magasin_ventes;
+  v_item jsonb;
+  v_client text := nullif(upper(trim(coalesce(p->>'client_name', ''))), '');
+  v_is_payment boolean := coalesce((p->>'is_payment')::boolean, false);
+  v_total numeric := coalesce((p->>'total')::numeric, 0);
+  v_mode text := coalesce(p->>'payment_mode', 'Espèces');
+  v_items jsonb := '[]'::jsonb;
+  v_stock magasin_stock;
+  v_need record;
+begin
+  if not v_is_payment then
+    if jsonb_array_length(coalesce(p->'items', '[]'::jsonb)) = 0 then
+      raise exception 'Le bon de vente ne contient aucun article.';
+    end if;
+
+    -- 1. Rattache chaque ligne à son article (stock_id, sinon référence).
+    for v_item in select * from jsonb_array_elements(p->'items')
+    loop
+      v_stock := null;
+      if nullif(v_item->>'stock_id', '') is not null then
+        select * into v_stock from magasin_stock where id = (v_item->>'stock_id')::uuid;
+      elsif nullif(trim(coalesce(v_item->>'reference', '')), '') is not null then
+        select * into v_stock from magasin_stock where reference = trim(v_item->>'reference');
+      end if;
+
+      if v_stock.id is null then
+        raise exception 'Article introuvable dans le stock : %', coalesce(v_item->>'designation', '?');
+      end if;
+      if coalesce((v_item->>'quantite')::numeric, 0) <= 0 then
+        raise exception 'Quantité invalide pour : %', v_stock.designation;
+      end if;
+
+      v_items := v_items || jsonb_set(v_item, '{stock_id}', to_jsonb(v_stock.id::text));
+    end loop;
+
+    -- 2. Contrôle du stock (quantités cumulées par article, lignes verrouillées).
+    for v_need in
+      select (it->>'stock_id')::uuid as stock_id, sum((it->>'quantite')::numeric) as qty
+      from jsonb_array_elements(v_items) it
+      group by 1
+      order by 1
+    loop
+      select * into v_stock from magasin_stock where id = v_need.stock_id for update;
+      if coalesce(v_stock.quantite, 0) <= 0 then
+        raise exception 'Produit en rupture de stock : %', v_stock.designation;
+      end if;
+      if v_stock.quantite < v_need.qty then
+        raise exception 'Stock insuffisant pour % : disponible %, demandé %',
+          v_stock.designation, v_stock.quantite, v_need.qty;
+      end if;
+    end loop;
+  end if;
+
+  insert into magasin_ventes (
+    bon_number, entry_date, entry_time, client_name, items,
+    total_ht, remise, total, payment_mode, cheque_number, cheque_bank,
+    observations, photo_url, is_payment, entered_by_user
+  ) values (
+    (p->>'bon_number')::int,
+    coalesce((p->>'entry_date')::date, current_date),
+    (p->>'entry_time')::time,
+    v_client,
+    case when v_is_payment then '[]'::jsonb else v_items end,
+    coalesce((p->>'total_ht')::numeric, 0),
+    coalesce((p->>'remise')::numeric, 0),
+    v_total,
+    v_mode,
+    nullif(trim(coalesce(p->>'cheque_number', '')), ''),
+    nullif(trim(coalesce(p->>'cheque_bank', '')), ''),
+    nullif(trim(coalesce(p->>'observations', '')), ''),
+    nullif(trim(coalesce(p->>'photo_url', '')), ''),
+    v_is_payment,
+    nullif(trim(coalesce(p->>'entered_by_user', '')), '')
+  )
+  returning * into v_row;
+
+  -- 3. Décrément du stock (contrôlé ci-dessus).
+  if not v_is_payment then
+    for v_item in select * from jsonb_array_elements(v_items)
+    loop
+      update magasin_stock
+        set quantite = quantite - (v_item->>'quantite')::numeric
+        where id = (v_item->>'stock_id')::uuid;
+    end loop;
+  end if;
+
+  if v_client is not null then
+    insert into magasin_clients (name) values (v_client) on conflict (name) do nothing;
+
+    if v_is_payment then
+      update magasin_clients
+        set credit = credit + v_total,
+            last_operation_date = v_row.entry_date
+        where name = v_client;
+    else
+      update magasin_clients
+        set chiffre_affaires = chiffre_affaires + v_total,
+            credit = credit - case when v_mode = 'Crédit' then v_total else 0 end,
+            last_operation_date = v_row.entry_date
+        where name = v_client;
+    end if;
+  end if;
+
+  return v_row;
+end;
+$$;
+
+revoke all on function magasin_record_vente(jsonb) from public;
+grant execute on function magasin_record_vente(jsonb) to anon, authenticated;
