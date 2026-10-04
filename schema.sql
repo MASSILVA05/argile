@@ -7955,3 +7955,229 @@ $$;
 
 revoke all on function magasin_record_vente(jsonb) from public;
 grant execute on function magasin_record_vente(jsonb) to anon, authenticated;
+
+-- ============================================================
+-- AJOUT 2026-10-03 (3) : SUPPRESSION D'UNE VENTE MAGASIN -> RETOUR EN STOCK
+-- Quand un bon de vente est supprimé (registre, ou admin_delete_magasin_vente),
+-- chaque article du bon est remis en stock (quantite += quantité vendue).
+-- Article rapproché par stock_id, sinon par référence ; les anciennes lignes
+-- saisies en texte libre (ni stock_id ni référence connue) sont ignorées.
+-- Les règlements clients (is_payment, items vide) ne touchent pas au stock.
+-- ============================================================
+create or replace function magasin_vente_restock_on_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_item jsonb;
+  v_qty numeric;
+begin
+  if old.is_payment then
+    return old;
+  end if;
+
+  for v_item in select * from jsonb_array_elements(coalesce(old.items, '[]'::jsonb))
+  loop
+    v_qty := coalesce((v_item->>'quantite')::numeric, 0);
+    continue when v_qty <= 0;
+
+    if nullif(v_item->>'stock_id', '') is not null then
+      update magasin_stock
+        set quantite = quantite + v_qty
+        where id = (v_item->>'stock_id')::uuid;
+    elsif nullif(trim(coalesce(v_item->>'reference', '')), '') is not null then
+      update magasin_stock
+        set quantite = quantite + v_qty
+        where reference = trim(v_item->>'reference');
+    end if;
+  end loop;
+
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_magasin_vente_restock on magasin_ventes;
+create trigger trg_magasin_vente_restock
+  after delete on magasin_ventes
+  for each row execute function magasin_vente_restock_on_delete();
+
+-- ============================================================
+-- AJOUT 2026-10-04 (1) : FACTURE PAYÉE EN ESPÈCES -> ENTRÉE CAISSE AUTO
+-- Sur `invoices`, payment_status porte le MODE de règlement choisi à la
+-- saisie ('Espèces' / 'Versement' / 'Chèque' / 'Non payé') -- il n'y a pas
+-- de colonne payment_mode séparée. 'Espèces' = facture réglée intégralement
+-- en espèces à la saisie -> une entrée caisse (Encaissement) est créée
+-- automatiquement, dans la même entité que la facture.
+--   - 'Payé' / 'Partiel' sont posés par record_caisse_with_invoice /
+--     record_cheque_with_invoice, qui créent DÉJÀ leur propre entrée caisse :
+--     le trigger ne s'en occupe pas (pas de doublon).
+--   - Chèque / Versement / Virement : jamais en caisse (module Chèques / banque).
+-- Seule l'entrée créée par ce trigger (auto_from_invoice = true) est mise à
+-- jour / supprimée ; les entrées liées saisies manuellement ou générées par
+-- un chèque ne sont jamais touchées.
+-- Pas de rattrapage des factures 'Espèces' existantes (leur encaissement a pu
+-- être saisi à la main en caisse -> risque de doublon).
+-- ============================================================
+alter table caisse_entries add column if not exists auto_from_invoice boolean not null default false;
+comment on column caisse_entries.auto_from_invoice is 'true = entrée créée automatiquement par le trigger invoices_sync_caisse (facture payée en espèces) ; mise à jour / supprimée avec la facture';
+
+create or replace function sync_caisse_from_invoice()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_amount numeric;
+  v_description text;
+  v_bon integer;
+begin
+  if TG_OP = 'DELETE' then
+    delete from caisse_entries
+      where linked_invoice_id = OLD.id and auto_from_invoice;
+    return OLD;
+  end if;
+
+  if NEW.payment_status is distinct from 'Espèces' then
+    -- Plus (ou pas) en espèces : retire l'entrée auto éventuelle.
+    if TG_OP = 'UPDATE' then
+      delete from caisse_entries
+        where linked_invoice_id = NEW.id and auto_from_invoice;
+    end if;
+    return NEW;
+  end if;
+
+  -- Montant HT réglé ; repli sur montant_solde (HT) si montant_paye n'a pas
+  -- été renseigné (ex. passage 'Non payé' -> 'Espèces' depuis le registre).
+  v_amount := coalesce(nullif(NEW.montant_paye, 0), NEW.montant_solde, 0);
+  v_description := 'Facture N° ' || NEW.invoice_number || ' — Client ' || NEW.client_name;
+
+  if exists (select 1 from caisse_entries where linked_invoice_id = NEW.id and auto_from_invoice) then
+    -- Facture modifiée en restant en espèces : resynchronise l'entrée auto.
+    update caisse_entries set
+      entry_date = NEW.entry_date,
+      description = v_description,
+      amount = v_amount,
+      client_name = NEW.client_name,
+      entity = NEW.entity
+    where linked_invoice_id = NEW.id and auto_from_invoice
+      and (entry_date, description, amount, client_name, entity)
+        is distinct from (NEW.entry_date, v_description, v_amount, NEW.client_name, NEW.entity);
+    return NEW;
+  end if;
+
+  -- Déjà une entrée caisse liée (saisie manuelle / chèque) : pas de doublon.
+  if exists (select 1 from caisse_entries where linked_invoice_id = NEW.id) then
+    return NEW;
+  end if;
+
+  if v_amount <= 0 then
+    return NEW;
+  end if;
+
+  select coalesce(max(bon_number), 0) + 1 into v_bon from caisse_entries;
+
+  insert into caisse_entries (
+    bon_number, entry_date, entry_time, operation_type, description, amount,
+    client_name, payment_mode, category, observations, entered_by_user, entity,
+    linked_invoice_id, auto_from_invoice
+  ) values (
+    v_bon,
+    NEW.entry_date,
+    NEW.entry_time,
+    'Encaissement',
+    v_description,
+    v_amount,
+    NEW.client_name,
+    'Espèces',
+    'Client',
+    '(Auto) Facture n° ' || NEW.invoice_number || ' payée en espèces',
+    NEW.entered_by_user,
+    NEW.entity,
+    NEW.id,
+    true
+  );
+
+  return NEW;
+end;
+$$;
+
+drop trigger if exists invoices_sync_caisse on invoices;
+create trigger invoices_sync_caisse
+  after insert or update on invoices
+  for each row execute function sync_caisse_from_invoice();
+
+-- BEFORE DELETE : la FK caisse_entries.linked_invoice_id est ON DELETE SET
+-- NULL -- il faut supprimer l'entrée auto AVANT que le lien soit effacé.
+drop trigger if exists invoices_sync_caisse_delete on invoices;
+create trigger invoices_sync_caisse_delete
+  before delete on invoices
+  for each row execute function sync_caisse_from_invoice();
+
+-- ============================================================
+-- AJOUT 2026-10-04 (2) : KILOMÉTRAGE DANS CARBURANT
+-- Relevé compteur du véhicule au moment du remplissage (obligatoire côté
+-- formulaire pour 'Remplissage', null pour 'Approvisionnement' citerne).
+-- admin_update_fuel reçoit un paramètre p_kilometrage : l'ancienne
+-- signature est supprimée (sinon surcharge ambiguë côté PostgREST).
+-- ============================================================
+alter table fuel_entries add column if not exists kilometrage integer;
+alter table fuel_entries drop constraint if exists fuel_entries_kilometrage_check;
+alter table fuel_entries add constraint fuel_entries_kilometrage_check
+  check (kilometrage is null or kilometrage > 0);
+comment on column fuel_entries.kilometrage is 'Kilométrage du véhicule au remplissage (km) ; null pour un approvisionnement de citerne';
+
+drop function if exists admin_update_fuel(uuid, text, integer, date, text, text, text, numeric, text, text);
+
+create or replace function admin_update_fuel(
+  p_id uuid,
+  p_admin_code text,
+  p_bon_number integer,
+  p_entry_date date,
+  p_operation_type text,
+  p_truck_plate text,
+  p_kilometrage integer,
+  p_driver_name text,
+  p_volume_liters numeric,
+  p_supplier_name text,
+  p_observations text
+)
+returns fuel_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result fuel_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update fuel_entries set
+    bon_number = p_bon_number,
+    entry_date = p_entry_date,
+    operation_type = p_operation_type,
+    truck_plate = p_truck_plate,
+    kilometrage = p_kilometrage,
+    driver_name = p_driver_name,
+    volume_liters = p_volume_liters,
+    supplier_name = p_supplier_name,
+    observations = p_observations
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Opération introuvable';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function admin_update_fuel(uuid, text, integer, date, text, text, integer, text, numeric, text, text) from public;
+grant execute on function admin_update_fuel(uuid, text, integer, date, text, text, integer, text, numeric, text, text) to anon, authenticated;

@@ -95,6 +95,7 @@ export function notifyFuelEntry(entry) {
     `Type : ${entry.operation_type}`,
   ]
   if (entry.truck_plate) lines.push(`Matricule : ${entry.truck_plate}`)
+  if (entry.kilometrage != null) lines.push(`Kilométrage : ${Number(entry.kilometrage).toLocaleString('fr-FR')} km`)
   if (entry.driver_name) lines.push(`Chauffeur : ${entry.driver_name}`)
   if (entry.supplier_name) lines.push(`Fournisseur : ${entry.supplier_name}`)
   lines.push(`Volume : ${entry.volume_liters} L`)

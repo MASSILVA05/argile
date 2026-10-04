@@ -17,6 +17,7 @@ const emptyDraft = {
   entry_date: todayISO(),
   operation_type: 'Remplissage',
   truck_plate: '',
+  kilometrage: '',
   driver_name: '',
   volume_liters: '',
   supplier_name: '',
@@ -91,6 +92,10 @@ export default function FuelForm() {
     if (!draft.entry_date) return 'La date est obligatoire.'
     if (isRefill) {
       if (!draft.truck_plate.trim()) return 'Le matricule du camion est obligatoire.'
+      const km = Number(draft.kilometrage)
+      if (draft.kilometrage === '' || !Number.isInteger(km) || km <= 0) {
+        return 'Le kilométrage doit être un nombre entier positif.'
+      }
       if (!draft.driver_name.trim()) return 'Le nom du chauffeur est obligatoire.'
     }
     if (draft.volume_liters === '' || Number(draft.volume_liters) <= 0) {
@@ -135,6 +140,7 @@ export default function FuelForm() {
       entry_time: formatHHMM(new Date()),
       operation_type: draft.operation_type,
       truck_plate: isRefill ? draft.truck_plate.trim() : null,
+      kilometrage: isRefill ? Number(draft.kilometrage) : null,
       driver_name: isRefill ? draft.driver_name.trim() : null,
       volume_liters: Number(draft.volume_liters),
       supplier_name: !isRefill ? draft.supplier_name.trim() || null : null,
@@ -252,6 +258,20 @@ export default function FuelForm() {
                   <option key={p} value={p} />
                 ))}
               </datalist>
+            </Field>
+
+            <Field label="Kilométrage (km)" required>
+              <input
+                type="number"
+                inputMode="numeric"
+                step="1"
+                min="1"
+                value={draft.kilometrage}
+                onChange={(e) => update('kilometrage', e.target.value)}
+                className={inputClass}
+                placeholder="ex: 125430"
+                required
+              />
             </Field>
 
             <Field label="Nom du chauffeur" required>

@@ -20,6 +20,10 @@ const FUEL_SHEET_TYPES = [
   { id: 'chauffeur', label: 'Chauffeur', nameLabel: 'Chauffeur' },
 ]
 
+function formatKm(value) {
+  return value == null ? '—' : `${Number(value).toLocaleString('fr-FR')} km`
+}
+
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
@@ -107,6 +111,7 @@ export default function FuelRegistry() {
         { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
         { key: 'operation_type', label: 'Type' },
         { key: 'truck_plate', label: 'Matricule' },
+        { key: 'kilometrage', label: 'Km', align: 'right', format: (v) => formatKm(v) },
         { key: 'driver_name', label: 'Chauffeur' },
         { key: 'volume_liters', label: 'Volume (L)', align: 'right', format: (v) => Number(v).toLocaleString('fr-FR') },
         { key: 'supplier_name', label: 'Fournisseur' },
@@ -138,11 +143,17 @@ export default function FuelRegistry() {
       return
     }
     const isRefill = editDraft.operation_type === 'Remplissage'
+    const km = Number(editDraft.kilometrage)
+    if (isRefill && (editDraft.kilometrage === '' || editDraft.kilometrage == null || !Number.isInteger(km) || km <= 0)) {
+      setError('Le kilométrage doit être un nombre entier positif.')
+      return
+    }
     const payload = {
       bon_number: Number(editDraft.bon_number),
       entry_date: editDraft.entry_date,
       operation_type: editDraft.operation_type,
       truck_plate: isRefill ? editDraft.truck_plate?.trim() || null : null,
+      kilometrage: isRefill ? km : null,
       driver_name: isRefill ? editDraft.driver_name?.trim() || null : null,
       volume_liters: Number(editDraft.volume_liters),
       supplier_name: !isRefill ? editDraft.supplier_name?.trim() || null : null,
@@ -157,6 +168,7 @@ export default function FuelRegistry() {
           p_entry_date: payload.entry_date,
           p_operation_type: payload.operation_type,
           p_truck_plate: payload.truck_plate,
+          p_kilometrage: payload.kilometrage,
           p_driver_name: payload.driver_name,
           p_volume_liters: payload.volume_liters,
           p_supplier_name: payload.supplier_name,
@@ -237,6 +249,7 @@ export default function FuelRegistry() {
         bon_number: e.bon_number,
         entry_date: e.entry_date,
         operation_type: e.operation_type,
+        kilometrage: e.kilometrage,
         volume_liters: Number(e.volume_liters) || 0,
         observations: e.observations ?? '—',
       }))
@@ -249,6 +262,7 @@ export default function FuelRegistry() {
       { key: 'bon_number', header: 'N° Bon' },
       { key: 'entry_date', header: 'Date' },
       { key: 'operation_type', header: 'Type opération' },
+      { key: 'kilometrage', header: 'Km', align: 'right', format: (v) => formatKm(v) },
       { key: 'volume_liters', header: 'Volume (L)', align: 'right', format: (v) => Number(v).toLocaleString('fr-FR') },
       { key: 'observations', header: 'Observations' },
     ]
@@ -374,7 +388,7 @@ export default function FuelRegistry() {
         <div className="print-area">
           <PrintHeader title="Registre carburant" />
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1100px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1180px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>Bon</Th>
@@ -383,6 +397,7 @@ export default function FuelRegistry() {
                   <Th>Heure</Th>
                   <Th>Type</Th>
                   <Th>Matricule</Th>
+                  <Th>Km</Th>
                   <Th>Chauffeur</Th>
                   <Th>Volume (L)</Th>
                   <Th>Fournisseur</Th>
@@ -410,6 +425,7 @@ export default function FuelRegistry() {
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{entry.operation_type}</Td>
                       <Td>{entry.truck_plate ?? '—'}</Td>
+                      <Td className="text-right">{formatKm(entry.kilometrage)}</Td>
                       <Td>{entry.driver_name ?? '—'}</Td>
                       <Td>{entry.volume_liters} L</Td>
                       <Td>{entry.supplier_name ?? '—'}</Td>
@@ -501,6 +517,13 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>
         {isRefill ? (
           <input type="text" value={draft.truck_plate ?? ''} onChange={(e) => set('truck_plate', e.target.value)} className={editInputClass} />
+        ) : (
+          '—'
+        )}
+      </Td>
+      <Td>
+        {isRefill ? (
+          <input type="number" step="1" min="1" value={draft.kilometrage ?? ''} onChange={(e) => set('kilometrage', e.target.value)} className={editInputClass} placeholder="ex: 125430" />
         ) : (
           '—'
         )}
