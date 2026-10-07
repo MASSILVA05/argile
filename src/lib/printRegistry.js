@@ -942,7 +942,6 @@ function caisseReceiptHtml(entry) {
     { label: 'N° Pièce', value: entry.piece_number },
     { label: 'Catégorie', value: caisseCategoryText(entry) },
     ...(entry.linked_invoice_number ? [{ label: 'Facture liée', value: `N° ${entry.linked_invoice_number}` }] : []),
-    { label: 'Observations', value: entry.observations },
   ]
     .map(
       (r) =>
