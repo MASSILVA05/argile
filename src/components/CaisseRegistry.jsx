@@ -21,6 +21,7 @@ import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
+import { ReceiptPrintButton, receiptSelectionConfig } from './CaisseReceiptPrint'
 import LinkedRecordModal from './LinkedRecordModal'
 
 const CAISSE_SHEET_TYPES = [
@@ -45,6 +46,7 @@ export default function CaisseRegistry({ entityFilter }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [printOpen, setPrintOpen] = useState(false)
+  const [receiptPrintOpen, setReceiptPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -145,6 +147,11 @@ export default function CaisseRegistry({ entityFilter }) {
     const depenses = sumBy('Dépense')
     return { encaissements, decaissements, depenses, solde: encaissements - decaissements - depenses }
   }, [filtered])
+
+  // Ligne enrichie pour le reçu de caisse imprimé (printCaisseReceipt).
+  function receiptEntry(e) {
+    return { ...e, category_label: categoryLabel(e), linked_invoice_number: invoicesById.get(e.linked_invoice_id)?.invoice_number }
+  }
 
   function buildPrintConfig() {
     const filterParts = []
@@ -452,6 +459,14 @@ export default function CaisseRegistry({ entityFilter }) {
             Imprimer
           </button>
           <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
+          <button type="button" onClick={() => setReceiptPrintOpen(true)} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted">
+            Imprimer reçus
+          </button>
+          <PrintSelectionModal
+            open={receiptPrintOpen}
+            onClose={() => setReceiptPrintOpen(false)}
+            {...receiptSelectionConfig(filtered.map(receiptEntry), (v) => formatDA(v))}
+          />
           {!isViewer && (
             <button
               type="button"
@@ -591,12 +606,15 @@ export default function CaisseRegistry({ entityFilter }) {
                         )}
                       </Td>
                       <Td className="no-print">
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
+                        <div className="flex items-center gap-2">
+                          <ReceiptPrintButton entry={receiptEntry(entry)} />
+                          <RowActions
+                            entry={entry}
+                            onEdit={() => startEdit(entry)}
+                            onDelete={() => handleDelete(entry)}
+                            onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                          />
+                        </div>
                       </Td>
                     </tr>
                   )

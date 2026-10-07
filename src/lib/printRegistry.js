@@ -601,8 +601,20 @@ function invoicePaymentModeText(inv, linkedCheques) {
   return '—'
 }
 
+// Droit de timbre (paiement en espèces uniquement) : 1 % du TTC, minimum
+// 5 DA, plafonné à 2 500 DA. Un timbre déjà saisi sur la facture (ancienne
+// saisie) est conservé tel quel.
+function invoiceStampDuty(inv, totalTtc) {
+  const stored = Number(inv.stamp_duty) || 0
+  if (stored > 0) return stored
+  if (inv.payment_status !== 'Espèces' || totalTtc <= 0) return 0
+  return Math.min(2500, Math.max(5, Math.round(totalTtc * 0.01 * 100) / 100))
+}
+
 // Modes d'impression d'une facture (menu « Imprimer » de InvoiceRegistry) :
-//   - facture      : document fiscal complet (TVA / TTC / timbre)
+//   - facture      : document fiscal complet (TVA / TTC / timbre calculés
+//                    à la volée -- jamais stockés ni imputés au solde client
+//                    ni à la caisse)
 //   - bl_prix      : BON DE LIVRAISON avec prix, sans TVA/TTC/timbre
 //   - bl_sans_prix : BON DE LIVRAISON, quantités uniquement
 export const INVOICE_PRINT_MODES = {
@@ -614,9 +626,13 @@ export const INVOICE_PRINT_MODES = {
 function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', showAccountSituation = false } = {}) {
   const isFacture = mode === 'facture'
   const withPrices = mode !== 'bl_sans_prix'
-  const totalNet = Number(inv.total_net) || 0
   const discountAmount = Number(inv.discount_amount) || 0
   const totalHt = (Number(inv.amount) || 0) - discountAmount
+  // TVA 19 % / TTC / timbre : purement fiscaux, calculés ici pour la facture.
+  const totalTva = Math.round(totalHt * 0.19 * 100) / 100
+  const totalTtc = totalHt + totalTva
+  const stampDuty = invoiceStampDuty(inv, totalTtc)
+  const totalNet = totalTtc + stampDuty
   // Montant imputé au compte client = total HT (montant_solde, voir
   // schema.sql) -- jamais la TVA ni le timbre.
   const montantSolde = Number(inv.montant_solde ?? totalHt) || 0
@@ -643,20 +659,17 @@ function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', sh
     )
     .join('')
 
-  // NB : la remise est appliquée AVANT le calcul de la TVA (total_tva =
-  // (amount - discount_amount) * 0.19 si tva_applied, colonne générée --
-  // voir schema.sql), donc affichée ici juste après le HT brut : c'est la
-  // seule présentation dont l'addition des lignes reconstitue exactement
-  // total_net. Bon de livraison avec prix : HT uniquement.
-  const tvaApplied = Boolean(inv.tva_applied)
+  // NB : la remise est appliquée AVANT le calcul de la TVA, donc affichée
+  // juste après le HT brut : l'addition des lignes reconstitue exactement le
+  // net à payer. Bon de livraison : jamais de TVA (HT uniquement).
   const totalsRows = [
     { label: 'TOTAL HT', value: inv.amount },
     ...(discountAmount > 0 ? [{ label: 'Remise', value: -discountAmount }] : []),
     ...(isFacture
       ? [
-          { label: tvaApplied ? 'TVA (19%)' : 'TVA (non appliquée)', value: inv.total_tva },
-          { label: 'Total TTC', value: inv.total_ttc },
-          { label: 'Timbre', value: tvaApplied ? inv.stamp_duty : 0 },
+          { label: 'TVA (19%)', value: totalTva },
+          { label: 'Total TTC', value: totalTtc },
+          { label: 'Timbre', value: stampDuty },
         ]
       : []),
   ]
@@ -888,6 +901,145 @@ export function printInvoices(invoices, extra = {}) {
   .sign-box { flex: 1; text-align: center; }
   .sign-line { display: block; border-top: 1px solid #000000; margin: 0 24px; }
   .sign-label { display: block; font-size: 10pt; margin-top: 4px; font-weight: bold; }
+
+  p.empty { text-align: center; color: #555555; font-style: italic; padding: 24px 0; }
+
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+  ${sections}
+</body>
+</html>`
+
+  openAndPrint(html)
+}
+
+// ============================================================
+// REÇU DE CAISSE : document A5 portrait compact, un reçu par page (en-tête
+// société, n° + date, détail de l'opération, montant en lettres, signatures).
+// Commun aux caisses Briqueterie / Magasin / Résidence (même schéma de
+// ligne). Pas de "Saisi par", pas de date d'impression, pas d'URL.
+// ============================================================
+
+function caisseCategoryText(entry) {
+  if (entry.category_label) return entry.category_label
+  return entry.category === 'Autre' ? entry.category_other || 'Autre' : entry.category
+}
+
+function caisseReceiptHtml(entry) {
+  const amount = Math.abs(Number(entry.amount) || 0)
+  const noRecu = String(entry.bon_number ?? '').padStart(3, '0')
+  const isCheque = entry.payment_mode === 'Chèque'
+
+  const rows = [
+    { label: 'Type', value: entry.operation_type },
+    { label: 'Montant', value: `${nf2(amount)} DA`, strong: true },
+    { label: 'Motif', value: entry.description },
+    { label: 'Bénéficiaire', value: entry.beneficiary || entry.client_name },
+    { label: 'Mode', value: entry.payment_mode },
+    ...(isCheque ? [{ label: 'N° Chèque', value: entry.cheque_number }, { label: 'Banque', value: entry.cheque_bank }] : []),
+    { label: 'N° Pièce', value: entry.piece_number },
+    { label: 'Catégorie', value: caisseCategoryText(entry) },
+    ...(entry.linked_invoice_number ? [{ label: 'Facture liée', value: `N° ${entry.linked_invoice_number}` }] : []),
+    { label: 'Observations', value: entry.observations },
+  ]
+    .map(
+      (r) =>
+        `<tr><td class="k">${escapeHtml(r.label)}</td><td${r.strong ? ' class="strong"' : ''}>${escapeHtml(r.value || '—')}</td></tr>`
+    )
+    .join('')
+
+  return `<section class="recu">
+  ${companyHeaderHtml()}
+
+  <p class="recu-title">REÇU DE CAISSE N° ${escapeHtml(noRecu)}<br><span class="recu-date">Date : ${escapeHtml(dateFR(entry.entry_date))}</span></p>
+
+  <table class="kv">
+    <colgroup><col style="width:32%"><col style="width:68%"></colgroup>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <p class="montant-lettres">
+    Arrêté le présent reçu à la somme de :<br>
+    <strong>${escapeHtml(numberToFrenchWords(amount))}</strong>
+  </p>
+
+  <div class="recu-sign">
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Caissier</span></div>
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Directeur</span></div>
+  </div>
+</section>`
+}
+
+// entries : une ligne caisse ou un tableau de lignes (caisse_entries,
+// magasin_caisse ou residence_caisse). Champs optionnels calculés par le
+// registre : category_label, linked_invoice_number.
+export function printCaisseReceipt(entries) {
+  const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean)
+  const sections = list.length
+    ? list.map(caisseReceiptHtml).join('')
+    : `<p class="empty">Aucune opération sélectionnée.</p>`
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { background: #ffffff; color: #000000; margin: 0; padding: 0; }
+  body { font-family: Calibri, Arial, Helvetica, sans-serif; font-size: 10pt; }
+
+  @page { size: A5 portrait; margin: 1.5cm; }
+  @media print {
+    @page { margin: 1.5cm; }
+  }
+
+  .recu { page-break-after: always; }
+  .recu:last-child { page-break-after: auto; }
+
+  ${COMPANY_HEADER_CSS}
+  .company-header .ch-name { font-size: 12pt; }
+  .company-header .ch-activity, .company-header .ch-address { font-size: 8pt; }
+  .company-header .ch-legal { font-size: 7pt; }
+
+  .recu-title {
+    text-align: center;
+    font-size: 12pt;
+    font-weight: bold;
+    margin: 8px 0 10px;
+    padding: 4px 0;
+    border-top: 3px double #000000;
+    border-bottom: 3px double #000000;
+  }
+  .recu-date { font-size: 10pt; font-weight: normal; }
+
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.kv { border: 1px solid #000000; }
+  td {
+    border: 1px solid #000000;
+    padding: 3px 6px;
+    font-size: 10pt;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  table.kv td.k { background: #f2f2f2; font-weight: bold; }
+  td.strong { font-weight: bold; }
+
+  .montant-lettres { margin: 10px 0 0; font-size: 10pt; line-height: 1.4; }
+
+  .recu-sign {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    margin-top: 40px;
+  }
+  .sign-box { flex: 1; text-align: center; }
+  .sign-line { display: block; border-top: 1px solid #000000; margin: 0 12px; }
+  .sign-label { display: block; font-size: 10pt; margin-top: 3px; font-weight: bold; }
 
   p.empty { text-align: center; color: #555555; font-style: italic; padding: 24px 0; }
 

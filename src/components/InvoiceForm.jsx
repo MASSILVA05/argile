@@ -29,8 +29,6 @@ const emptyDraft = {
   discount_amount: '0',
   settlement: '0',
   disbursement: '0',
-  tva_applied: false,
-  stamp_duty: '0',
   driver_name: '',
   truck_plate: '',
   payment_type: 'A TERME',
@@ -217,15 +215,9 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
   const amount = qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH
   const total = amount - discountAmount
   const balance = total - settlement
-  // TVA / TTC / timbre : informations fiscales imprimées sur la facture
-  // uniquement, si le gestionnaire coche "Appliquer la TVA". Le solde client
-  // et la caisse ne voient JAMAIS que le total HT (voir montant_solde dans
-  // schema.sql).
-  const tvaApplied = draft.tva_applied
-  const stampDuty = tvaApplied ? Number(draft.stamp_duty) || 0 : 0
-  const totalTva = tvaApplied ? total * 0.19 : 0
-  const totalTtc = total + totalTva
-  const totalNet = totalTtc + stampDuty
+  // Pas de TVA à la saisie : TVA / TTC / timbre sont calculés à la volée à
+  // l'impression de la facture uniquement (printInvoices). Le solde client et
+  // la caisse ne voient que le total HT (montant_solde dans schema.sql).
   const previousBalance = Number(draft.previous_balance) || 0
   const newClientBalance = previousBalance + total - settlement
 
@@ -365,8 +357,6 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       discount_amount: discountAmount,
       settlement: settlement,
       disbursement: Number(draft.disbursement) || 0,
-      tva_applied: tvaApplied,
-      stamp_duty: stampDuty,
       driver_name: draft.driver_name.trim() || null,
       truck_plate: draft.truck_plate.trim() || null,
       payment_type: draft.payment_type.trim() || 'A TERME',
@@ -709,7 +699,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
         </div>
       )}
 
-      <Field label="Montant (DA)">
+      <Field label="Total HT (DA)">
         <input
           type="text"
           value={amount.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
@@ -719,89 +709,27 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
         />
       </Field>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Remise (DA)">
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.01"
-            min="0"
-            value={draft.discount_amount}
-            onChange={(e) => update('discount_amount', e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Total HT (DA)">
-          <input
-            type="text"
-            value={total.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-            readOnly
-            disabled
-            className={`${inputClass} cursor-not-allowed opacity-60 font-display text-ocre`}
-          />
-        </Field>
-      </div>
-
-      <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-bg-soft px-3 py-2">
+      <Field label="Remise (DA)">
         <input
-          type="checkbox"
-          checked={draft.tva_applied}
-          onChange={(e) => update('tva_applied', e.target.checked)}
-          className="h-4 w-4 accent-terracotta"
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          value={draft.discount_amount}
+          onChange={(e) => update('discount_amount', e.target.value)}
+          className={inputClass}
         />
-        <span className="text-ink">Appliquer la TVA (19%)</span>
-      </label>
+      </Field>
 
-      {tvaApplied && (
-        <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="TVA (DA)">
-              <input
-                type="text"
-                value={totalTva.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-                readOnly
-                disabled
-                className={`${inputClass} cursor-not-allowed opacity-60`}
-              />
-            </Field>
-            <Field label="TTC (DA)">
-              <input
-                type="text"
-                value={totalTtc.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-                readOnly
-                disabled
-                className={`${inputClass} cursor-not-allowed opacity-60`}
-              />
-            </Field>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Timbre (DA)">
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
-                value={draft.stamp_duty}
-                onChange={(e) => update('stamp_duty', e.target.value)}
-                className={inputClass}
-              />
-            </Field>
-            <Field label="Total Net (DA)">
-              <input
-                type="text"
-                value={totalNet.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
-                readOnly
-                disabled
-                className={`${inputClass} cursor-not-allowed font-display text-ocre`}
-              />
-            </Field>
-          </div>
-          <p className="-mt-2 text-xs text-ink-muted">
-            TVA, TTC et timbre sont imprimés sur la facture uniquement : le solde client et la caisse restent sur le total HT.
-          </p>
-        </>
-      )}
+      <Field label="Total Net (DA)">
+        <input
+          type="text"
+          value={total.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}
+          readOnly
+          disabled
+          className={`${inputClass} cursor-not-allowed font-display text-ocre`}
+        />
+      </Field>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Règlement (DA)">

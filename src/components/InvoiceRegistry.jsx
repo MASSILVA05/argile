@@ -160,12 +160,8 @@ export default function InvoiceRegistry({ entityFilter }) {
         total: acc.total + Number(e.total || 0),
         settlement: acc.settlement + Number(e.settlement || 0),
         balance: acc.balance + Number(e.balance || 0),
-        totalTva: acc.totalTva + Number(e.total_tva || 0),
-        totalTtc: acc.totalTtc + Number(e.total_ttc || 0),
-        stampDuty: acc.stampDuty + Number(e.stamp_duty || 0),
-        totalNet: acc.totalNet + Number(e.total_net || 0),
       }),
-      { count: 0, amount: 0, discount: 0, total: 0, settlement: 0, balance: 0, totalTva: 0, totalTtc: 0, stampDuty: 0, totalNet: 0 }
+      { count: 0, amount: 0, discount: 0, total: 0, settlement: 0, balance: 0 }
     )
   }, [filtered])
 
@@ -194,19 +190,15 @@ export default function InvoiceRegistry({ entityFilter }) {
         { key: 'price_b8', label: 'Prix B8', align: 'right' },
         { key: 'price_b12', label: 'Prix B12', align: 'right' },
         { key: 'price_h', label: 'Prix H', align: 'right' },
-        { key: 'amount', label: 'Montant', align: 'right', format: (v) => formatDA(v) },
+        { key: 'amount', label: 'Total HT', align: 'right', format: (v) => formatDA(v) },
         { key: 'discount_amount', label: 'Remise', align: 'right', format: (v) => formatDA(v) },
-        { key: 'total', label: 'Total HT', align: 'right', format: (v) => formatDA(v) },
+        { key: 'total', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
         { key: 'settlement', label: 'Règlement', align: 'right', format: (v) => formatDA(v) },
         { key: 'disbursement', label: 'Décaissement', align: 'right', format: (v) => formatDA(v) },
         { key: 'driver_name', label: 'Chauffeur' },
         { key: 'truck_plate', label: 'Immat' },
         { key: 'payment_type', label: 'Type (N/B)' },
         { key: 'balance', label: 'Solde', align: 'right', format: (v) => formatDA(v) },
-        { key: 'total_tva', label: 'TVA', align: 'right', format: (v) => formatDA(v) },
-        { key: 'total_ttc', label: 'TTC', align: 'right', format: (v) => formatDA(v) },
-        { key: 'stamp_duty', label: 'Timbre', align: 'right', format: (v) => formatDA(v) },
-        { key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
         { key: 'payment_status', label: 'Paiement' },
         { key: 'observations', label: 'Observations' },
         { key: 'entered_by_user', label: 'Saisi par' },
@@ -223,10 +215,6 @@ export default function InvoiceRegistry({ entityFilter }) {
         total: formatDA(totals.total),
         settlement: formatDA(totals.settlement),
         balance: formatDA(totals.balance),
-        total_tva: formatDA(totals.totalTva),
-        total_ttc: formatDA(totals.totalTtc),
-        stamp_duty: formatDA(totals.stampDuty),
-        total_net: formatDA(totals.totalNet),
       },
     }
   }
@@ -246,8 +234,7 @@ export default function InvoiceRegistry({ entityFilter }) {
         { key: 'invoice_number', label: 'N° Facture' },
         { key: 'entry_date', label: 'Date' },
         { key: 'client_name', label: 'Client' },
-        { key: 'total', label: 'Total HT', align: 'right', format: (v) => formatDA(v) },
-        ...(isFacture ? [{ key: 'total_net', label: 'Total Net', align: 'right', format: (v) => formatDA(v) }] : []),
+        { key: 'total', label: 'Total Net', align: 'right', format: (v) => formatDA(v) },
       ],
       rows: invoicePrint?.rows ?? filtered,
       // Ancien / nouveau solde : confidentiel, masqué par défaut.
@@ -300,7 +287,9 @@ export default function InvoiceRegistry({ entityFilter }) {
       discount_amount: Number(editDraft.discount_amount) || 0,
       settlement: Number(editDraft.settlement) || 0,
       disbursement: Number(editDraft.disbursement) || 0,
-      stamp_duty: editDraft.tva_applied ? Number(editDraft.stamp_duty) || 0 : 0,
+      // TVA / timbre plus saisis : valeur existante conservée telle quelle
+      // (TVA / TTC / timbre recalculés à l'impression de la facture).
+      stamp_duty: Number(editDraft.stamp_duty) || 0,
       amount_override: editDraft.amount_override === '' || editDraft.amount_override == null ? null : Number(editDraft.amount_override),
       driver_name: editDraft.driver_name?.trim() || null,
       truck_plate: editDraft.truck_plate?.trim() || null,
@@ -631,7 +620,7 @@ export default function InvoiceRegistry({ entityFilter }) {
               <p className="font-display text-xl text-ocre">{totals.count}</p>
             </div>
             <div>
-              <p className="text-xs text-ink-muted">Montant</p>
+              <p className="text-xs text-ink-muted">Total HT</p>
               <p className="font-display text-xl text-ocre">{formatDA(totals.amount)}</p>
             </div>
             <div>
@@ -639,7 +628,7 @@ export default function InvoiceRegistry({ entityFilter }) {
               <p className="font-display text-xl text-ocre">{formatDA(totals.discount)}</p>
             </div>
             <div>
-              <p className="text-xs text-ink-muted">Total HT</p>
+              <p className="text-xs text-ink-muted">Total Net</p>
               <p className="font-display text-xl text-ocre">{formatDA(totals.total)}</p>
             </div>
             <div>
@@ -650,26 +639,10 @@ export default function InvoiceRegistry({ entityFilter }) {
               <p className="text-xs text-ink-muted">Solde</p>
               <p className="font-display text-xl text-ocre">{formatDA(totals.balance)}</p>
             </div>
-            <div>
-              <p className="text-xs text-ink-muted">TVA</p>
-              <p className="font-display text-xl text-ocre">{formatDA(totals.totalTva)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-muted">TTC</p>
-              <p className="font-display text-xl text-ocre">{formatDA(totals.totalTtc)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-muted">Timbre</p>
-              <p className="font-display text-xl text-ocre">{formatDA(totals.stampDuty)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-muted">Total Net</p>
-              <p className="font-display text-xl text-ocre">{formatDA(totals.totalNet)}</p>
-            </div>
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[2600px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[2200px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>N° Facture</Th>
@@ -686,19 +659,15 @@ export default function InvoiceRegistry({ entityFilter }) {
                   <Th>Prix B8</Th>
                   <Th>Prix B12</Th>
                   <Th>Prix H</Th>
-                  <Th>Montant</Th>
-                  <Th>Remise</Th>
                   <Th>Total HT</Th>
+                  <Th>Remise</Th>
+                  <Th>Total Net</Th>
                   <Th>Règlement</Th>
                   <Th>Décaissement</Th>
                   <Th>Chauffeur</Th>
                   <Th>Immat</Th>
                   <Th>Type (N/B)</Th>
                   <Th>Solde</Th>
-                  <Th>TVA</Th>
-                  <Th>TTC</Th>
-                  <Th>Timbre</Th>
-                  <Th>Total Net</Th>
                   <Th>Paiement</Th>
                   <Th>Observations</Th>
                   <Th>Saisi par</Th>
@@ -750,10 +719,6 @@ export default function InvoiceRegistry({ entityFilter }) {
                           {formatDA(entry.balance)}
                         </span>
                       </Td>
-                      <Td>{formatDA(entry.total_tva)}</Td>
-                      <Td>{formatDA(entry.total_ttc)}</Td>
-                      <Td>{formatDA(entry.stamp_duty)}</Td>
-                      <Td>{formatDA(entry.total_net)}</Td>
                       <Td>
                         <PaidBadge status={entry.payment_status} />
                       </Td>
@@ -918,11 +883,6 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
   const amount = amountOverride ?? (qtyB8 * priceB8 + qtyB12 * priceB12 + qtyH * priceH)
   const total = amount - discountAmount
   const balance = total - settlement
-  const tvaApplied = Boolean(draft.tva_applied)
-  const stampDuty = tvaApplied ? Number(draft.stamp_duty) || 0 : 0
-  const totalTva = tvaApplied ? total * 0.19 : 0
-  const totalTtc = total + totalTva
-  const totalNet = totalTtc + stampDuty
 
   return (
     <tr className="border-b border-border bg-bg-soft last:border-0">
@@ -1019,32 +979,6 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       </Td>
       <Td>
         <span className={balance > 0 ? 'text-terracotta' : 'text-green-500'}>{formatDA(balance)}</span>
-      </Td>
-      <Td>
-        <label className="flex items-center gap-1.5">
-          <input
-            type="checkbox"
-            checked={tvaApplied}
-            onChange={(e) => set('tva_applied', e.target.checked)}
-            className="h-4 w-4 accent-terracotta"
-            title="Appliquer la TVA (19%)"
-          />
-          {formatDA(totalTva)}
-        </label>
-      </Td>
-      <Td>{formatDA(totalTtc)}</Td>
-      <Td>
-        <input
-          type="number"
-          step="0.01"
-          value={tvaApplied ? draft.stamp_duty : 0}
-          onChange={(e) => set('stamp_duty', e.target.value)}
-          disabled={!tvaApplied}
-          className={editInputClass}
-        />
-      </Td>
-      <Td>
-        <span className="font-display text-ocre">{formatDA(totalNet)}</span>
       </Td>
       <Td>
         <div className="flex min-w-36 flex-col gap-1">

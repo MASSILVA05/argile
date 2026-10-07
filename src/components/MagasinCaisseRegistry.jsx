@@ -20,6 +20,7 @@ import ExportFilterModal from './ExportFilterModal'
 import EntitySheetModal from './EntitySheetModal'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
+import { ReceiptPrintButton, receiptSelectionConfig } from './CaisseReceiptPrint'
 
 const SHEET_TYPES = [
   { id: 'beneficiary', label: 'Fournisseur / Bénéficiaire', nameLabel: 'Fournisseur / Bénéficiaire' },
@@ -41,6 +42,7 @@ export default function MagasinCaisseRegistry() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [printOpen, setPrintOpen] = useState(false)
+  const [receiptPrintOpen, setReceiptPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -110,6 +112,11 @@ export default function MagasinCaisseRegistry() {
     const depenses = sumBy('Dépense')
     return { encaissements, decaissements, depenses, solde: encaissements - decaissements - depenses }
   }, [filtered])
+
+  // Ligne enrichie pour le reçu de caisse imprimé (printCaisseReceipt).
+  function receiptEntry(e) {
+    return { ...e, category_label: mcCategoryLabel(e) }
+  }
 
   function buildPrintConfig() {
     const parts = []
@@ -361,6 +368,14 @@ export default function MagasinCaisseRegistry() {
             Imprimer
           </button>
           <PrintSelectionModal open={printOpen} onClose={() => setPrintOpen(false)} {...buildPrintConfig()} />
+          <button type="button" onClick={() => setReceiptPrintOpen(true)} className="min-h-11 rounded-lg border border-border px-4 py-2 font-display text-ink-muted transition-colors hover:border-ink-muted">
+            Imprimer reçus
+          </button>
+          <PrintSelectionModal
+            open={receiptPrintOpen}
+            onClose={() => setReceiptPrintOpen(false)}
+            {...receiptSelectionConfig(filtered.map(receiptEntry), (v) => mcFormatDA(v))}
+          />
           <button
             type="button"
             onClick={() => { setExportError(''); setExportModalOpen(true) }}
@@ -448,12 +463,15 @@ export default function MagasinCaisseRegistry() {
                       <Td>{entry.entered_by_user ?? '—'}</Td>
                       <Td className="max-w-[200px] truncate" title={entry.observations ?? ''}>{entry.observations ?? '—'}</Td>
                       <Td className="no-print">
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
+                        <div className="flex items-center gap-2">
+                          <ReceiptPrintButton entry={receiptEntry(entry)} />
+                          <RowActions
+                            entry={entry}
+                            onEdit={() => startEdit(entry)}
+                            onDelete={() => handleDelete(entry)}
+                            onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                          />
+                        </div>
                       </Td>
                     </tr>
                   )

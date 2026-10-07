@@ -17,19 +17,15 @@ const COLUMNS = [
   { header: 'Prix B8 (DA)', key: 'price_b8', width: 12 },
   { header: 'Prix B12 (DA)', key: 'price_b12', width: 12 },
   { header: 'Prix H (DA)', key: 'price_h', width: 12 },
-  { header: 'Montant (DA)', key: 'amount', width: 16 },
+  { header: 'Total HT (DA)', key: 'amount', width: 16 },
   { header: 'Remise (DA)', key: 'discount_amount', width: 14 },
-  { header: 'Total HT (DA)', key: 'total', width: 16 },
+  { header: 'Total Net (DA)', key: 'total', width: 16 },
   { header: 'Règlement (DA)', key: 'settlement', width: 16 },
   { header: 'Décaissement (DA)', key: 'disbursement', width: 16 },
   { header: 'Chauffeur', key: 'driver_name', width: 22 },
   { header: 'Immat', key: 'truck_plate', width: 18 },
   { header: 'Type (N/B)', key: 'payment_type', width: 14 },
   { header: 'Solde (DA)', key: 'balance', width: 16 },
-  { header: 'TVA (DA)', key: 'total_tva', width: 14 },
-  { header: 'TTC (DA)', key: 'total_ttc', width: 14 },
-  { header: 'Timbre (DA)', key: 'stamp_duty', width: 12 },
-  { header: 'Total Net (DA)', key: 'total_net', width: 16 },
   { header: 'Paiement', key: 'payment_status', width: 14 },
   { header: 'Observations', key: 'observations', width: 28 },
   { header: 'Saisi par', key: 'entered_by_user', width: 18 },
@@ -72,10 +68,6 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
       truck_plate: entry.truck_plate ?? '',
       payment_type: entry.payment_type ?? '',
       balance: entry.balance ?? 0,
-      total_tva: entry.total_tva ?? 0,
-      total_ttc: entry.total_ttc ?? 0,
-      stamp_duty: entry.stamp_duty ?? 0,
-      total_net: entry.total_net ?? 0,
       payment_status: entry.payment_status ?? 'Non payé',
       observations: entry.observations ?? '',
       entered_by_user: entry.entered_by_user ?? '',
@@ -90,10 +82,6 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
   const settlementTotal = entries.reduce((sum, e) => sum + (Number(e.settlement) || 0), 0)
   const disbursementTotal = entries.reduce((sum, e) => sum + (Number(e.disbursement) || 0), 0)
   const balanceTotal = entries.reduce((sum, e) => sum + (Number(e.balance) || 0), 0)
-  const tvaTotal = entries.reduce((sum, e) => sum + (Number(e.total_tva) || 0), 0)
-  const ttcTotal = entries.reduce((sum, e) => sum + (Number(e.total_ttc) || 0), 0)
-  const stampDutyTotal = entries.reduce((sum, e) => sum + (Number(e.stamp_duty) || 0), 0)
-  const netTotal = entries.reduce((sum, e) => sum + (Number(e.total_net) || 0), 0)
   const restePayer = entries
     .filter((e) => (e.payment_status ?? 'Non payé') === 'Non payé')
     .reduce((sum, e) => sum + (Number(e.balance) || 0), 0)
@@ -106,10 +94,6 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
     settlement: settlementTotal,
     disbursement: disbursementTotal,
     balance: balanceTotal,
-    total_tva: tvaTotal,
-    total_ttc: ttcTotal,
-    stamp_duty: stampDutyTotal,
-    total_net: netTotal,
   })
   styleTotalsRow(totalsRow, null)
   totalsRow.height = DATA_ROW_HEIGHT
