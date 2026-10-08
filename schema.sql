@@ -8181,3 +8181,10 @@ $$;
 
 revoke all on function admin_update_fuel(uuid, text, integer, date, text, text, integer, text, numeric, text, text) from public;
 grant execute on function admin_update_fuel(uuid, text, integer, date, text, text, integer, text, numeric, text, text) to anon, authenticated;
+
+-- ============================================================
+-- Chargement : destinations « Remila » et « El Adjiba » (unloading_type).
+-- ============================================================
+alter table entries drop constraint if exists entries_unloading_type_check;
+alter table entries add constraint entries_unloading_type_check
+  check (unloading_type in ('DPR AXXAM Location', 'Akbou', 'DPR AXXAM (22T)', 'Remila', 'El Adjiba'));

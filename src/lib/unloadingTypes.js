@@ -1,4 +1,4 @@
-export const UNLOADING_TYPES = ['DPR AXXAM Location', 'Akbou', 'DPR AXXAM (22T)']
+export const UNLOADING_TYPES = ['DPR AXXAM Location', 'Akbou', 'DPR AXXAM (22T)', 'Remila']
 export const FIXED_WEIGHT_TYPE = 'DPR AXXAM (22T)'
 export const FIXED_WEIGHT_TONS = 22
 
@@ -6,6 +6,7 @@ export const FIXED_WEIGHT_TONS = 22
 const RATE_PER_TON = {
   'DPR AXXAM Location': 350,
   Akbou: 500,
+  Remila: 610,
   [FIXED_WEIGHT_TYPE]: 0,
 }
 

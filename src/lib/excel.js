@@ -25,6 +25,7 @@ const COLUMNS = [
   { header: 'DPR AXXAM Location (T)', key: 'location_weight', width: 22 },
   { header: 'Akbou (T)', key: 'akbou_weight', width: 15 },
   { header: 'DPR AXXAM 22T (T)', key: 'fixed_weight', width: 20 },
+  { header: 'Remila (T)', key: 'remila_weight', width: 15 },
   { header: 'N° Ticket de pesée', key: 'ticket_number', width: 20 },
   { header: 'Photo du bon', key: 'photo', width: 20 },
   { header: 'Observations', key: 'observations', width: 30 },
@@ -67,6 +68,7 @@ export async function downloadExcel(entries, { onProgress, includePhotos = true,
       location_weight: weightByType(entry, 'DPR AXXAM Location'),
       akbou_weight: weightByType(entry, 'Akbou'),
       fixed_weight: weightByType(entry, FIXED_WEIGHT_TYPE),
+      remila_weight: weightByType(entry, 'Remila'),
       ticket_number: entry.ticket_number ?? '',
       photo: includePhotos ? '' : entry.photo_url ? 'Oui' : 'Non',
       observations: entry.observations ?? '',
@@ -95,12 +97,14 @@ export async function downloadExcel(entries, { onProgress, includePhotos = true,
   const locationTotal = sumByType(entries, 'DPR AXXAM Location')
   const akbouTotal = sumByType(entries, 'Akbou')
   const fixedTotal = sumByType(entries, FIXED_WEIGHT_TYPE)
+  const remilaTotal = sumByType(entries, 'Remila')
 
   const totalsRow = sheet.addRow({
     bon_number: 'TOTAL',
     location_weight: locationTotal,
     akbou_weight: akbouTotal,
     fixed_weight: fixedTotal,
+    remila_weight: remilaTotal,
   })
   styleTotalsRow(totalsRow, null)
   totalsRow.height = DATA_ROW_HEIGHT
@@ -110,6 +114,7 @@ export async function downloadExcel(entries, { onProgress, includePhotos = true,
     location_weight: Math.round(locationTotal * rateFor('DPR AXXAM Location')),
     akbou_weight: Math.round(akbouTotal * rateFor('Akbou')),
     fixed_weight: '',
+    remila_weight: Math.round(remilaTotal * rateFor('Remila')),
   })
   styleTotalsRow(amountsRow, AMOUNT_ROW_FILL)
   amountsRow.height = DATA_ROW_HEIGHT
