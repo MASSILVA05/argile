@@ -12,6 +12,7 @@
 // document n'est jamais échappée.
 
 import { numberToFrenchWords } from './numberToWords'
+import { rateFor } from './unloadingTypes'
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -974,13 +975,10 @@ function caisseReceiptHtml(entry) {
 // entries : une ligne caisse ou un tableau de lignes (caisse_entries,
 // magasin_caisse ou residence_caisse). Champs optionnels calculés par le
 // registre : category_label, linked_invoice_number.
-export function printCaisseReceipt(entries) {
-  const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean)
-  const sections = list.length
-    ? list.map(caisseReceiptHtml).join('')
-    : `<p class="empty">Aucune opération sélectionnée.</p>`
-
-  const html = `<!DOCTYPE html>
+// Document A5 portrait compact (reçus de caisse, bons de chargement) : une
+// <section class="recu"> par page.
+function a5DocumentHtml(sections) {
+  return `<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -1049,6 +1047,65 @@ export function printCaisseReceipt(entries) {
   ${sections}
 </body>
 </html>`
+}
 
-  openAndPrint(html)
+export function printCaisseReceipt(entries) {
+  const list = (Array.isArray(entries) ? entries : [entries]).filter(Boolean)
+  const sections = list.length
+    ? list.map(caisseReceiptHtml).join('')
+    : `<p class="empty">Aucune opération sélectionnée.</p>`
+
+  openAndPrint(a5DocumentHtml(sections))
+}
+
+// ============================================================
+// BON DE CHARGEMENT : A5 portrait (même gabarit que le reçu de caisse).
+// Montant = poids × prix/tonne de la destination ; ligne masquée si la
+// destination n'a pas de prix (22T, anciennes destinations).
+// ============================================================
+
+function bonChargementHtml(entry) {
+  const weight = entry.weight_tons == null || entry.weight_tons === '' ? null : Number(entry.weight_tons)
+  const rate = rateFor(entry.unloading_type)
+  const showAmount = rate > 0 && weight != null
+
+  const rows = [
+    { label: 'Chauffeur', value: entry.driver_name },
+    { label: 'Matricule', value: entry.truck_plate },
+    { label: 'Destination', value: entry.unloading_type },
+    { label: 'Type', value: 'Argile' },
+    { label: 'Poids (T)', value: weight != null ? nf2(weight) : '' },
+    ...(showAmount ? [{ label: 'Montant (DA)', value: nf2(weight * rate), strong: true }] : []),
+    { label: 'N° Ticket', value: entry.ticket_number },
+  ]
+    .map(
+      (r) =>
+        `<tr><td class="k">${escapeHtml(r.label)}</td><td${r.strong ? ' class="strong"' : ''}>${escapeHtml(r.value || '—')}</td></tr>`
+    )
+    .join('')
+
+  const time = entry.entry_time ? String(entry.entry_time).slice(0, 5) : ''
+
+  return `<section class="recu">
+  ${companyHeaderHtml()}
+
+  <p class="recu-title">BON DE CHARGEMENT N° ${escapeHtml(entry.bon_number)}<br><span class="recu-date">Date : ${escapeHtml(dateFR(entry.entry_date))}${time ? `<br>Heure : ${escapeHtml(time)}` : ''}</span></p>
+
+  <table class="kv">
+    <colgroup><col style="width:32%"><col style="width:68%"></colgroup>
+    <tbody>${rows}</tbody>
+  </table>
+
+  <div class="recu-sign">
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Chauffeur</span></div>
+    <div class="sign-box"><span class="sign-line"></span><span class="sign-label">Le Responsable</span></div>
+  </div>
+</section>`
+}
+
+// entry : une ligne de la table `entries` (ou le payload qui vient d'être
+// enregistré dans EntryForm).
+export function printBonChargement(entry) {
+  if (!entry) return
+  openAndPrint(a5DocumentHtml(bonChargementHtml(entry)))
 }

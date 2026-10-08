@@ -13,6 +13,8 @@ import EntitySheetModal from './EntitySheetModal'
 import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
+import PrintIconButton from './PrintIconButton'
+import { printBonChargement } from '../lib/printRegistry'
 
 function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
@@ -466,12 +468,15 @@ export default function Registry() {
                       </Td>
                       <Td>{entry.entered_by_user ?? '—'}</Td>
                       <Td className="no-print">
-                        <RowActions
-                          entry={entry}
-                          onEdit={() => startEdit(entry)}
-                          onDelete={() => handleDelete(entry)}
-                          onLockedAttempt={(action) => openAdminPrompt(action, entry)}
-                        />
+                        <div className="flex items-center gap-2">
+                          <PrintIconButton onClick={() => printBonChargement(entry)} title="Imprimer le bon" />
+                          <RowActions
+                            entry={entry}
+                            onEdit={() => startEdit(entry)}
+                            onDelete={() => handleDelete(entry)}
+                            onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                          />
+                        </div>
                       </Td>
                     </tr>
                   )

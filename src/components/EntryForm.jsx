@@ -7,6 +7,7 @@ import { uploadBonPhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { UNLOADING_TYPES, FIXED_WEIGHT_TYPE, FIXED_WEIGHT_TONS } from '../lib/unloadingTypes'
 import { getSession } from '../lib/auth'
+import { printBonChargement } from '../lib/printRegistry'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -33,6 +34,9 @@ export default function EntryForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  // Dernier bon enregistré (bouton « Imprimer le bon ») -- effacé dès que
+  // l'utilisateur modifie un champ (nouvelle saisie).
+  const [savedEntry, setSavedEntry] = useState(null)
   const [clock, setClock] = useState(() => formatHHMM(new Date()))
 
   useEffect(() => {
@@ -64,11 +68,18 @@ export default function EntryForm() {
     return [...new Set((list ?? []).filter(Boolean))]
   }
 
+  function clearSaved() {
+    setSavedEntry(null)
+    setSuccess('')
+  }
+
   function update(field, value) {
+    clearSaved()
     setDraft((d) => ({ ...d, [field]: value }))
   }
 
   function updateType(nextType) {
+    clearSaved()
     setDraft((d) => {
       const wasFixed = d.unloading_type === FIXED_WEIGHT_TYPE
       const becomesFixed = nextType === FIXED_WEIGHT_TYPE
@@ -99,7 +110,7 @@ export default function EntryForm() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setSuccess('')
+    clearSaved()
     const validationError = validate()
     if (validationError) {
       setError(validationError)
@@ -176,7 +187,7 @@ export default function EntryForm() {
 
       notifyNewEntry(data)
       sendEmailNotification(data)
-      finishSuccess(basePayload, `Bon n° ${basePayload.bon_number} enregistré.`)
+      finishSuccess(data ?? basePayload, `Bon n° ${basePayload.bon_number} enregistré.`)
     } catch {
       enqueueEntry({ ...basePayload, photo_url: null })
       finishSuccess(basePayload, `Réseau indisponible : bon n° ${basePayload.bon_number} enregistré hors-ligne, sera synchronisé automatiquement.`)
@@ -194,6 +205,7 @@ export default function EntryForm() {
       unloading_type: payload.unloading_type,
     })
     setSuccess(message)
+    setSavedEntry(payload)
     setLoading(false)
   }
 
@@ -368,9 +380,18 @@ export default function EntryForm() {
         </p>
       )}
       {success && (
-        <p className="rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-3 text-sm text-ocre">
-          {success}
-        </p>
+        <div className="flex flex-col gap-3 rounded-lg border border-ocre/50 bg-ocre/10 px-4 py-3">
+          <p className="text-sm text-ocre">{success}</p>
+          {savedEntry && (
+            <button
+              type="button"
+              onClick={() => printBonChargement(savedEntry)}
+              className="min-h-11 rounded-lg bg-green-600 px-4 py-2 font-display font-medium text-white transition-colors hover:bg-green-700"
+            >
+              🖨 Imprimer le bon
+            </button>
+          )}
+        </div>
       )}
 
       <button
