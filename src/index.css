@@ -67,6 +67,12 @@
   --color-error-bg: rgba(231, 76, 60, 0.15);
   --color-warning-bg: rgba(243, 156, 18, 0.15);
 
+  /* Couleurs d'identité des équipes de production A/B/C (graphiques du
+     tableau de bord Production) -- palette catégorielle validée CVD. */
+  --color-team-a: #3987e5;
+  --color-team-b: #d95926;
+  --color-team-c: #199e70;
+
   /* En-têtes de tableau (registres) + ligne alternée -- distincts de
      bg-card/bg-soft (qui ont un rôle différent depuis le thème clair/sombre :
      bg-soft = fond des inputs). Consommés uniquement par le CSS brut
@@ -102,6 +108,9 @@
   --color-success-bg: rgba(46, 204, 113, 0.1);
   --color-error-bg: rgba(231, 76, 60, 0.1);
   --color-warning-bg: rgba(243, 156, 18, 0.1);
+  --color-team-a: #2a78d6;
+  --color-team-b: #eb6834;
+  --color-team-c: #1baf7a;
 
   --color-table-header-bg: #e8e0d8;
   --color-table-header-text: #4a3728;

@@ -2,20 +2,25 @@ import { useState } from 'react'
 import ProductionForm from './ProductionForm'
 import ProductionRegistry from './ProductionRegistry'
 import ProductionDashboard from './ProductionDashboard'
+import ProductionImport from './ProductionImport'
+import { useAuth } from '../lib/auth'
 
 const TABS = [
   { id: 'form', label: 'Saisie' },
   { id: 'registry', label: 'Registre' },
   { id: 'dashboard', label: 'Tableau de bord' },
+  { id: 'import', label: 'Import', adminOnly: true },
 ]
 
 export default function ProductionPage() {
+  const { isAdmin } = useAuth()
   const [view, setView] = useState('form')
+  const tabs = TABS.filter((t) => !t.adminOnly || isAdmin)
 
   return (
     <div className="flex flex-col gap-4">
       <nav className="flex gap-2 overflow-x-auto">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -34,6 +39,7 @@ export default function ProductionPage() {
       {view === 'form' && <ProductionForm />}
       {view === 'registry' && <ProductionRegistry />}
       {view === 'dashboard' && <ProductionDashboard />}
+      {view === 'import' && isAdmin && <ProductionImport />}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { isLocked, LOCK_MESSAGE } from '../lib/lock'
@@ -13,6 +13,7 @@ import {
   EDIT_GROUPS,
   buildProductionPayload,
   computeTauxCasse,
+  computeTauxPremierChoix,
   formatInt,
   formatNum,
   formatPercent,
@@ -22,6 +23,10 @@ import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 
 const fmtTime = (v) => (v ? v.slice(0, 5) : '—')
+
+const tauxPremier = (e) => computeTauxPremierChoix(e.defourn_premier_choix, e.defourn_deuxieme_choix, e.defourn_rebut)
+const hasClassement = (e) =>
+  Number(e.defourn_premier_choix) + Number(e.defourn_deuxieme_choix) + Number(e.defourn_rebut) > 0
 
 export default function ProductionRegistry() {
   const { isAdmin } = useAuth()
@@ -40,6 +45,16 @@ export default function ProductionRegistry() {
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [expanded, setExpanded] = useState(() => new Set())
+
+  function toggleExpanded(id) {
+    setExpanded((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   useEffect(() => {
     let active = true
@@ -107,11 +122,11 @@ export default function ProductionRegistry() {
       filters: parts.join(' — '),
       columns: [
         { key: 'entry_date', label: 'Date' },
-        { key: 'entry_time', label: 'Heure', format: fmtTime },
         { key: 'equipe', label: 'Équipe' },
         { key: 'poste', label: 'Poste', format: posteLabel },
         { key: 'operateur', label: 'Opérateur' },
         { key: 'produit', label: 'Produit' },
+        { key: 'presse_moule', label: 'Moule' },
         { key: 'presse_chariots', label: 'Presse chariots', align: 'right', format: formatInt },
         { key: 'presse_total_pieces', label: 'Pièces pressées', align: 'right', format: formatInt },
         { key: 'sechoir_sortis', label: 'Séchoir sortis', align: 'right', format: formatInt },
@@ -120,14 +135,19 @@ export default function ProductionRegistry() {
         { key: 'defourn_cassees', label: 'Cassées', align: 'right', format: formatInt },
         { key: 'defourn_fissurees', label: 'Fissurées', align: 'right', format: formatInt },
         { key: 'taux_casse', label: 'Taux casse', align: 'right' },
+        { key: 'defourn_premier_choix', label: '1er choix', align: 'right', format: formatInt },
+        { key: 'taux_premier', label: 'Taux 1er ch.', align: 'right' },
         { key: 'four_gaz', label: 'Gaz (m³)', align: 'right', format: formatNum },
         { key: 'emballage_paquets', label: 'Paquets', align: 'right', format: formatInt },
         { key: 'emballage_palettes', label: 'Palettes', align: 'right', format: formatInt },
         { key: 'emballage_stock_final', label: 'Stock final', align: 'right', format: formatInt },
+        { key: 'emballage_type', label: 'Emballage' },
+        { key: 'emballage_destination', label: 'Destination' },
       ],
       rows: filtered.map((e) => ({
         ...e,
         taux_casse: formatPercent(computeTauxCasse(e.defourn_conformes, e.defourn_cassees, e.defourn_fissurees)),
+        taux_premier: hasClassement(e) ? formatPercent(tauxPremier(e)) : '—',
       })),
       totals: [
         {
@@ -279,9 +299,10 @@ export default function ProductionRegistry() {
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[1400px] border-collapse text-[11px] sm:text-sm">
+            <table className="w-full min-w-[1600px] border-collapse text-[11px] sm:text-sm">
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
+                  <Th className="no-print" />
                   <Th>Date</Th>
                   <Th>Heure</Th>
                   <Th>Saisie le</Th>
@@ -289,6 +310,7 @@ export default function ProductionRegistry() {
                   <Th>Poste</Th>
                   <Th>Opérateur</Th>
                   <Th>Produit</Th>
+                  <Th>Moule</Th>
                   <Th>Presse chariots</Th>
                   <Th>Pièces pressées</Th>
                   <Th>Séchoir E/S</Th>
@@ -297,10 +319,14 @@ export default function ProductionRegistry() {
                   <Th>Cassées</Th>
                   <Th>Fissurées</Th>
                   <Th>Taux casse</Th>
+                  <Th>1er / 2ème / Rebut</Th>
+                  <Th>Taux 1er ch.</Th>
                   <Th>Gaz m³</Th>
                   <Th>Paquets</Th>
                   <Th>Palettes</Th>
                   <Th>Stock final</Th>
+                  <Th>Emballage</Th>
+                  <Th>Destination</Th>
                   <Th>Saisi par</Th>
                   <Th className="no-print">Actions</Th>
                 </tr>
@@ -308,8 +334,21 @@ export default function ProductionRegistry() {
               <tbody>
                 {filtered.map((e) => {
                   const taux = computeTauxCasse(e.defourn_conformes, e.defourn_cassees, e.defourn_fissurees)
+                  const isOpen = expanded.has(e.id)
                   return (
-                    <tr key={e.id} className="border-b border-border last:border-0">
+                    <Fragment key={e.id}>
+                    <tr className="border-b border-border last:border-0">
+                      <Td className="no-print">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(e.id)}
+                          aria-expanded={isOpen}
+                          title={isOpen ? 'Masquer le détail' : 'Afficher le détail'}
+                          className="min-h-8 w-8 rounded border border-border text-ink-muted hover:border-terracotta"
+                        >
+                          {isOpen ? '▾' : '▸'}
+                        </button>
+                      </Td>
                       <Td>{e.entry_date}</Td>
                       <Td>{fmtTime(e.entry_time)}</Td>
                       <Td>{formatDateTime(e.created_at)}</Td>
@@ -317,6 +356,7 @@ export default function ProductionRegistry() {
                       <Td>{posteLabel(e.poste)}</Td>
                       <Td>{e.operateur ?? '—'}</Td>
                       <Td>{e.produit}</Td>
+                      <Td>{e.presse_moule ?? '—'}</Td>
                       <Td className="text-right">{formatInt(e.presse_chariots)}</Td>
                       <Td className="text-right font-medium text-ocre">{formatInt(e.presse_total_pieces)}</Td>
                       <Td className="text-right">{formatInt(e.sechoir_entres)}/{formatInt(e.sechoir_sortis)}</Td>
@@ -325,10 +365,16 @@ export default function ProductionRegistry() {
                       <Td className="text-right">{formatInt(e.defourn_cassees)}</Td>
                       <Td className="text-right">{formatInt(e.defourn_fissurees)}</Td>
                       <Td className={`text-right ${taux >= 5 ? 'text-terracotta' : ''}`}>{formatPercent(taux)}</Td>
+                      <Td className="text-right">
+                        {formatInt(e.defourn_premier_choix)}/{formatInt(e.defourn_deuxieme_choix)}/{formatInt(e.defourn_rebut)}
+                      </Td>
+                      <Td className="text-right">{hasClassement(e) ? formatPercent(tauxPremier(e)) : '—'}</Td>
                       <Td className="text-right">{formatNum(e.four_gaz)}</Td>
                       <Td className="text-right">{formatInt(e.emballage_paquets)}</Td>
                       <Td className="text-right">{formatInt(e.emballage_palettes)}</Td>
                       <Td className="text-right">{formatInt(e.emballage_stock_final)}</Td>
+                      <Td>{e.emballage_type ?? '—'}</Td>
+                      <Td>{e.emballage_destination ?? '—'}</Td>
                       <Td>{e.entered_by_user ?? '—'}</Td>
                       <Td className="no-print">
                         <RowActions
@@ -339,6 +385,14 @@ export default function ProductionRegistry() {
                         />
                       </Td>
                     </tr>
+                    {isOpen && (
+                      <tr className="no-print border-b border-border bg-bg-soft/60">
+                        <td colSpan={27} className="px-3 py-3">
+                          <EntryDetail entry={e} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -423,6 +477,12 @@ function ProductionEditModal({ entry, adminMode, onSave, onCancel }) {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 {g.fields.map((f) => (
                   <L key={f.key} label={f.label}>
+                    {f.type === 'select' ? (
+                      <select value={draft[f.key]} onChange={(e) => set(f.key, e.target.value)} className={ic}>
+                        <option value="">—</option>
+                        {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    ) : (
                     <input
                       type={f.type === 'text' ? 'text' : 'number'}
                       step={f.type === 'num' ? '0.01' : f.type === 'int' ? '1' : undefined}
@@ -430,6 +490,7 @@ function ProductionEditModal({ entry, adminMode, onSave, onCancel }) {
                       onChange={(e) => set(f.key, e.target.value)}
                       className={ic}
                     />
+                    )}
                   </L>
                 ))}
               </div>
@@ -445,6 +506,33 @@ function ProductionEditModal({ entry, adminMode, onSave, onCancel }) {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Détail dépliable d'une ligne du registre : tous les champs par section.
+function EntryDetail({ entry }) {
+  const fmt = (f, v) => {
+    if (v == null || v === '') return '—'
+    if (f.type === 'int') return formatInt(v)
+    if (f.type === 'num') return formatNum(v)
+    return String(v)
+  }
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {EDIT_GROUPS.map((g) => (
+        <div key={g.id} className="rounded-lg border border-border bg-bg p-3">
+          <p className="mb-2 font-display text-sm text-ocre">{g.label}</p>
+          <dl className="flex flex-col gap-1 text-xs">
+            {g.fields.map((f) => (
+              <div key={f.key} className="flex justify-between gap-3">
+                <dt className="text-ink-muted">{f.label}</dt>
+                <dd className="whitespace-pre-wrap text-right text-ink">{fmt(f, entry[f.key])}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ))}
     </div>
   )
 }

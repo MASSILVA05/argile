@@ -8188,3 +8188,243 @@ grant execute on function admin_update_fuel(uuid, text, integer, date, text, tex
 alter table entries drop constraint if exists entries_unloading_type_check;
 alter table entries add constraint entries_unloading_type_check
   check (unloading_type in ('DPR AXXAM Location', 'Akbou', 'DPR AXXAM (22T)', 'Remila', 'El Adjiba'));
+
+
+-- ============================================================
+-- PRODUCTION — champs terrain supplémentaires + import historique
+--   * Presse : moule, qté/rangée, temps de cycle, arrêts
+--   * Séchoir : humidité entrée/sortie, températures zones 1/2
+--     (sechoir_duree = « Temps de séchage total », pas de doublon)
+--   * Four : combustible, températures préchauffage/cuisson/refroid., pression
+--   * Défournement : classement 1er choix / 2ème choix / rebut
+--   * Emballage : type, destination, poids palette
+--   * import_key : clé d'upsert de l'import historique (NULL pour les
+--     saisies normales -> l'index unique ne les contraint pas)
+-- ============================================================
+alter table production_entries add column if not exists presse_moule text;
+alter table production_entries add column if not exists presse_qte_rangee integer;
+alter table production_entries add column if not exists presse_temps_cycle numeric(6, 2);
+alter table production_entries add column if not exists presse_arrets text;
+
+alter table production_entries add column if not exists sechoir_humidite_entree numeric(5, 2);
+alter table production_entries add column if not exists sechoir_humidite_sortie numeric(5, 2);
+alter table production_entries add column if not exists sechoir_temp_zone1 numeric(6, 2);
+alter table production_entries add column if not exists sechoir_temp_zone2 numeric(6, 2);
+
+alter table production_entries add column if not exists four_combustible text default 'Gaz naturel';
+alter table production_entries add column if not exists four_temp_prechauffe numeric(6, 2);
+alter table production_entries add column if not exists four_temp_cuisson numeric(6, 2);
+alter table production_entries add column if not exists four_temp_refroid numeric(6, 2);
+alter table production_entries add column if not exists four_pression numeric(6, 2);
+
+alter table production_entries add column if not exists defourn_premier_choix integer default 0;
+alter table production_entries add column if not exists defourn_deuxieme_choix integer default 0;
+alter table production_entries add column if not exists defourn_rebut integer default 0;
+
+alter table production_entries add column if not exists emballage_type text default 'Palette';
+alter table production_entries add column if not exists emballage_destination text;
+alter table production_entries add column if not exists emballage_poids_palette numeric(8, 2);
+
+alter table production_entries add column if not exists import_key text;
+
+alter table production_entries drop constraint if exists production_entries_four_combustible_check;
+alter table production_entries add constraint production_entries_four_combustible_check
+  check (four_combustible is null or four_combustible in ('Gaz naturel', 'GPL', 'Fuel'));
+alter table production_entries drop constraint if exists production_entries_emballage_type_check;
+alter table production_entries add constraint production_entries_emballage_type_check
+  check (emballage_type is null or emballage_type in ('Palette', 'Vrac', 'Cerclé'));
+
+create unique index if not exists production_entries_import_key_idx
+  on production_entries (import_key) where import_key is not null;
+
+comment on column production_entries.presse_arrets is 'Arrêts presse, texte libre « Arrêt 30min — bourrage ; Arrêt 1h — panne » (durées + causes analysées par le tableau de bord)';
+comment on column production_entries.sechoir_duree is 'Temps de séchage total (heures)';
+comment on column production_entries.import_key is 'Clé d''import historique (ex : histo-2026-01-B8) ; NULL pour une saisie normale';
+
+-- admin_update_production : version étendue aux nouveaux champs.
+create or replace function admin_update_production(p_id uuid, p_admin_code text, p jsonb)
+returns production_entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_result production_entries;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  update production_entries set
+    entry_date = coalesce((p->>'entry_date')::date, entry_date),
+    equipe = coalesce(p->>'equipe', equipe),
+    poste = coalesce(p->>'poste', poste),
+    operateur = nullif(trim(coalesce(p->>'operateur', '')), ''),
+    produit = coalesce(p->>'produit', produit),
+    presse_chariots = coalesce((p->>'presse_chariots')::int, 0),
+    presse_numeros = nullif(trim(coalesce(p->>'presse_numeros', '')), ''),
+    presse_pression = (p->>'presse_pression')::numeric,
+    presse_pieces_etage = coalesce((p->>'presse_pieces_etage')::int, 0),
+    presse_etages_chariot = coalesce((p->>'presse_etages_chariot')::int, 0),
+    presse_rebutes = coalesce((p->>'presse_rebutes')::int, 0),
+    presse_moule = nullif(trim(coalesce(p->>'presse_moule', '')), ''),
+    presse_qte_rangee = (p->>'presse_qte_rangee')::int,
+    presse_temps_cycle = (p->>'presse_temps_cycle')::numeric,
+    presse_arrets = nullif(trim(coalesce(p->>'presse_arrets', '')), ''),
+    presse_remarques = nullif(trim(coalesce(p->>'presse_remarques', '')), ''),
+    sechoir_entres = coalesce((p->>'sechoir_entres')::int, 0),
+    sechoir_sortis = coalesce((p->>'sechoir_sortis')::int, 0),
+    sechoir_temperature = (p->>'sechoir_temperature')::numeric,
+    sechoir_humidite = (p->>'sechoir_humidite')::numeric,
+    sechoir_humidite_entree = (p->>'sechoir_humidite_entree')::numeric,
+    sechoir_humidite_sortie = (p->>'sechoir_humidite_sortie')::numeric,
+    sechoir_temp_zone1 = (p->>'sechoir_temp_zone1')::numeric,
+    sechoir_temp_zone2 = (p->>'sechoir_temp_zone2')::numeric,
+    sechoir_duree = (p->>'sechoir_duree')::numeric,
+    sechoir_rebutes = coalesce((p->>'sechoir_rebutes')::int, 0),
+    sechoir_remarques = nullif(trim(coalesce(p->>'sechoir_remarques', '')), ''),
+    four_enfournes = coalesce((p->>'four_enfournes')::int, 0),
+    four_defournes = coalesce((p->>'four_defournes')::int, 0),
+    four_combustible = coalesce(nullif(p->>'four_combustible', ''), four_combustible),
+    four_temperature = (p->>'four_temperature')::numeric,
+    four_temp_prechauffe = (p->>'four_temp_prechauffe')::numeric,
+    four_temp_cuisson = (p->>'four_temp_cuisson')::numeric,
+    four_temp_refroid = (p->>'four_temp_refroid')::numeric,
+    four_pression = (p->>'four_pression')::numeric,
+    four_duree = (p->>'four_duree')::numeric,
+    four_gaz = (p->>'four_gaz')::numeric,
+    four_remarques = nullif(trim(coalesce(p->>'four_remarques', '')), ''),
+    defourn_chariots = coalesce((p->>'defourn_chariots')::int, 0),
+    defourn_conformes = coalesce((p->>'defourn_conformes')::int, 0),
+    defourn_cassees = coalesce((p->>'defourn_cassees')::int, 0),
+    defourn_fissurees = coalesce((p->>'defourn_fissurees')::int, 0),
+    defourn_premier_choix = coalesce((p->>'defourn_premier_choix')::int, 0),
+    defourn_deuxieme_choix = coalesce((p->>'defourn_deuxieme_choix')::int, 0),
+    defourn_rebut = coalesce((p->>'defourn_rebut')::int, 0),
+    defourn_remarques = nullif(trim(coalesce(p->>'defourn_remarques', '')), ''),
+    emballage_paquets = coalesce((p->>'emballage_paquets')::int, 0),
+    emballage_pieces_paquet = coalesce((p->>'emballage_pieces_paquet')::int, 0),
+    emballage_palettes = coalesce((p->>'emballage_palettes')::int, 0),
+    emballage_stock_final = coalesce((p->>'emballage_stock_final')::int, 0),
+    emballage_type = coalesce(nullif(p->>'emballage_type', ''), emballage_type),
+    emballage_destination = nullif(trim(coalesce(p->>'emballage_destination', '')), ''),
+    emballage_poids_palette = (p->>'emballage_poids_palette')::numeric,
+    emballage_remarques = nullif(trim(coalesce(p->>'emballage_remarques', '')), '')
+  where id = p_id
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Saisie de production introuvable';
+  end if;
+  return v_result;
+end;
+$$;
+
+-- production_import_history : import (upsert sur import_key) de l'historique
+-- mensuel. SECURITY DEFINER + code admin : l'upsert doit pouvoir réécrire
+-- une ligne déjà importée il y a plus de 72h (verrou RLS).
+-- p_rows : tableau jsonb de lignes au format production_entries.
+-- Retourne le nombre de lignes insérées ou mises à jour.
+create or replace function production_import_history(p_admin_code text, p_rows jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text;
+  v_item jsonb;
+  r production_entries;
+  v_count integer := 0;
+begin
+  select value into v_code from app_settings where key = 'admin_code';
+  if v_code is null or p_admin_code <> v_code then
+    raise exception 'Code administrateur invalide';
+  end if;
+
+  for v_item in select * from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb))
+  loop
+    r := jsonb_populate_record(null::production_entries, v_item);
+    if nullif(trim(coalesce(r.import_key, '')), '') is null then
+      raise exception 'Ligne d''import sans import_key';
+    end if;
+
+    insert into production_entries (
+      import_key, entry_date, entry_time, equipe, poste, operateur, produit,
+      presse_chariots, presse_numeros, presse_pression, presse_pieces_etage,
+      presse_etages_chariot, presse_rebutes, presse_moule, presse_qte_rangee,
+      presse_temps_cycle, presse_arrets, presse_remarques,
+      sechoir_entres, sechoir_sortis, sechoir_temperature, sechoir_humidite,
+      sechoir_humidite_entree, sechoir_humidite_sortie, sechoir_temp_zone1,
+      sechoir_temp_zone2, sechoir_duree, sechoir_rebutes, sechoir_remarques,
+      four_enfournes, four_defournes, four_combustible, four_temperature,
+      four_temp_prechauffe, four_temp_cuisson, four_temp_refroid, four_pression,
+      four_duree, four_gaz, four_remarques,
+      defourn_chariots, defourn_conformes, defourn_cassees, defourn_fissurees,
+      defourn_premier_choix, defourn_deuxieme_choix, defourn_rebut, defourn_remarques,
+      emballage_paquets, emballage_pieces_paquet, emballage_palettes,
+      emballage_stock_final, emballage_type, emballage_destination,
+      emballage_poids_palette, emballage_remarques, entered_by_user
+    ) values (
+      r.import_key, coalesce(r.entry_date, current_date), r.entry_time, r.equipe, r.poste, r.operateur,
+      coalesce(r.produit, 'B8'),
+      coalesce(r.presse_chariots, 0), r.presse_numeros, r.presse_pression, coalesce(r.presse_pieces_etage, 0),
+      coalesce(r.presse_etages_chariot, 0), coalesce(r.presse_rebutes, 0), r.presse_moule, r.presse_qte_rangee,
+      r.presse_temps_cycle, r.presse_arrets, r.presse_remarques,
+      coalesce(r.sechoir_entres, 0), coalesce(r.sechoir_sortis, 0), r.sechoir_temperature, r.sechoir_humidite,
+      r.sechoir_humidite_entree, r.sechoir_humidite_sortie, r.sechoir_temp_zone1,
+      r.sechoir_temp_zone2, r.sechoir_duree, coalesce(r.sechoir_rebutes, 0), r.sechoir_remarques,
+      coalesce(r.four_enfournes, 0), coalesce(r.four_defournes, 0), coalesce(r.four_combustible, 'Gaz naturel'), r.four_temperature,
+      r.four_temp_prechauffe, r.four_temp_cuisson, r.four_temp_refroid, r.four_pression,
+      r.four_duree, r.four_gaz, r.four_remarques,
+      coalesce(r.defourn_chariots, 0), coalesce(r.defourn_conformes, 0), coalesce(r.defourn_cassees, 0), coalesce(r.defourn_fissurees, 0),
+      coalesce(r.defourn_premier_choix, 0), coalesce(r.defourn_deuxieme_choix, 0), coalesce(r.defourn_rebut, 0), r.defourn_remarques,
+      coalesce(r.emballage_paquets, 0), coalesce(r.emballage_pieces_paquet, 0), coalesce(r.emballage_palettes, 0),
+      coalesce(r.emballage_stock_final, 0), coalesce(r.emballage_type, 'Palette'), r.emballage_destination,
+      r.emballage_poids_palette, r.emballage_remarques, r.entered_by_user
+    )
+    on conflict (import_key) where import_key is not null do update set
+      entry_date = excluded.entry_date, entry_time = excluded.entry_time,
+      equipe = excluded.equipe, poste = excluded.poste, operateur = excluded.operateur,
+      produit = excluded.produit,
+      presse_chariots = excluded.presse_chariots, presse_numeros = excluded.presse_numeros,
+      presse_pression = excluded.presse_pression, presse_pieces_etage = excluded.presse_pieces_etage,
+      presse_etages_chariot = excluded.presse_etages_chariot, presse_rebutes = excluded.presse_rebutes,
+      presse_moule = excluded.presse_moule, presse_qte_rangee = excluded.presse_qte_rangee,
+      presse_temps_cycle = excluded.presse_temps_cycle, presse_arrets = excluded.presse_arrets,
+      presse_remarques = excluded.presse_remarques,
+      sechoir_entres = excluded.sechoir_entres, sechoir_sortis = excluded.sechoir_sortis,
+      sechoir_temperature = excluded.sechoir_temperature, sechoir_humidite = excluded.sechoir_humidite,
+      sechoir_humidite_entree = excluded.sechoir_humidite_entree,
+      sechoir_humidite_sortie = excluded.sechoir_humidite_sortie,
+      sechoir_temp_zone1 = excluded.sechoir_temp_zone1, sechoir_temp_zone2 = excluded.sechoir_temp_zone2,
+      sechoir_duree = excluded.sechoir_duree, sechoir_rebutes = excluded.sechoir_rebutes,
+      sechoir_remarques = excluded.sechoir_remarques,
+      four_enfournes = excluded.four_enfournes, four_defournes = excluded.four_defournes,
+      four_combustible = excluded.four_combustible, four_temperature = excluded.four_temperature,
+      four_temp_prechauffe = excluded.four_temp_prechauffe, four_temp_cuisson = excluded.four_temp_cuisson,
+      four_temp_refroid = excluded.four_temp_refroid, four_pression = excluded.four_pression,
+      four_duree = excluded.four_duree, four_gaz = excluded.four_gaz, four_remarques = excluded.four_remarques,
+      defourn_chariots = excluded.defourn_chariots, defourn_conformes = excluded.defourn_conformes,
+      defourn_cassees = excluded.defourn_cassees, defourn_fissurees = excluded.defourn_fissurees,
+      defourn_premier_choix = excluded.defourn_premier_choix,
+      defourn_deuxieme_choix = excluded.defourn_deuxieme_choix,
+      defourn_rebut = excluded.defourn_rebut, defourn_remarques = excluded.defourn_remarques,
+      emballage_paquets = excluded.emballage_paquets, emballage_pieces_paquet = excluded.emballage_pieces_paquet,
+      emballage_palettes = excluded.emballage_palettes, emballage_stock_final = excluded.emballage_stock_final,
+      emballage_type = excluded.emballage_type, emballage_destination = excluded.emballage_destination,
+      emballage_poids_palette = excluded.emballage_poids_palette,
+      emballage_remarques = excluded.emballage_remarques,
+      entered_by_user = excluded.entered_by_user;
+
+    v_count := v_count + 1;
+  end loop;
+
+  return v_count;
+end;
+$$;
+
+revoke all on function production_import_history(text, jsonb) from public;
+grant execute on function production_import_history(text, jsonb) to anon, authenticated;

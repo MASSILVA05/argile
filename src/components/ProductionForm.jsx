@@ -7,10 +7,13 @@ import {
   POSTES,
   PRODUITS,
   SECTIONS,
+  COMBUSTIBLES,
+  EMBALLAGE_TYPES,
   DEFAULT_ETAGES_CHARIOT,
   defaultPiecesEtage,
   computePresseTotal,
   computeTauxCasse,
+  computeTauxPremierChoix,
   formatInt,
   formatPercent,
   toNum,
@@ -22,11 +25,25 @@ const formatHHMM = (date) => date.toTimeString().slice(0, 5)
 // Champs numériques du formulaire (convertis en Number à l'envoi ; '' -> 0).
 const NUMERIC_FIELDS = [
   'presse_chariots', 'presse_pression', 'presse_pieces_etage', 'presse_etages_chariot', 'presse_rebutes',
+  'presse_qte_rangee', 'presse_temps_cycle',
   'sechoir_entres', 'sechoir_sortis', 'sechoir_temperature', 'sechoir_humidite', 'sechoir_duree', 'sechoir_rebutes',
+  'sechoir_humidite_entree', 'sechoir_humidite_sortie', 'sechoir_temp_zone1', 'sechoir_temp_zone2',
   'four_enfournes', 'four_defournes', 'four_temperature', 'four_duree', 'four_gaz',
+  'four_temp_prechauffe', 'four_temp_cuisson', 'four_temp_refroid', 'four_pression',
   'defourn_chariots', 'defourn_conformes', 'defourn_cassees', 'defourn_fissurees',
+  'defourn_premier_choix', 'defourn_deuxieme_choix', 'defourn_rebut',
   'emballage_paquets', 'emballage_pieces_paquet', 'emballage_palettes', 'emballage_stock_final',
+  'emballage_poids_palette',
 ]
+
+// Champs texte (trim, '' -> null).
+const TEXT_FIELDS = [
+  'presse_numeros', 'presse_moule', 'presse_arrets', 'presse_remarques',
+  'sechoir_remarques', 'four_remarques', 'defourn_remarques',
+  'emballage_destination', 'emballage_remarques',
+]
+
+const DEFAULT_DESTINATIONS = ['Stock']
 
 function emptyDraft() {
   return {
@@ -41,17 +58,30 @@ function emptyDraft() {
     presse_pieces_etage: String(defaultPiecesEtage('B8')),
     presse_etages_chariot: String(DEFAULT_ETAGES_CHARIOT),
     presse_rebutes: '',
+    presse_moule: '',
+    presse_qte_rangee: '',
+    presse_temps_cycle: '',
+    presse_arrets: '',
     presse_remarques: '',
     sechoir_entres: '',
     sechoir_sortis: '',
     sechoir_temperature: '',
     sechoir_humidite: '',
+    sechoir_humidite_entree: '',
+    sechoir_humidite_sortie: '',
+    sechoir_temp_zone1: '',
+    sechoir_temp_zone2: '',
     sechoir_duree: '',
     sechoir_rebutes: '',
     sechoir_remarques: '',
     four_enfournes: '',
     four_defournes: '',
+    four_combustible: COMBUSTIBLES[0],
     four_temperature: '',
+    four_temp_prechauffe: '',
+    four_temp_cuisson: '',
+    four_temp_refroid: '',
+    four_pression: '',
     four_duree: '',
     four_gaz: '',
     four_remarques: '',
@@ -59,11 +89,17 @@ function emptyDraft() {
     defourn_conformes: '',
     defourn_cassees: '',
     defourn_fissurees: '',
+    defourn_premier_choix: '',
+    defourn_deuxieme_choix: '',
+    defourn_rebut: '',
     defourn_remarques: '',
     emballage_paquets: '',
     emballage_pieces_paquet: '',
     emballage_palettes: '',
     emballage_stock_final: '',
+    emballage_type: EMBALLAGE_TYPES[0],
+    emballage_destination: '',
+    emballage_poids_palette: '',
     emballage_remarques: '',
   }
 }
@@ -72,6 +108,7 @@ export default function ProductionForm() {
   const [draft, setDraft] = useState(emptyDraft)
   const [section, setSection] = useState('presse')
   const [operateurs, setOperateurs] = useState([])
+  const [destinations, setDestinations] = useState(DEFAULT_DESTINATIONS)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -89,10 +126,13 @@ export default function ProductionForm() {
     async function load() {
       const { data } = await supabase
         .from('production_entries')
-        .select('operateur')
+        .select('operateur, emballage_destination')
         .order('created_at', { ascending: false })
         .limit(500)
       setOperateurs([...new Set((data ?? []).map((r) => r.operateur).filter(Boolean))])
+      setDestinations([
+        ...new Set([...DEFAULT_DESTINATIONS, ...(data ?? []).map((r) => r.emballage_destination).filter(Boolean)]),
+      ])
     }
     load()
   }, [])
@@ -119,6 +159,11 @@ export default function ProductionForm() {
     [draft.defourn_conformes, draft.defourn_cassees, draft.defourn_fissurees]
   )
 
+  const tauxPremierChoix = useMemo(
+    () => computeTauxPremierChoix(draft.defourn_premier_choix, draft.defourn_deuxieme_choix, draft.defourn_rebut),
+    [draft.defourn_premier_choix, draft.defourn_deuxieme_choix, draft.defourn_rebut]
+  )
+
   async function handleSubmit(e) {
     e.preventDefault()
     setSuccess('')
@@ -136,14 +181,11 @@ export default function ProductionForm() {
       poste: draft.poste,
       operateur: draft.operateur.trim() || null,
       produit: draft.produit,
-      presse_numeros: draft.presse_numeros.trim() || null,
-      presse_remarques: draft.presse_remarques.trim() || null,
-      sechoir_remarques: draft.sechoir_remarques.trim() || null,
-      four_remarques: draft.four_remarques.trim() || null,
-      defourn_remarques: draft.defourn_remarques.trim() || null,
-      emballage_remarques: draft.emballage_remarques.trim() || null,
+      four_combustible: draft.four_combustible,
+      emballage_type: draft.emballage_type,
       entered_by_user: getSession()?.username ?? null,
     }
+    for (const f of TEXT_FIELDS) payload[f] = draft[f].trim() || null
     for (const f of NUMERIC_FIELDS) payload[f] = toNum(draft[f])
 
     const { data, error: insertError } = await supabase
@@ -166,11 +208,13 @@ export default function ProductionForm() {
     setDraft((d) => {
       const fresh = emptyDraft()
       return { ...fresh, entry_date: d.entry_date, equipe: d.equipe, poste: d.poste, produit: d.produit,
-        presse_pieces_etage: String(defaultPiecesEtage(d.produit)) }
+        presse_pieces_etage: String(defaultPiecesEtage(d.produit)),
+        presse_moule: d.presse_moule, four_combustible: d.four_combustible, emballage_type: d.emballage_type }
     })
     setPiecesTouched(false)
     setSection('presse')
     if (payload.operateur) setOperateurs((p) => [...new Set([payload.operateur, ...p])])
+    if (payload.emballage_destination) setDestinations((p) => [...new Set([...p, payload.emballage_destination])])
   }
 
   return (
@@ -254,11 +298,24 @@ export default function ProductionForm() {
               <input type="number" inputMode="numeric" min="0" value={draft.presse_etages_chariot} onChange={(e) => update('presse_etages_chariot', e.target.value)} className={inputClass} />
             </Field>
             <Counter label="Chariots rebutés" value={draft.presse_rebutes} onChange={(v) => update('presse_rebutes', v)} />
+            <Field label="N° moule">
+              <input type="text" value={draft.presse_moule} onChange={(e) => update('presse_moule', e.target.value)} className={inputClass} placeholder="ex : M-12" />
+            </Field>
+            <NumberField label="Quantité par rangée" value={draft.presse_qte_rangee} onChange={(v) => update('presse_qte_rangee', v)} integer />
+            <NumberField label="Temps de cycle (secondes)" value={draft.presse_temps_cycle} onChange={(v) => update('presse_temps_cycle', v)} />
           </div>
           <Computed
             label="Calcul automatique"
             value={`${formatInt(draft.presse_chariots)} chariots × ${formatInt(draft.presse_etages_chariot)} étages × ${formatInt(draft.presse_pieces_etage)} pièces = ${formatInt(presseTotal)} pièces`}
           />
+          <Field label="Remarques arrêts">
+            <textarea
+              value={draft.presse_arrets}
+              onChange={(e) => update('presse_arrets', e.target.value)}
+              className={`${inputClass} min-h-16 resize-y`}
+              placeholder="ex : Arrêt 30min — bourrage ; Arrêt 1h — panne moteur"
+            />
+          </Field>
           <Remarks value={draft.presse_remarques} onChange={(v) => update('presse_remarques', v)} />
         </Section>
       )}
@@ -271,7 +328,11 @@ export default function ProductionForm() {
             <Counter label="Chariots rebutés séchoir" value={draft.sechoir_rebutes} onChange={(v) => update('sechoir_rebutes', v)} />
             <NumberField label="Température séchoir (°C)" value={draft.sechoir_temperature} onChange={(v) => update('sechoir_temperature', v)} />
             <NumberField label="Humidité (%)" value={draft.sechoir_humidite} onChange={(v) => update('sechoir_humidite', v)} />
-            <NumberField label="Durée séchage (heures)" value={draft.sechoir_duree} onChange={(v) => update('sechoir_duree', v)} />
+            <NumberField label="Humidité entrée (%)" value={draft.sechoir_humidite_entree} onChange={(v) => update('sechoir_humidite_entree', v)} />
+            <NumberField label="Humidité sortie (%)" value={draft.sechoir_humidite_sortie} onChange={(v) => update('sechoir_humidite_sortie', v)} />
+            <NumberField label="Température zone 1 (°C)" value={draft.sechoir_temp_zone1} onChange={(v) => update('sechoir_temp_zone1', v)} />
+            <NumberField label="Température zone 2 (°C)" value={draft.sechoir_temp_zone2} onChange={(v) => update('sechoir_temp_zone2', v)} />
+            <NumberField label="Temps de séchage total (heures)" value={draft.sechoir_duree} onChange={(v) => update('sechoir_duree', v)} />
           </div>
           <Remarks value={draft.sechoir_remarques} onChange={(v) => update('sechoir_remarques', v)} />
         </Section>
@@ -282,7 +343,16 @@ export default function ProductionForm() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Counter label="Chariots enfournés" value={draft.four_enfournes} onChange={(v) => update('four_enfournes', v)} />
             <Counter label="Chariots défournés" value={draft.four_defournes} onChange={(v) => update('four_defournes', v)} />
+            <Field label="Type de combustible">
+              <select value={draft.four_combustible} onChange={(e) => update('four_combustible', e.target.value)} className={inputClass}>
+                {COMBUSTIBLES.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </Field>
             <NumberField label="Température four (°C)" value={draft.four_temperature} onChange={(v) => update('four_temperature', v)} />
+            <NumberField label="Temp. zone préchauffage (°C)" value={draft.four_temp_prechauffe} onChange={(v) => update('four_temp_prechauffe', v)} />
+            <NumberField label="Temp. zone cuisson (°C)" value={draft.four_temp_cuisson} onChange={(v) => update('four_temp_cuisson', v)} />
+            <NumberField label="Temp. zone refroidissement (°C)" value={draft.four_temp_refroid} onChange={(v) => update('four_temp_refroid', v)} />
+            <NumberField label="Pression four (mbar)" value={draft.four_pression} onChange={(v) => update('four_pression', v)} />
             <NumberField label="Durée cuisson (heures)" value={draft.four_duree} onChange={(v) => update('four_duree', v)} />
             <NumberField label="Consommation gaz (m³)" value={draft.four_gaz} onChange={(v) => update('four_gaz', v)} />
           </div>
@@ -299,6 +369,13 @@ export default function ProductionForm() {
             <Counter label="Pièces fissurées" value={draft.defourn_fissurees} onChange={(v) => update('defourn_fissurees', v)} />
           </div>
           <Computed label="Taux de casse" value={formatPercent(tauxCasse)} danger={tauxCasse >= 5} />
+          <p className="font-display text-sm text-ink">Classement qualité</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Counter label="1er choix (conformes premium)" value={draft.defourn_premier_choix} onChange={(v) => update('defourn_premier_choix', v)} step={10} />
+            <Counter label="2ème choix (défauts mineurs)" value={draft.defourn_deuxieme_choix} onChange={(v) => update('defourn_deuxieme_choix', v)} />
+            <Counter label="Rebut (cassées / inutilisables)" value={draft.defourn_rebut} onChange={(v) => update('defourn_rebut', v)} />
+          </div>
+          <Computed label="Taux de 1er choix" value={formatPercent(tauxPremierChoix)} />
           <Remarks value={draft.defourn_remarques} onChange={(v) => update('defourn_remarques', v)} />
         </Section>
       )}
@@ -310,6 +387,26 @@ export default function ProductionForm() {
             <Counter label="Pièces par paquet" value={draft.emballage_pieces_paquet} onChange={(v) => update('emballage_pieces_paquet', v)} />
             <Counter label="Palettes produites" value={draft.emballage_palettes} onChange={(v) => update('emballage_palettes', v)} />
             <NumberField label="Stock final produit (pièces)" value={draft.emballage_stock_final} onChange={(v) => update('emballage_stock_final', v)} integer />
+            <Field label="Type d'emballage">
+              <select value={draft.emballage_type} onChange={(e) => update('emballage_type', e.target.value)} className={inputClass}>
+                {EMBALLAGE_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </Field>
+            <Field label="Destination">
+              <input
+                type="text"
+                list="production-destinations-list"
+                value={draft.emballage_destination}
+                onChange={(e) => update('emballage_destination', e.target.value)}
+                className={inputClass}
+                autoComplete="off"
+                placeholder="ex : Stock, Chantier X, Client Y"
+              />
+              <datalist id="production-destinations-list">
+                {destinations.map((o) => <option key={o} value={o} />)}
+              </datalist>
+            </Field>
+            <NumberField label="Poids palette (kg)" value={draft.emballage_poids_palette} onChange={(v) => update('emballage_poids_palette', v)} />
           </div>
           <Remarks value={draft.emballage_remarques} onChange={(v) => update('emballage_remarques', v)} />
         </Section>
