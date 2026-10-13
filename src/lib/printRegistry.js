@@ -1061,13 +1061,14 @@ export function printCaisseReceipt(entries) {
 // ============================================================
 // BON DE CHARGEMENT : A5 portrait (même gabarit que le reçu de caisse).
 // Montant = poids × prix/tonne de la destination ; ligne masquée si la
-// destination n'a pas de prix (22T, anciennes destinations).
+// destination n'a pas de prix (22T, anciennes destinations) ou si le bon est
+// imprimé par un viewer (Bilal ne voit pas les prix).
 // ============================================================
 
-function bonChargementHtml(entry) {
+function bonChargementHtml(entry, { hideAmount = false } = {}) {
   const weight = entry.weight_tons == null || entry.weight_tons === '' ? null : Number(entry.weight_tons)
   const rate = rateFor(entry.unloading_type)
-  const showAmount = rate > 0 && weight != null
+  const showAmount = !hideAmount && rate > 0 && weight != null
 
   const rows = [
     { label: 'Chauffeur', value: entry.driver_name },
@@ -1104,8 +1105,8 @@ function bonChargementHtml(entry) {
 }
 
 // entry : une ligne de la table `entries` (ou le payload qui vient d'être
-// enregistré dans EntryForm).
-export function printBonChargement(entry) {
+// enregistré dans EntryForm). hideAmount : masque la ligne « Montant (DA) ».
+export function printBonChargement(entry, { hideAmount = false } = {}) {
   if (!entry) return
-  openAndPrint(a5DocumentHtml(bonChargementHtml(entry)))
+  openAndPrint(a5DocumentHtml(bonChargementHtml(entry, { hideAmount })))
 }

@@ -8428,3 +8428,54 @@ $$;
 
 revoke all on function production_import_history(text, jsonb) from public;
 grant execute on function production_import_history(text, jsonb) to anon, authenticated;
+
+
+-- ============================================================
+-- Bilal (viewer) : connexion sans code OTP (mot de passe seul).
+-- ============================================================
+update app_users set requires_verification = false where username = 'Bilal';
+
+-- ============================================================
+-- Chargement : destination « Tijelabine » (250 DA/tonne).
+-- ============================================================
+alter table entries drop constraint if exists entries_unloading_type_check;
+alter table entries add constraint entries_unloading_type_check
+  check (unloading_type in ('DPR AXXAM Location', 'Akbou', 'DPR AXXAM (22T)', 'Remila', 'El Adjiba', 'Tijelabine'));
+
+-- ============================================================
+-- Correction temporaire des poids à 0 / vides (Bilal, viewer) jusqu'au
+-- 23/10/2026 inclus (heure d'Algérie), sans limite des 72h. Seul le champ
+-- weight_tons est modifiable, et uniquement s'il est à 0 ou NULL.
+-- ============================================================
+create or replace function fix_zero_weight(p_id uuid, p_weight numeric)
+returns entries
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_result entries;
+begin
+  if (now() at time zone 'Africa/Algiers')::date > date '2026-10-23' then
+    raise exception 'La période de correction des poids est terminée';
+  end if;
+  if p_weight is null or p_weight <= 0 then
+    raise exception 'Le poids doit être supérieur à 0';
+  end if;
+
+  update entries set weight_tons = p_weight
+  where id = p_id
+    and (weight_tons = 0 or weight_tons is null)
+    and unloading_type <> 'DPR AXXAM (22T)'
+  returning * into v_result;
+
+  if v_result.id is null then
+    raise exception 'Entrée introuvable ou poids déjà renseigné';
+  end if;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function fix_zero_weight(uuid, numeric) from public;
+grant execute on function fix_zero_weight(uuid, numeric) to anon, authenticated;

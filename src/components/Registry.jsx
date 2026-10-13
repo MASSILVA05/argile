@@ -20,6 +20,20 @@ function formatTime(value) {
   return value ? value.slice(0, 5) : '—'
 }
 
+// Fenêtre temporaire (13/10/2026 -> 23/10/2026 inclus, heure d'Algérie) pendant
+// laquelle un viewer (Bilal) peut renseigner le poids des bons enregistrés à 0
+// ou sans poids, même au-delà des 72h -- via la RPC fix_zero_weight, qui
+// n'autorise que le champ weight_tons. Après cette date, retour aux règles
+// normales (72h).
+const ZERO_WEIGHT_FIX_DEADLINE = new Date('2026-10-23T23:59:59+01:00').getTime()
+const MAX_WEIGHT_TONS = 35
+
+function canFixZeroWeight(entry) {
+  if (Date.now() > ZERO_WEIGHT_FIX_DEADLINE) return false
+  if (entry.unloading_type === FIXED_WEIGHT_TYPE) return false
+  return entry.weight_tons == null || Number(entry.weight_tons) === 0
+}
+
 const CHARGEMENT_SHEET_TYPES = [
   { id: 'chauffeur', label: 'Chauffeur', nameLabel: 'Chauffeur' },
   { id: 'matricule', label: 'Matricule', nameLabel: 'Matricule' },
@@ -45,6 +59,7 @@ export default function Registry() {
   const [adminError, setAdminError] = useState('')
   const [adminBusy, setAdminBusy] = useState(false)
   const [sheetModal, setSheetModal] = useState(null) // 'chauffeur' | 'matricule' | null
+  const [weightFix, setWeightFix] = useState(null) // { id, value, busy } -- correction poids à 0 (viewer)
 
   useEffect(() => {
     let active = true
@@ -239,6 +254,31 @@ export default function Registry() {
     }
     setEntries((current) => current.map((e) => (e.id === data.id ? data : e)))
     cancelEdit()
+  }
+
+  async function saveWeightFix() {
+    const weight = Number(String(weightFix.value).replace(',', '.'))
+    if (!Number.isFinite(weight) || weight <= 0) {
+      setError('Le poids doit être supérieur à 0')
+      return
+    }
+    if (weight > MAX_WEIGHT_TONS) {
+      setError(`Le poids ne peut pas dépasser ${MAX_WEIGHT_TONS} T`)
+      return
+    }
+    setWeightFix((current) => ({ ...current, busy: true }))
+    const { data, error: rpcError } = await supabase.rpc('fix_zero_weight', {
+      p_id: weightFix.id,
+      p_weight: weight,
+    })
+    if (rpcError) {
+      setError(`Erreur de correction du poids : ${rpcError.message}`)
+      setWeightFix((current) => ({ ...current, busy: false }))
+      return
+    }
+    setEntries((current) => current.map((e) => (e.id === data.id ? data : e)))
+    setError('')
+    setWeightFix(null)
   }
 
   function openAdminPrompt(action, entry) {
@@ -449,7 +489,44 @@ export default function Registry() {
                       <Td>{entry.driver_name}</Td>
                       <Td>{entry.unloading_type}</Td>
                       <Td>{entry.ticket_number ?? '—'}</Td>
-                      <Td>{entry.weight_tons ?? '—'}</Td>
+                      <Td>
+                        {weightFix?.id === entry.id ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              autoFocus
+                              value={weightFix.value}
+                              onChange={(e) => setWeightFix((current) => ({ ...current, value: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveWeightFix()
+                                if (e.key === 'Escape') setWeightFix(null)
+                              }}
+                              className={editInputClass}
+                              disabled={weightFix.busy}
+                            />
+                            <button
+                              type="button"
+                              onClick={saveWeightFix}
+                              disabled={weightFix.busy}
+                              className="rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10 disabled:opacity-50"
+                            >
+                              OK
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWeightFix(null)}
+                              disabled={weightFix.busy}
+                              className="rounded border border-border px-2 py-1 text-ink-muted hover:border-ink-muted"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          entry.weight_tons ?? '—'
+                        )}
+                      </Td>
                       <Td>
                         {entry.photo_url ? (
                           <button type="button" onClick={() => setLightboxUrl(entry.photo_url)} className="block">
@@ -469,7 +546,19 @@ export default function Registry() {
                       <Td>{entry.entered_by_user ?? '—'}</Td>
                       <Td className="no-print">
                         <div className="flex items-center gap-2">
-                          <PrintIconButton onClick={() => printBonChargement(entry)} title="Imprimer le bon" />
+                          <PrintIconButton
+                            onClick={() => printBonChargement(entry, { hideAmount: isViewer })}
+                            title="Imprimer le bon"
+                          />
+                          {isViewer && canFixZeroWeight(entry) && weightFix?.id !== entry.id && (
+                            <button
+                              type="button"
+                              onClick={() => setWeightFix({ id: entry.id, value: '', busy: false })}
+                              className="no-print whitespace-nowrap rounded border border-ocre px-2 py-1 text-ocre hover:bg-ocre/10"
+                            >
+                              Corriger le poids
+                            </button>
+                          )}
                           <RowActions
                             entry={entry}
                             onEdit={() => startEdit(entry)}

@@ -385,7 +385,7 @@ export default function EntryForm() {
           {savedEntry && (
             <button
               type="button"
-              onClick={() => printBonChargement(savedEntry)}
+              onClick={() => printBonChargement(savedEntry, { hideAmount: getSession()?.role === 'viewer' })}
               className="min-h-11 rounded-lg bg-green-600 px-4 py-2 font-display font-medium text-white transition-colors hover:bg-green-700"
             >
               🖨 Imprimer le bon
