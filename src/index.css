@@ -226,6 +226,60 @@
   }
 }
 
+/* ------------------------------------------------------------------------
+   Interface tactile (pointer: coarse = téléphone / tablette).
+   Volontairement HORS @layer : prime sur les utilitaires Tailwind (min-h-11,
+   text-sm, px-3…) sans devoir toucher chaque formulaire. Le gros padding
+   14px 24px est réservé aux boutons d'action des formulaires (submit) et à
+   .btn-action : appliqué à tous les <button>, il déformerait les boutons
+   icônes, onglets et menus. Cases à cocher / radios / fichiers exclus.
+   ------------------------------------------------------------------------ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+  select,
+  textarea {
+    min-height: 48px;
+    font-size: 16px; /* empêche le zoom automatique d'iOS au focus */
+  }
+
+  form input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+  form select,
+  form textarea {
+    padding: 12px 16px;
+  }
+
+  button {
+    min-height: 48px;
+  }
+
+  form button[type="submit"],
+  .btn-action {
+    min-height: 52px;
+    padding: 14px 24px;
+  }
+
+  /* Espacement minimal de 12px entre boutons voisins (les gap plus larges,
+     gap-3 et au-delà, sont conservés). */
+  .flex:is(.gap-1, .gap-1\.5, .gap-2, .gap-2\.5):has(> button + button) {
+    gap: 12px;
+  }
+
+  /* Registres : lignes plus hautes (hauteur d'une ligne = minimum). */
+  table tbody tr {
+    height: 48px;
+  }
+}
+
+/* Registre Factures : bons non payés (BNP) surlignés en orange clair --
+   sur chaque cellule (y compris la 1re colonne sticky, qui a son propre
+   fond opaque). */
+table tbody tr.row-bnp > td {
+  background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-bg-card));
+}
+table tbody tr.row-bnp:hover > td {
+  background-color: color-mix(in srgb, var(--color-warning) 22%, var(--color-bg-card));
+}
+
 /* Fade-in au chargement d'une page (voir App.jsx : appliqué avec key={tab}
    sur le conteneur de contenu pour se rejouer à chaque changement d'onglet). */
 @keyframes fadeIn {

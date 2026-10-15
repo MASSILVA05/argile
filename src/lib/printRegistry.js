@@ -13,6 +13,7 @@
 
 import { numberToFrenchWords } from './numberToWords'
 import { rateFor } from './unloadingTypes'
+import { formatInvoiceBon, bonNumberOf } from './invoicePayment'
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => (
@@ -618,14 +619,19 @@ function invoiceStampDuty(inv, totalTtc) {
 //                    ni à la caisse)
 //   - bl_prix      : BON DE LIVRAISON avec prix, sans TVA/TTC/timbre
 //   - bl_sans_prix : BON DE LIVRAISON, quantités uniquement
+//   - bon_enlevement : BON D'ENLÈVEMENT PAYÉ (BP) / NON PAYÉ (BNP) selon le
+//                    type de bon de la facture, avec prix, sans TVA
 export const INVOICE_PRINT_MODES = {
   facture: 'Facture',
+  bon_enlevement: "Bon d'enlèvement (BP / BNP)",
   bl_prix: 'Bon de Livraison (avec prix)',
   bl_sans_prix: 'Bon de Livraison (sans prix)',
 }
 
 function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', showAccountSituation = false } = {}) {
   const isFacture = mode === 'facture'
+  const isBon = mode === 'bon_enlevement'
+  const isBnp = inv.bon_type === 'BNP'
   const withPrices = mode !== 'bl_sans_prix'
   const discountAmount = Number(inv.discount_amount) || 0
   const totalHt = (Number(inv.amount) || 0) - discountAmount
@@ -709,7 +715,11 @@ function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', sh
   </table>`
     : isFacture
       ? `<p class="payment-line"><strong>Mode de paiement :</strong> ${escapeHtml(paymentMode)}</p>`
-      : ''
+      : isBon
+        ? `<p class="payment-line"><strong>Paiement :</strong> ${escapeHtml(isBnp ? 'Non payé — à régulariser' : paymentMode)}${
+            inv.bank_reference ? ` — <strong>Réf. :</strong> ${escapeHtml(inv.bank_reference)}` : ''
+          }</p>`
+        : ''
 
   // Infos client figées sur la facture (saisie) ; repli sur la fiche client
   // pour les factures antérieures à ces colonnes.
@@ -727,8 +737,10 @@ function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', sh
 
   const title = isFacture
     ? `FACTURE N° ${escapeHtml(inv.invoice_number)}`
-    : `BON DE LIVRAISON N° ${escapeHtml(inv.bl_number || inv.invoice_number)}`
-  const detailLabel = isFacture ? 'DÉTAIL DE LA FACTURE' : 'DÉTAIL DE LA LIVRAISON'
+    : isBon
+      ? `BON D'ENLÈVEMENT ${isBnp ? 'NON PAYÉ' : 'PAYÉ'} N° ${escapeHtml(bonNumberOf(inv) ? formatInvoiceBon(inv) : inv.invoice_number)}`
+      : `BON DE LIVRAISON N° ${escapeHtml(inv.bl_number || inv.invoice_number)}`
+  const detailLabel = isFacture ? 'DÉTAIL DE LA FACTURE' : isBon ? "DÉTAIL DE L'ENLÈVEMENT" : 'DÉTAIL DE LA LIVRAISON'
   const detailHead = withPrices
     ? `<colgroup><col style="width:6%"><col style="width:40%"><col style="width:16%"><col style="width:17%"><col style="width:21%"></colgroup>
     <thead>
@@ -751,7 +763,7 @@ function factureFicheHtml(inv, { clientInfo, linkedCheques, mode = 'facture', sh
 
   const lettresHtml = withPrices
     ? `<p class="montant-lettres">
-    Arrêté ${isFacture ? 'la présente facture' : 'le présent bon de livraison'} à la somme de :<br>
+    Arrêté ${isFacture ? 'la présente facture' : isBon ? "le présent bon d'enlèvement" : 'le présent bon de livraison'} à la somme de :<br>
     <strong>${escapeHtml(numberToFrenchWords(netValue))}</strong>
   </p>`
     : ''

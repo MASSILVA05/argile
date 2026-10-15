@@ -8479,3 +8479,228 @@ $$;
 
 revoke all on function fix_zero_weight(uuid, numeric) from public;
 grant execute on function fix_zero_weight(uuid, numeric) to anon, authenticated;
+
+-- ============================================================
+-- AJOUT 2026-10-15 (1) : BONS D'ENLÈVEMENT PAYÉ (BP) / NON PAYÉ (BNP)
+-- Chaque facture porte un type de bon : BP (payé à l'enlèvement) ou BNP
+-- (non payé = créance à régulariser). Numérotation SÉPARÉE par type
+-- (BP 0001, 0002… / BNP 0001, 0002…), attribuée par le trigger ci-dessous
+-- (verrou consultatif -> pas de doublon en saisie simultanée).
+--   - BP  : payment_status = mode choisi (Espèces / Versement / Chèque) ;
+--           Espèces -> entrée caisse auto (trigger invoices_sync_caisse).
+--   - BNP : payment_status = 'Non payé' ; AUCUNE entrée caisse à la saisie.
+--           Régularisation depuis le registre via record_caisse_with_invoice /
+--           record_cheque_with_invoice (qui créent l'entrée caisse) ; une fois
+--           payé intégralement (payment_status = 'Payé'), le bon passe
+--           automatiquement en BP et reçoit un numéro BP (le n° BNP d'origine
+--           est conservé pour l'historique).
+-- bank_reference : référence libre (N° chèque, N° virement, BL manuscrit…).
+-- ============================================================
+alter table invoices add column if not exists bon_type text default 'BP';
+alter table invoices drop constraint if exists invoices_bon_type_check;
+alter table invoices add constraint invoices_bon_type_check check (bon_type in ('BP', 'BNP'));
+alter table invoices add column if not exists bon_number_bp integer;
+alter table invoices add column if not exists bon_number_bnp integer;
+alter table invoices add column if not exists bank_reference text;
+
+comment on column invoices.bon_type is 'BP = bon d''enlèvement payé, BNP = bon d''enlèvement non payé (créance à régulariser)';
+comment on column invoices.bon_number_bp is 'N° de bon BP (compteur séparé), attribué à la saisie ou à la régularisation complète d''un BNP';
+comment on column invoices.bon_number_bnp is 'N° de bon BNP (compteur séparé), attribué à la saisie ; conservé après régularisation';
+comment on column invoices.bank_reference is 'Référence bancaire / pièce (N° chèque, N° virement, BL manuscrit…), optionnelle';
+
+-- Factures existantes : non payées / partielles = BNP (sans numéro --
+-- la numérotation ne démarre qu'avec les nouvelles saisies).
+update invoices set bon_type = 'BNP'
+where bon_type = 'BP' and bon_number_bp is null and payment_status in ('Non payé', 'Partiel');
+
+create unique index if not exists invoices_bon_number_bp_uidx on invoices (bon_number_bp) where bon_number_bp is not null;
+create unique index if not exists invoices_bon_number_bnp_uidx on invoices (bon_number_bnp) where bon_number_bnp is not null;
+create index if not exists invoices_bon_type_idx on invoices (bon_type);
+
+create or replace function invoices_assign_bon_number()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Saisie : une facture non payée est toujours un BNP (y compris pour les
+  -- insertions qui n'envoient pas bon_type -- défaut 'BP').
+  if TG_OP = 'INSERT' and (NEW.bon_type is null or NEW.payment_status in ('Non payé', 'Partiel')) then
+    NEW.bon_type := case when NEW.payment_status in ('Non payé', 'Partiel') then 'BNP' else 'BP' end;
+  end if;
+
+  -- Régularisation : BNP intégralement réglé -> BP.
+  if TG_OP = 'UPDATE' and OLD.bon_type = 'BNP' and NEW.bon_type = 'BNP'
+     and NEW.payment_status not in ('Non payé', 'Partiel') then
+    NEW.bon_type := 'BP';
+  end if;
+
+  if NEW.bon_type = 'BP' and NEW.bon_number_bp is null
+     and (TG_OP = 'INSERT' or OLD.bon_type = 'BNP') then
+    perform pg_advisory_xact_lock(hashtext('invoices_bon_number_bp'));
+    select coalesce(max(bon_number_bp), 0) + 1 into NEW.bon_number_bp from invoices;
+  elsif NEW.bon_type = 'BNP' and NEW.bon_number_bnp is null and TG_OP = 'INSERT' then
+    perform pg_advisory_xact_lock(hashtext('invoices_bon_number_bnp'));
+    select coalesce(max(bon_number_bnp), 0) + 1 into NEW.bon_number_bnp from invoices;
+  end if;
+
+  return NEW;
+end;
+$$;
+
+drop trigger if exists invoices_assign_bon_number on invoices;
+create trigger invoices_assign_bon_number
+  before insert or update on invoices
+  for each row execute function invoices_assign_bon_number();
+
+-- ============================================================
+-- AJOUT 2026-10-15 (2) : BROUILLARD BANQUE + RAPPROCHEMENT BANCAIRE
+-- (sous-onglet "Brouillard Banque" de la page Chèques, BrouillardBanque.jsx)
+-- Lignes du brouillard calculées à la volée depuis `cheques` (Émis = débit,
+-- Reçu = crédit, hors Annulé/Rejeté) et `caisse_entries` réglées par
+-- chèque/versement/virement sur la banque (cheque_bank) et non générées par
+-- un chèque (linked_cheque_id null -- sinon doublon avec le chèque).
+-- bank_reconciliation : une ligne par opération pointée ; month/year = mois
+-- du brouillard dans lequel l'opération a été pointée (une opération en
+-- suspens peut être pointée un mois suivant).
+-- bank_reconciliation_months : solde du relevé bancaire saisi + verrouillage
+-- du mois (entity = entité du brouillard, 'Tout' pour la vue admin globale).
+-- ============================================================
+create table if not exists bank_reconciliation (
+  id uuid primary key default gen_random_uuid(),
+  cheque_id uuid references cheques(id) on delete cascade,
+  caisse_entry_id uuid references caisse_entries(id) on delete cascade,
+  bank text not null,
+  month integer not null check (month between 1 and 12),
+  year integer not null,
+  reconciled boolean not null default false,
+  reconciled_date date,
+  created_at timestamptz not null default now(),
+  constraint bank_reconciliation_one_source check (num_nonnulls(cheque_id, caisse_entry_id) = 1),
+  constraint bank_reconciliation_cheque_uniq unique (cheque_id),
+  constraint bank_reconciliation_caisse_uniq unique (caisse_entry_id)
+);
+
+comment on table bank_reconciliation is 'Pointage des opérations du brouillard banque avec le relevé bancaire (une ligne par chèque / entrée caisse pointé)';
+
+create index if not exists bank_reconciliation_period_idx on bank_reconciliation (bank, year, month);
+
+create table if not exists bank_reconciliation_months (
+  id uuid primary key default gen_random_uuid(),
+  entity text not null default 'Tout',
+  bank text not null,
+  month integer not null check (month between 1 and 12),
+  year integer not null,
+  statement_balance numeric(14, 2),
+  locked boolean not null default false,
+  locked_at timestamptz,
+  locked_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint bank_reconciliation_months_uniq unique (entity, bank, year, month)
+);
+
+comment on table bank_reconciliation_months is 'Brouillard banque : solde du relevé bancaire saisi et verrouillage du mois après rapprochement';
+
+alter table bank_reconciliation enable row level security;
+alter table bank_reconciliation_months enable row level security;
+
+drop policy if exists "Lecture rapprochement" on bank_reconciliation;
+create policy "Lecture rapprochement" on bank_reconciliation for select using (true);
+drop policy if exists "Ajout rapprochement" on bank_reconciliation;
+create policy "Ajout rapprochement" on bank_reconciliation for insert with check (true);
+drop policy if exists "Modification rapprochement" on bank_reconciliation;
+create policy "Modification rapprochement" on bank_reconciliation for update using (true) with check (true);
+drop policy if exists "Suppression rapprochement" on bank_reconciliation;
+create policy "Suppression rapprochement" on bank_reconciliation for delete using (true);
+
+drop policy if exists "Lecture mois rapprochement" on bank_reconciliation_months;
+create policy "Lecture mois rapprochement" on bank_reconciliation_months for select using (true);
+drop policy if exists "Ajout mois rapprochement" on bank_reconciliation_months;
+create policy "Ajout mois rapprochement" on bank_reconciliation_months for insert with check (true);
+drop policy if exists "Modification mois rapprochement" on bank_reconciliation_months;
+create policy "Modification mois rapprochement" on bank_reconciliation_months for update using (true) with check (true);
+
+-- Mois verrouillé : plus aucun pointage (ajout / modification / suppression)
+-- rattaché à ce mois, pour l'entité de l'opération ou la vue globale 'Tout'.
+create or replace function bank_reconciliation_month_locked(p_bank text, p_year integer, p_month integer, p_cheque_id uuid, p_caisse_id uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_entity text;
+begin
+  if p_cheque_id is not null then
+    select entity into v_entity from cheques where id = p_cheque_id;
+  else
+    select entity into v_entity from caisse_entries where id = p_caisse_id;
+  end if;
+  return exists (
+    select 1 from bank_reconciliation_months m
+    where m.locked and m.bank = p_bank and m.year = p_year and m.month = p_month
+      and m.entity in (coalesce(v_entity, ''), 'Tout')
+  );
+end;
+$$;
+
+create or replace function bank_reconciliation_check_lock()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if TG_OP in ('UPDATE', 'DELETE') and OLD.reconciled
+     and bank_reconciliation_month_locked(OLD.bank, OLD.year, OLD.month, OLD.cheque_id, OLD.caisse_entry_id) then
+    raise exception 'Mois verrouillé (% %/%) : rapprochement non modifiable.', OLD.bank, OLD.month, OLD.year;
+  end if;
+  if TG_OP in ('INSERT', 'UPDATE')
+     and bank_reconciliation_month_locked(NEW.bank, NEW.year, NEW.month, NEW.cheque_id, NEW.caisse_entry_id) then
+    raise exception 'Mois verrouillé (% %/%) : rapprochement non modifiable.', NEW.bank, NEW.month, NEW.year;
+  end if;
+  return case when TG_OP = 'DELETE' then OLD else NEW end;
+end;
+$$;
+
+drop trigger if exists bank_reconciliation_check_lock on bank_reconciliation;
+create trigger bank_reconciliation_check_lock
+  before insert or update or delete on bank_reconciliation
+  for each row execute function bank_reconciliation_check_lock();
+
+-- Mois verrouillé : solde du relevé figé (seul le déverrouillage passe).
+create or replace function bank_reconciliation_months_check_lock()
+returns trigger
+language plpgsql
+as $$
+begin
+  if OLD.locked and NEW.locked then
+    raise exception 'Mois verrouillé : solde du relevé non modifiable.';
+  end if;
+  NEW.updated_at := now();
+  return NEW;
+end;
+$$;
+
+drop trigger if exists bank_reconciliation_months_check_lock on bank_reconciliation_months;
+create trigger bank_reconciliation_months_check_lock
+  before update on bank_reconciliation_months
+  for each row execute function bank_reconciliation_months_check_lock();
+
+alter publication supabase_realtime add table bank_reconciliation;
+alter publication supabase_realtime add table bank_reconciliation_months;
+
+-- ============================================================
+-- AJOUT 2026-10-15 (3) : FICHE CLIENT -- colonnes attendues par le suivi des
+-- comptes clients récurrents (toutes déjà ajoutées plus haut ; rappel
+-- idempotent). Solde = clients.balance (tenu par
+-- sync_client_balance_from_invoice). Le "code client" est client_code.
+-- ============================================================
+alter table clients add column if not exists client_code text unique;
+alter table clients add column if not exists nif text;
+alter table clients add column if not exists nis text;
+alter table clients add column if not exists address text;
+alter table clients add column if not exists phone text;

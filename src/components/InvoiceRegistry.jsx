@@ -5,7 +5,7 @@ import { isLocked, LOCK_MESSAGE } from '../lib/lock'
 import { applyExportFilters, buildExportFilename } from '../lib/exportFilters'
 import { useAuth } from '../lib/auth'
 import { formatDateTime } from '../lib/dateFormat'
-import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES, isInvoicePaid } from '../lib/invoicePayment'
+import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES, isInvoicePaid, formatInvoiceBon } from '../lib/invoicePayment'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -14,6 +14,7 @@ import PrintHeader from './PrintHeader'
 import { periodLabel as formatPeriodLabel, todayISO } from '../lib/period'
 import PrintSelectionModal from './PrintSelectionModal'
 import LinkedRecordModal from './LinkedRecordModal'
+import BnpRegularizeModal from './BnpRegularizeModal'
 import { printInvoices, INVOICE_PRINT_MODES } from '../lib/printRegistry'
 
 function formatDA(value) {
@@ -36,6 +37,8 @@ export default function InvoiceRegistry({ entityFilter }) {
   const [printOpen, setPrintOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [paymentFilter, setPaymentFilter] = useState('')
+  const [bonFilter, setBonFilter] = useState('')
+  const [regularizing, setRegularizing] = useState(null)
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [editingId, setEditingId] = useState(null)
@@ -142,6 +145,7 @@ export default function InvoiceRegistry({ entityFilter }) {
     const q = query.trim().toLowerCase()
     return entries.filter((e) => {
       if (paymentFilter && e.payment_status !== paymentFilter) return false
+      if (bonFilter && e.bon_type !== bonFilter) return false
       if (startDate && e.entry_date < startDate) return false
       if (endDate && e.entry_date > endDate) return false
       if (!q) return true
@@ -149,7 +153,7 @@ export default function InvoiceRegistry({ entityFilter }) {
         String(field ?? '').toLowerCase().includes(q)
       )
     })
-  }, [entries, query, paymentFilter, startDate, endDate])
+  }, [entries, query, paymentFilter, bonFilter, startDate, endDate])
 
   const totals = useMemo(() => {
     return filtered.reduce(
@@ -169,6 +173,7 @@ export default function InvoiceRegistry({ entityFilter }) {
     const filterParts = []
     if (query.trim()) filterParts.push(`Recherche : "${query.trim()}"`)
     if (paymentFilter) filterParts.push(`Paiement : ${paymentFilter}`)
+    if (bonFilter) filterParts.push(`Bon : ${bonFilter}`)
     if (startDate) filterParts.push(`Du ${startDate}`)
     if (endDate) filterParts.push(`Au ${endDate}`)
 
@@ -178,6 +183,7 @@ export default function InvoiceRegistry({ entityFilter }) {
       filters: filterParts.join(' — '),
       columns: [
         { key: 'invoice_number', label: 'N° Facture' },
+        { key: 'bon_label', label: 'Bon' },
         { key: 'entry_date', label: 'Date' },
         { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
         { key: 'client_name', label: 'Client' },
@@ -206,6 +212,7 @@ export default function InvoiceRegistry({ entityFilter }) {
       rows: filtered.map((e) => ({
         ...e,
         designation_label: designationLabel(e),
+        bon_label: formatInvoiceBon(e),
         client_code: clientCodeOf(e, clientInfoByName) ?? '',
       })),
       totals: {
@@ -554,6 +561,15 @@ export default function InvoiceRegistry({ entityFilter }) {
               </option>
             ))}
           </select>
+          <select
+            value={bonFilter}
+            onChange={(e) => setBonFilter(e.target.value)}
+            className="min-h-11 rounded-lg border border-border bg-bg-soft px-3 py-2 text-ink outline-none focus:border-terracotta"
+          >
+            <option value="">Bon : tous</option>
+            <option value="BP">BP (payés)</option>
+            <option value="BNP">BNP (à régulariser)</option>
+          </select>
           <input
             type="date"
             value={startDate}
@@ -646,6 +662,7 @@ export default function InvoiceRegistry({ entityFilter }) {
               <thead>
                 <tr className="border-b border-border bg-bg-soft text-left text-ink-muted">
                   <Th sticky>N° Facture</Th>
+                  <Th>Bon</Th>
                   <Th>Entité</Th>
                   <Th>Date</Th>
                   <Th>Saisie le</Th>
@@ -691,8 +708,12 @@ export default function InvoiceRegistry({ entityFilter }) {
                       onOpenCheque={setLinkedChequeId}
                     />
                   ) : (
-                    <tr key={entry.id} className="border-b border-border last:border-0">
+                    <tr key={entry.id} className={`border-b border-border last:border-0 ${entry.bon_type === 'BNP' ? 'row-bnp' : ''}`}>
                       <Td sticky>{entry.invoice_number}</Td>
+                      <Td>
+                        <BonBadge entry={entry} />
+                        {entry.bank_reference && <span className="ml-1 text-xs text-ink-muted">{entry.bank_reference}</span>}
+                      </Td>
                       <Td>{entry.entity ?? '—'}</Td>
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
@@ -745,7 +766,16 @@ export default function InvoiceRegistry({ entityFilter }) {
                         )}
                       </Td>
                       <Td className="no-print">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 pointer-coarse:gap-3">
+                          {entry.bon_type === 'BNP' && !isViewer && (
+                            <button
+                              type="button"
+                              onClick={() => setRegularizing(entry)}
+                              className="rounded border border-warning px-2 py-1 font-display text-warning hover:bg-warning-bg pointer-coarse:min-h-12 pointer-coarse:px-3"
+                            >
+                              Régulariser
+                            </button>
+                          )}
                           <select
                             value=""
                             onChange={(e) => e.target.value && setInvoicePrint({ mode: e.target.value, rows: [entry] })}
@@ -775,6 +805,12 @@ export default function InvoiceRegistry({ entityFilter }) {
       )}
 
       <LinkedRecordModal type="cheque" id={linkedChequeId} onClose={() => setLinkedChequeId(null)} />
+
+      <BnpRegularizeModal
+        invoice={regularizing}
+        onClose={() => setRegularizing(null)}
+        onDone={(fresh) => fresh && setEntries((current) => current.map((e) => (e.id === fresh.id ? fresh : e)))}
+      />
 
       <ExportFilterModal
         open={exportModalOpen}
@@ -853,6 +889,21 @@ function InvoicePrintMenu({ onSelect }) {
   )
 }
 
+// Badge du type de bon : vert BP (payé), orange BNP (créance à régulariser).
+function BonBadge({ entry }) {
+  if (!entry.bon_type) return '—'
+  const isBnp = entry.bon_type === 'BNP'
+  return (
+    <span
+      className={`inline-block rounded-full border px-2 py-0.5 font-mono text-xs whitespace-nowrap ${
+        isBnp ? 'border-warning/60 bg-warning-bg text-warning' : 'border-success/60 bg-success-bg text-success'
+      }`}
+    >
+      {formatInvoiceBon(entry)}
+    </span>
+  )
+}
+
 function PaidBadge({ status }) {
   const paid = isInvoicePaid(status)
   return (
@@ -889,6 +940,7 @@ function EditRow({ draft, onChange, onSave, onCancel, bankSuggestions, paymentTy
       <Td sticky="bg-bg-soft">
         <input type="text" value={draft.invoice_number} onChange={(e) => set('invoice_number', e.target.value)} className={editInputClass} />
       </Td>
+      <Td>{formatInvoiceBon(draft) || '—'}</Td>
       <Td>{draft.entity ?? '—'}</Td>
       <Td>
         <input type="date" value={draft.entry_date} onChange={(e) => set('entry_date', e.target.value)} className={editInputClass} />

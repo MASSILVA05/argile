@@ -4,12 +4,14 @@ import { notifyInvoiceEntry } from '../lib/ntfy'
 import { sendInvoiceEmail } from '../lib/email'
 import { getSession } from '../lib/auth'
 import { ENTITIES } from '../lib/tvaPayment'
-import { PAYMENT_STATUSES, DESIGNATIONS, PAYMENT_TYPES } from '../lib/invoicePayment'
+import { DESIGNATIONS, PAYMENT_TYPES, BON_TYPES, BP_PAYMENT_STATUSES, formatBonNumber, formatInvoiceBon } from '../lib/invoicePayment'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
 
 const emptyDraft = {
+  bon_type: 'BNP',
+  bank_reference: '',
   invoice_number: '',
   entry_date: todayISO(),
   client_name: '',
@@ -56,6 +58,11 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
   const [advanceInfo, setAdvanceInfo] = useState(null)
   const [clientPlates, setClientPlates] = useState([])
   const [previousBalanceTouched, setPreviousBalanceTouched] = useState(false)
+  // Prochains n° BP / BNP (aperçu uniquement : le n° définitif est attribué
+  // par le trigger invoices_assign_bon_number à l'enregistrement).
+  const [nextBonNumbers, setNextBonNumbers] = useState({ BP: null, BNP: null })
+  // Historique rapide du client : factures du mois en cours.
+  const [monthStats, setMonthStats] = useState(null)
   // Nom du client dont code/NIF/NIS/adresse ont été pré-remplis -- permet de
   // vider ces champs si le nom saisi ne correspond plus à ce client (sans
   // effacer ce que le gestionnaire a tapé pour un nouveau client).
@@ -83,11 +90,12 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       setClientInfo(null)
       setAdvanceInfo(null)
       setClientPlates([])
+      setMonthStats(null)
       return
     }
     let cancelled = false
     const id = setTimeout(async () => {
-      const [{ data: clientByName }, { data: clientByCode }, { data: advances }, { data: invoiceRows }] = await Promise.all([
+      const [{ data: clientByName }, { data: clientByCode }, { data: advances }, { data: invoiceRows }, { data: monthRows }] = await Promise.all([
         supabase
           .from('clients')
           .select(CLIENT_LOOKUP_FIELDS)
@@ -100,6 +108,7 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
           .maybeSingle(),
         supabase.from('client_advances').select('bons_remaining').ilike('client_name', name).gt('bons_remaining', 0),
         supabase.from('invoices').select('truck_plate').ilike('client_name', name).not('truck_plate', 'is', null),
+        supabase.from('invoices').select('montant_solde').ilike('client_name', name).gte('entry_date', `${todayISO().slice(0, 7)}-01`),
       ])
       if (cancelled) return
       const client = clientByName ?? clientByCode
@@ -126,6 +135,10 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       const bonsRemaining = (advances ?? []).reduce((sum, a) => sum + (a.bons_remaining || 0), 0)
       setAdvanceInfo(bonsRemaining > 0 ? { bonsRemaining } : null)
       setClientPlates(dedupe(invoiceRows?.map((r) => r.truck_plate)))
+      setMonthStats({
+        count: monthRows?.length ?? 0,
+        total: (monthRows ?? []).reduce((sum, r) => sum + (Number(r.montant_solde) || 0), 0),
+      })
     }, 400)
     return () => {
       cancelled = true
@@ -162,7 +175,19 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
     return [...new Set((list ?? []).filter(Boolean))]
   }
 
+  async function loadNextBonNumbers() {
+    const [{ data: bpRow }, { data: bnpRow }] = await Promise.all([
+      supabase.from('invoices').select('bon_number_bp').not('bon_number_bp', 'is', null).order('bon_number_bp', { ascending: false }).limit(1),
+      supabase.from('invoices').select('bon_number_bnp').not('bon_number_bnp', 'is', null).order('bon_number_bnp', { ascending: false }).limit(1),
+    ])
+    setNextBonNumbers({
+      BP: (bpRow?.[0]?.bon_number_bp ?? 0) + 1,
+      BNP: (bnpRow?.[0]?.bon_number_bnp ?? 0) + 1,
+    })
+  }
+
   async function loadSuggestions() {
+    loadNextBonNumbers()
     const [{ data: clientRows }, { data: invoiceRows }] = await Promise.all([
       supabase.from('clients').select('name, client_code').order('name'),
       supabase
@@ -193,6 +218,16 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
 
   function update(field, value) {
     setDraft((d) => ({ ...d, [field]: value }))
+  }
+
+  // Le type de bon fixe le statut de paiement initial : BNP = 'Non payé'
+  // (crédit, à régulariser depuis le registre), BP = mode de règlement choisi.
+  function updateBonType(value) {
+    setDraft((d) => ({
+      ...d,
+      bon_type: value,
+      payment_status: value === 'BNP' ? 'Non payé' : d.payment_status === 'Non payé' ? 'Espèces' : d.payment_status,
+    }))
   }
 
   // Code client choisi dans l'autocomplétion : sélectionne le client
@@ -234,6 +269,9 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
     if (qtyB8 > 0 && draft.price_b8 === '') return 'Le prix unitaire B8 est obligatoire.'
     if (qtyB12 > 0 && draft.price_b12 === '') return 'Le prix unitaire B12 est obligatoire.'
     if (qtyH > 0 && draft.price_h === '') return 'Le prix unitaire Autre (H) est obligatoire.'
+    if (draft.bon_type === 'BP' && draft.payment_status === 'Non payé') {
+      return 'Un bon payé (BP) doit avoir un mode de paiement.'
+    }
     if (draft.payment_status === 'Chèque' && !draft.cheque_number.trim()) {
       return 'Le n° de chèque est obligatoire.'
     }
@@ -340,6 +378,8 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
     }
 
     const payload = {
+      bon_type: draft.bon_type,
+      bank_reference: draft.bank_reference.trim() || null,
       invoice_number: invoiceNumber,
       entry_date: draft.entry_date,
       entry_time: formatHHMM(new Date()),
@@ -437,7 +477,9 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
         entry_date: d.entry_date,
         entity: d.entity,
       }))
-      setSuccess(`Facture n° ${invoiceNumber} enregistrée.`)
+      setMonthStats(null)
+      loadNextBonNumbers()
+      setSuccess(`Facture n° ${invoiceNumber} enregistrée — ${formatInvoiceBon(data)}.`)
     } catch (err) {
       setError(`Erreur d'enregistrement : ${err.message}`)
     } finally {
@@ -447,6 +489,8 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      <ClientSummaryBanner info={clientInfo} monthStats={monthStats} />
+
       {canChooseEntity && (
         <Field label="Entité" required>
           <select value={draft.entity} onChange={(e) => update('entity', e.target.value)} className={inputClass}>
@@ -474,6 +518,30 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
             onChange={(e) => update('entry_date', e.target.value)}
             className={inputClass}
             required
+          />
+        </Field>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Type de bon" required>
+          <select value={draft.bon_type} onChange={(e) => updateBonType(e.target.value)} className={inputClass}>
+            {BON_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <span className={`text-sm font-display ${draft.bon_type === 'BNP' ? 'text-warning' : 'text-success'}`}>
+            N° {formatBonNumber(draft.bon_type, nextBonNumbers[draft.bon_type]) || draft.bon_type}
+            <span className="ml-1 text-xs font-normal text-ink-muted">(attribué à l'enregistrement)</span>
+          </span>
+        </Field>
+        <Field label="Référence bancaire / BL">
+          <input
+            type="text"
+            value={draft.bank_reference}
+            onChange={(e) => update('bank_reference', e.target.value)}
+            className={inputClass}
+            autoComplete="off"
+            placeholder="N° chèque, N° virement, BL 1612… (optionnel)"
           />
         </Field>
       </div>
@@ -818,17 +886,27 @@ export default function InvoiceForm({ entity, canChooseEntity }) {
       </Field>
 
       <Field label="Mode de paiement">
-        <select
-          value={draft.payment_status}
-          onChange={(e) => update('payment_status', e.target.value)}
-          className={inputClass}
-        >
-          {PAYMENT_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+        {draft.bon_type === 'BNP' ? (
+          <input
+            type="text"
+            value="Non payé — crédit à régulariser"
+            readOnly
+            disabled
+            className={`${inputClass} cursor-not-allowed text-warning`}
+          />
+        ) : (
+          <select
+            value={draft.payment_status}
+            onChange={(e) => update('payment_status', e.target.value)}
+            className={inputClass}
+          >
+            {BP_PAYMENT_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
 
       {draft.payment_status === 'Chèque' && (
@@ -901,7 +979,7 @@ function Field({ label, required, children }) {
   )
 }
 
-const CLIENT_LOOKUP_FIELDS = 'name, client_code, nif, nis, address, city, total_invoiced, total_paid, balance'
+const CLIENT_LOOKUP_FIELDS = 'name, client_code, nif, nis, address, city, phone, total_invoiced, total_paid, balance'
 
 function formatDA(value) {
   return Number(value || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })
@@ -925,6 +1003,29 @@ function ClientInfoPanel({ info }) {
       <p className="text-xs text-ink-muted">
         Total facturé : {formatDA(info.total_invoiced)} DA | Total réglé : {formatDA(info.total_paid)} DA
       </p>
+    </div>
+  )
+}
+
+// Bandeau en haut du formulaire pour un client récurrent : solde actuel
+// (rouge si débiteur) + historique rapide du mois en cours.
+function ClientSummaryBanner({ info, monthStats }) {
+  if (!info?.found) return null
+  const debtor = Number(info.balance) > 0
+  return (
+    <div className={`rounded-lg border px-4 py-3 ${debtor ? 'border-error/50 bg-error-bg' : 'border-success/50 bg-success-bg'}`}>
+      <p className="font-display text-base text-ink">
+        Client : {info.name}
+        {info.client_code && <span className="ml-2 font-mono text-xs text-ink-muted">({info.client_code})</span>}
+        {' — '}
+        <span className={debtor ? 'text-error' : 'text-success'}>Solde : {formatDA(info.balance)} DA</span>
+      </p>
+      {monthStats && (
+        <p className="text-sm text-ink-muted">
+          Ce mois : {monthStats.count} facture{monthStats.count > 1 ? 's' : ''} — {formatDA(monthStats.total)} DA
+          {info.phone && <span className="ml-2">• Tél : {info.phone}</span>}
+        </p>
+      )}
     </div>
   )
 }

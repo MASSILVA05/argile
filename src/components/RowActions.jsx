@@ -38,14 +38,14 @@ export default function RowActions({ entry, onEdit, onDelete, onLockedAttempt })
   const lockedClass = locked ? 'cursor-not-allowed opacity-40' : ''
 
   return (
-    <div className="no-print flex gap-2">
+    <div className="no-print flex gap-2 pointer-coarse:gap-3">
       <button
         type="button"
         onClick={locked ? () => onLockedAttempt('edit') : onEdit}
         title={lockedTitle ?? 'Modifier'}
         className={`flex items-center gap-1 rounded border border-border px-2 py-1 text-ink-muted hover:border-ocre hover:text-ocre ${lockedClass}`}
       >
-        <EditIcon className="h-4 w-4 shrink-0" />
+        <EditIcon className="h-4 w-4 shrink-0 pointer-coarse:h-6 pointer-coarse:w-6" />
         <span className="hidden sm:inline">Modifier</span>
       </button>
       <button
@@ -54,7 +54,7 @@ export default function RowActions({ entry, onEdit, onDelete, onLockedAttempt })
         title={lockedTitle ?? 'Supprimer'}
         className={`flex items-center gap-1 rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 ${lockedClass}`}
       >
-        <DeleteIcon className="h-4 w-4 shrink-0" />
+        <DeleteIcon className="h-4 w-4 shrink-0 pointer-coarse:h-6 pointer-coarse:w-6" />
         <span className="hidden sm:inline">Supprimer</span>
       </button>
     </div>

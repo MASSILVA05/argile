@@ -2,6 +2,7 @@ import { useState } from 'react'
 import ChequeForm from './ChequeForm'
 import ChequeRegistry from './ChequeRegistry'
 import ChequeSuivi from './ChequeSuivi'
+import BrouillardBanque from './BrouillardBanque'
 import { useAuth, salesEntityAccessForRole } from '../lib/auth'
 import { ENTITIES } from '../lib/tvaPayment'
 
@@ -9,6 +10,7 @@ const TABS = [
   { id: 'form', label: 'Saisie' },
   { id: 'registry', label: 'Registre' },
   { id: 'suivi', label: 'Suivi' },
+  { id: 'brouillard', label: 'Brouillard Banque' },
 ]
 
 export default function ChequesPage() {
@@ -59,6 +61,7 @@ export default function ChequesPage() {
       {view === 'form' && <ChequeForm entity={formEntity} canChooseEntity={canChooseEntity} />}
       {view === 'registry' && <ChequeRegistry entityFilter={entityFilter} />}
       {view === 'suivi' && <ChequeSuivi entityFilter={entityFilter} />}
+      {view === 'brouillard' && <BrouillardBanque entityFilter={entityFilter} />}
     </div>
   )
 }

@@ -2,9 +2,12 @@ import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import { DATA_ROW_HEIGHT, AMOUNT_ROW_FILL, todayISO, styleHeaderRow, styleDataRow, styleTotalsRow } from './excelHelpers'
 import { formatDateTime } from './dateFormat'
+import { formatInvoiceBon } from './invoicePayment'
 
 const COLUMNS = [
   { header: 'N° Facture', key: 'invoice_number', width: 16 },
+  { header: 'Bon', key: 'bon', width: 12 },
+  { header: 'Réf. bancaire', key: 'bank_reference', width: 18 },
   { header: 'Entité', key: 'entity', width: 14 },
   { header: 'Date', key: 'entry_date', width: 14 },
   { header: 'Saisie le', key: 'created_at', width: 18 },
@@ -47,6 +50,8 @@ export async function downloadInvoicesExcel(entries, { filename } = {}) {
   for (const entry of entries) {
     const row = sheet.addRow({
       invoice_number: entry.invoice_number,
+      bon: formatInvoiceBon(entry),
+      bank_reference: entry.bank_reference ?? '',
       entity: entry.entity ?? '',
       entry_date: entry.entry_date,
       created_at: formatDateTime(entry.created_at),
