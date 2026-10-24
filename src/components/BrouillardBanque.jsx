@@ -91,6 +91,7 @@ export default function BrouillardBanque({ entityFilter }) {
             .eq('cheque_bank', bank)
             .in('payment_mode', BANK_CAISSE_MODES)
             .is('linked_cheque_id', null)
+            .neq('operation_type', 'Transfert')
             .lte('entry_date', end)
             .order('entry_date')
           if (entityFilter) q = q.eq('entity', entityFilter)

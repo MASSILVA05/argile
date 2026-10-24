@@ -13,6 +13,9 @@ import {
   isInflow,
   signedAmount,
   formatDA,
+  caisseTotals,
+  runningBalances,
+  operationTypeLabel,
 } from '../lib/caisse'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
@@ -139,18 +142,20 @@ export default function CaisseRegistry({ entityFilter }) {
     })
   }, [entries, query, typeFilter, categoryFilter, dateFilter, paymentFilter])
 
-  const totals = useMemo(() => {
-    const sumBy = (type) =>
-      filtered.filter((e) => e.operation_type === type).reduce((s, e) => s + (Number(e.amount) || 0), 0)
-    const encaissements = sumBy('Encaissement')
-    const decaissements = sumBy('Décaissement')
-    const depenses = sumBy('Dépense')
-    return { encaissements, decaissements, depenses, solde: encaissements - decaissements - depenses }
-  }, [filtered])
+  const totals = useMemo(() => caisseTotals(filtered), [filtered])
+
+  // Solde cumulé de la caisse après chaque ligne (toutes les lignes chargées,
+  // indépendamment des filtres de recherche) -- imprimé sur le reçu.
+  const balances = useMemo(() => runningBalances(entries), [entries])
 
   // Ligne enrichie pour le reçu de caisse imprimé (printCaisseReceipt).
   function receiptEntry(e) {
-    return { ...e, category_label: categoryLabel(e), linked_invoice_number: invoicesById.get(e.linked_invoice_id)?.invoice_number }
+    return {
+      ...e,
+      category_label: categoryLabel(e),
+      linked_invoice_number: invoicesById.get(e.linked_invoice_id)?.invoice_number,
+      balance_after: balances.get(e.id),
+    }
   }
 
   function buildPrintConfig() {
@@ -170,7 +175,7 @@ export default function CaisseRegistry({ entityFilter }) {
         { key: 'entry_date', label: 'Date' },
         { key: 'entry_time', label: 'Heure', format: (v) => formatTime(v) },
         { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
-        { key: 'operation_type', label: 'Type' },
+        { key: 'operation_type', label: 'Type', format: (v) => operationTypeLabel(v) },
         { key: 'description', label: 'Motif' },
         { key: 'signed_amount', label: 'Montant (DA)', align: 'right', format: (v) => formatDA(v) },
         { key: 'beneficiary', label: 'Fournisseur/Bénéficiaire' },
@@ -192,6 +197,7 @@ export default function CaisseRegistry({ entityFilter }) {
         { bon_number: 'TOTAL ENCAISSEMENTS', signed_amount: totals.encaissements },
         { bon_number: 'TOTAL DÉCAISSEMENTS', signed_amount: totals.decaissements },
         { bon_number: 'TOTAL DÉPENSES', signed_amount: totals.depenses },
+        { bon_number: 'DONT TRANSFERTS', signed_amount: totals.transferts },
         { bon_number: 'SOLDE', signed_amount: totals.solde },
       ],
     }
@@ -414,7 +420,7 @@ export default function CaisseRegistry({ entityFilter }) {
             <option value="">Tous les types</option>
             {OPERATION_TYPES.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {operationTypeLabel(t)}
               </option>
             ))}
           </select>
@@ -508,7 +514,8 @@ export default function CaisseRegistry({ entityFilter }) {
           <div className="mb-4 flex flex-wrap gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
             <Total label="Total encaissements" value={totals.encaissements} className="text-green-500" />
             <Total label="Total décaissements" value={totals.decaissements} className="text-terracotta" />
-            <Total label="Total dépenses" value={totals.depenses} className="text-terracotta" />
+            <Total label="Total dépenses (transferts inclus)" value={totals.depenses} className="text-terracotta" />
+            <Total label="Dont transferts de fond" value={totals.transferts} className="text-terracotta" />
             <Total
               label="Solde"
               value={totals.solde}
@@ -559,7 +566,7 @@ export default function CaisseRegistry({ entityFilter }) {
                       <Td>{entry.entry_date}</Td>
                       <Td>{formatTime(entry.entry_time)}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
-                      <Td>{entry.operation_type}</Td>
+                      <Td>{operationTypeLabel(entry.operation_type)}</Td>
                       <Td className="max-w-[220px] truncate" title={entry.description}>
                         {entry.description}
                       </Td>
@@ -705,7 +712,7 @@ function EditRow({ draft, onChange, onSave, onCancel, linkedInvoice, onOpenInvoi
         <select value={draft.operation_type} onChange={(e) => set('operation_type', e.target.value)} className={editInputClass}>
           {OPERATION_TYPES.map((t) => (
             <option key={t} value={t}>
-              {t}
+              {operationTypeLabel(t)}
             </option>
           ))}
         </select>

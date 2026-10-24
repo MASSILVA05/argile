@@ -1,4 +1,5 @@
 import { COMPANY_INFO } from '../lib/printRegistry'
+import { ActiveSessionsButton } from './ActiveSessionsModal'
 
 function formatRemaining(expiresAt, now) {
   const ms = expiresAt - now
@@ -72,6 +73,7 @@ export default function Header({ title, onMenuClick, session, now, pending, onLo
           >
             {theme === 'dark' ? <SunIcon className="h-4 w-4" /> : <MoonIcon className="h-4 w-4" />}
           </button>
+          {session.role === 'admin' && <ActiveSessionsButton currentSessionId={session.sessionId} />}
           <span className="hidden sm:inline">{session.username}</span>
           <span className="whitespace-nowrap">Session : {formatRemaining(session.expiresAt, now)}</span>
           <button

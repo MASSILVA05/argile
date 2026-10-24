@@ -95,20 +95,78 @@ export function getSession() {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-export function saveSession(username, role, entity = null) {
+// sessionId / serverExpiresAt : renvoyés par request_login_code ou
+// verify_login_code (session créée côté serveur dans active_sessions).
+export function saveSession(username, role, entity = null, { sessionId = null, serverExpiresAt = null } = {}) {
   const loginTime = Date.now()
   // Comptes sans restriction d'horaire (admins + Karim) : session de 24h à
-  // partir de la connexion, au lieu d'expirer à 17h le jour même.
-  const expiresAt = UNRESTRICTED_HOURS_USERS.includes(username)
-    ? loginTime + DAY_MS
-    : nextWorkEndTimestamp(new Date(loginTime))
-  const session = { username, role, entity, loginTime, expiresAt }
+  // partir de la connexion, au lieu d'expirer à 17h le jour même. La date
+  // d'expiration du serveur (même règle) fait foi quand elle est fournie.
+  const expiresAt = serverExpiresAt
+    ?? (UNRESTRICTED_HOURS_USERS.includes(username)
+      ? loginTime + DAY_MS
+      : nextWorkEndTimestamp(new Date(loginTime)))
+  const session = { username, role, entity, loginTime, expiresAt, sessionId }
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
   return session
 }
 
 export function clearSession() {
   localStorage.removeItem(SESSION_KEY)
+}
+
+// ============================================================
+// Sessions actives (table active_sessions, voir SECURITY.md) : la session
+// est créée PAR LA BASE à la connexion (request_login_code /
+// verify_login_code), son id sert de jeton (session.sessionId, envoyé dans
+// l'en-tête x-session-token par lib/supabase.js). La table n'est pas
+// lisible avec la clé anon : tout passe par des RPC.
+// Heartbeat toutes les 60 s (App.jsx) : session_heartbeat renvoie le
+// username / rôle faisant foi côté serveur -- un rôle modifié à la main dans
+// le localStorage, une session révoquée par un admin, expirée, ou un compte
+// désactivé entraînent la déconnexion.
+// ============================================================
+export const ACTIVE_SESSION_ONLINE_MS = 5 * 60_000
+export const ACTIVE_SESSION_STALE_MS = 10 * 60_000
+
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+}
+
+function browserName() {
+  const ua = navigator.userAgent
+  if (/Edg\//.test(ua)) return 'Edge'
+  if (/OPR\/|Opera/.test(ua)) return 'Opera'
+  if (/SamsungBrowser/.test(ua)) return 'Samsung Internet'
+  if (/Firefox|FxiOS/.test(ua)) return 'Firefox'
+  if (/Chrome|CriOS/.test(ua)) return 'Chrome'
+  if (/Safari/.test(ua)) return 'Safari'
+  return 'Navigateur inconnu'
+}
+
+export function deviceInfo() {
+  return `${isMobileDevice() ? 'Mobile' : 'Desktop'} — ${browserName()}`
+}
+
+// Heartbeat : 'ok' (session confirmée, ou erreur réseau -- on ne déconnecte
+// pas sur une simple coupure), 'revoked' (session invalide côté serveur ou
+// username/rôle différents de ceux du localStorage), 'legacy' (session sans
+// jeton serveur, antérieure au suivi).
+export async function touchActiveSession() {
+  const session = getSession()
+  if (!session) return 'ok'
+  if (!session.sessionId) return 'legacy'
+  const { data, error } = await supabase.rpc('session_heartbeat', { p_session_id: session.sessionId })
+  if (error) return 'ok'
+  if (!data?.valid) return 'revoked'
+  if (data.username !== session.username || data.role !== session.role) return 'revoked'
+  return 'ok'
+}
+
+// Déconnexion : supprime la session côté serveur puis la session locale.
+export async function logout(sessionId = getSession()?.sessionId) {
+  clearSession()
+  if (sessionId) await supabase.rpc('end_session', { p_session_id: sessionId })
 }
 
 // admin            : tout accès, seul rôle pouvant utiliser le code admin (déblocage 72h)
@@ -162,6 +220,9 @@ export function clearSession() {
 //                    Accès : rôle 'admin' (Ahcene, Massilva, Mazigh) et rôle
 //                    'magasin_only' (Aziz).
 //
+// disabled (Bilal depuis le 2026-10-24) : connexion refusée ("Compte
+//                    désactivé"), aucun onglet.
+//
 // station : onglet "Station" (station-service) -- ventes carburant /
 //                    lubrifiants / gaz, récapitulatif par client, salaires,
 //                    import. Accès : rôle 'admin' (Ahcene, Massilva, Mazigh)
@@ -202,6 +263,7 @@ export const ROLE_TABS = {
   youcef_role: ['fuel', 'sand', 'invoices', 'caisse', 'cheques'],
   magasin_only: ['magasin', 'residence'],
   station_only: ['station'],
+  disabled: [],
 }
 
 export function allowedTabsForRole(role) {
@@ -253,13 +315,21 @@ export async function requestLogin(username, password) {
   const { data, error } = await supabase.rpc('request_login_code', {
     p_username: username,
     p_password_hash: passwordHash,
+    p_device_info: deviceInfo(),
   })
+  // Rate limiting : "Trop de tentatives. Réessayez dans 15 minutes." arrive
+  // ici comme une erreur RPC.
   if (error) return { success: false, message: error.message }
+  // Compte désactivé (rôle 'disabled') : refusé aussi côté serveur par
+  // request_login_code ; ce contrôle couvre une base pas encore migrée.
+  if (data?.role === 'disabled') return { success: false, message: 'Compte désactivé' }
   return {
     success: !!data?.success,
     requiresVerification: !!data?.requires_verification,
     role: data?.role ?? null,
     entity: data?.entity ?? null,
+    sessionId: data?.session_id ?? null,
+    serverExpiresAt: data?.expires_at ?? null,
     message: data?.message ?? '',
   }
 }
@@ -269,9 +339,17 @@ export async function verifyCode(username, code) {
   const { data, error } = await supabase.rpc('verify_login_code', {
     p_username: username,
     p_code: code,
+    p_device_info: deviceInfo(),
   })
   if (error) return { success: false, message: error.message }
-  return { success: !!data?.success, message: data?.message ?? '' }
+  return {
+    success: !!data?.success,
+    role: data?.role ?? null,
+    entity: data?.entity ?? null,
+    sessionId: data?.session_id ?? null,
+    serverExpiresAt: data?.expires_at ?? null,
+    message: data?.message ?? '',
+  }
 }
 
 // Changement de mot de passe, étape 1 : envoie une demande. Le nouveau mot

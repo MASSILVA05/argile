@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import EntryForm from './components/EntryForm'
 import Registry from './components/Registry'
 import MaintenancePage from './components/MaintenancePage'
@@ -19,7 +19,7 @@ import Header from './components/Header'
 import SideNav from './components/SideNav'
 import InstallPrompt from './components/InstallPrompt'
 import LoginPage from './components/LoginPage'
-import { getSession, clearSession, allowedTabsForRole } from './lib/auth'
+import { getSession, allowedTabsForRole, touchActiveSession, logout } from './lib/auth'
 import { getQueue, onQueueChange, flushQueue } from './lib/offlineQueue'
 import { getStoredTheme, applyTheme } from './lib/theme'
 
@@ -84,23 +84,61 @@ function App() {
     return onQueueChange((queue) => setPending(queue.length))
   }, [session])
 
+  // Id de la ligne active_sessions courante, gardé en mémoire pour pouvoir la
+  // supprimer même après que getSession() a effacé une session expirée.
+  const sessionIdRef = useRef(session?.sessionId ?? null)
+  useEffect(() => {
+    sessionIdRef.current = session?.sessionId ?? null
+  }, [session?.sessionId])
+
   // Session valable jusqu'à 17h (Algérie) du jour en cours : à chaque tick, si
   // la session en localStorage a expiré (getSession() la supprime elle-même
   // dans ce cas), on déconnecte et on revient à l'écran de login.
   useEffect(() => {
     const id = setInterval(() => {
       setNow(Date.now())
-      if (!getSession()) setSession(null)
+      if (!getSession()) {
+        if (sessionIdRef.current) logout(sessionIdRef.current)
+        setSession(null)
+      }
     }, SESSION_CHECK_MS)
     return () => clearInterval(id)
   }, [])
+
+  // Heartbeat active_sessions : au démarrage puis toutes les 60 s. Ligne
+  // supprimée par un admin (ou session antérieure au suivi) -> déconnexion.
+  const loggedIn = session != null
+  useEffect(() => {
+    if (!loggedIn) return
+    let active = true
+    async function beat() {
+      const status = await touchActiveSession()
+      if (!active || status === 'ok') return
+      await logout(null)
+      setSession(null)
+    }
+    // Retour au premier plan (mobile en veille, onglet masqué) : heartbeat
+    // immédiat, pour que la session reste valide côté serveur (les actions
+    // admin exigent un heartbeat de moins de 30 min).
+    function onVisible() {
+      if (document.visibilityState === 'visible') beat()
+    }
+    beat()
+    const id = setInterval(beat, SESSION_CHECK_MS)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      active = false
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [loggedIn])
 
   if (!session) {
     return <LoginPage onLogin={setSession} />
   }
 
   function handleLogout() {
-    clearSession()
+    logout()
     setSession(null)
   }
 

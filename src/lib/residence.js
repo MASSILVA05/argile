@@ -21,7 +21,8 @@ export const ACTIVE_RESERVATION_STATUTS = ['En attente', 'Confirmée', 'En cours
 export const RESA_PAYMENT_MODES = ['Espèces', 'Chèque', 'Virement', 'BaridiMob']
 
 // Caisse résidence — mêmes libellés que la caisse magasin, catégories propres.
-export const RC_OPERATION_TYPES = ['Encaissement', 'Décaissement', 'Dépense']
+// 'Transfert' = transfert de fond interne (voir lib/caisse.js).
+export const RC_OPERATION_TYPES = ['Encaissement', 'Décaissement', 'Dépense', 'Transfert']
 export const RC_PAYMENT_MODES = ['Espèces', 'Chèque', 'Virement', 'BaridiMob']
 export const RC_CATEGORIES = ['Client', 'Ménage', 'Entretien', 'Réparation', 'Frais généraux', 'Autre']
 

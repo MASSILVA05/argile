@@ -2,7 +2,8 @@
 // de la page Magasin). Table `magasin_caisse`, totalement séparée de la
 // caisse principale de la briqueterie (`caisse_entries`).
 
-export const MC_OPERATION_TYPES = ['Encaissement', 'Décaissement', 'Dépense']
+// 'Transfert' = transfert de fond interne (voir lib/caisse.js).
+export const MC_OPERATION_TYPES = ['Encaissement', 'Décaissement', 'Dépense', 'Transfert']
 export const MC_PAYMENT_MODES = ['Espèces', 'Chèque', 'Versement', 'Virement']
 export const MC_CATEGORIES = ['Fournisseur', 'Client', 'Salaire', 'Frais généraux', 'Autre']
 

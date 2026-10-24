@@ -7,7 +7,8 @@
 //   - caisse_entries réglées par Chèque / Versement / Virement sur cette
 //     banque (cheque_bank) et NON générées par un chèque (linked_cheque_id
 //     null, sinon doublon avec le chèque) : Encaissement = Crédit,
-//     Décaissement / Dépense = Débit.
+//     Décaissement / Dépense = Débit. Transferts de fond exclus (mouvement
+//     interne à la caisse).
 // Pointage : table bank_reconciliation (voir schema.sql).
 
 import ExcelJS from 'exceljs'

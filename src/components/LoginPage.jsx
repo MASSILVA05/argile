@@ -60,7 +60,7 @@ export default function LoginPage({ onLogin }) {
       setStep('code')
       return
     }
-    onLogin(saveSession(username, result.role, result.entity))
+    onLogin(saveSession(username, result.role, result.entity, result))
   }
 
   async function handleCodeSubmit(e) {
@@ -78,7 +78,7 @@ export default function LoginPage({ onLogin }) {
       setError(result.message || 'Code incorrect ou expiré.')
       return
     }
-    onLogin(saveSession(username, pendingRole, pendingEntity))
+    onLogin(saveSession(username, result.role ?? pendingRole, result.entity ?? pendingEntity, result))
   }
 
   function openChangeRequest() {

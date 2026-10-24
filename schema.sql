@@ -8704,3 +8704,658 @@ alter table clients add column if not exists nif text;
 alter table clients add column if not exists nis text;
 alter table clients add column if not exists address text;
 alter table clients add column if not exists phone text;
+
+-- ============================================================
+-- AJOUT 2026-10-24 (1) : TRANSFERT DE FOND (caisses Briqueterie / Magasin /
+-- Résidence). operation_type = 'Transfert' : mouvement interne qui bascule de
+-- l'argent des décaissements vers les dépenses. Côté application (lib/caisse.js
+-- caisseTotals) : compté comme une sortie dans le solde, totalisé avec les
+-- dépenses ("dont transferts"), jamais avec les décaissements ; exclu du
+-- brouillard banque.
+-- ============================================================
+alter table caisse_entries drop constraint if exists caisse_entries_operation_type_check;
+alter table caisse_entries add constraint caisse_entries_operation_type_check
+  check (operation_type in ('Encaissement', 'Décaissement', 'Dépense', 'Transfert'));
+
+alter table magasin_caisse drop constraint if exists magasin_caisse_operation_type_check;
+alter table magasin_caisse add constraint magasin_caisse_operation_type_check
+  check (operation_type in ('Encaissement', 'Décaissement', 'Dépense', 'Transfert'));
+
+alter table residence_caisse drop constraint if exists residence_caisse_operation_type_check;
+alter table residence_caisse add constraint residence_caisse_operation_type_check
+  check (operation_type in ('Encaissement', 'Décaissement', 'Dépense', 'Transfert'));
+
+-- ============================================================
+-- AJOUT 2026-10-24 (2) : SESSIONS ACTIVES (qui est connecté).
+-- Une ligne par connexion (id = sessionId généré côté client et stocké avec
+-- la session en localStorage). Heartbeat toutes les 60 s (last_seen_at).
+-- Statut affiché : 🟢 < 5 min, 🟡 < 10 min, 🔴 au-delà (is_active passé à
+-- false par le client admin). Un admin supprime la ligne pour forcer la
+-- déconnexion (ActiveSessionsModal.jsx) ; la déconnexion volontaire la
+-- supprime aussi.
+-- ============================================================
+create table if not exists active_sessions (
+  id uuid primary key default gen_random_uuid(),
+  username text not null,
+  role text,
+  device_info text,
+  last_seen_at timestamptz not null default now(),
+  logged_in_at timestamptz not null default now(),
+  is_active boolean default true
+);
+
+comment on table active_sessions is 'Sessions applicatives ouvertes (heartbeat 60 s) ; suppression = déconnexion forcée';
+
+create index if not exists active_sessions_username_idx on active_sessions (username);
+create index if not exists active_sessions_active_idx on active_sessions (is_active);
+
+alter table active_sessions enable row level security;
+
+drop policy if exists "Lecture active_sessions" on active_sessions;
+create policy "Lecture active_sessions" on active_sessions for select using (true);
+drop policy if exists "Ajout active_sessions" on active_sessions;
+create policy "Ajout active_sessions" on active_sessions for insert with check (true);
+drop policy if exists "Modif active_sessions" on active_sessions;
+create policy "Modif active_sessions" on active_sessions for update using (true);
+drop policy if exists "Suppr active_sessions" on active_sessions;
+create policy "Suppr active_sessions" on active_sessions for delete using (true);
+
+-- ============================================================
+-- AJOUT 2026-10-24 (3) : COMPTE DÉSACTIVÉ (rôle 'disabled').
+-- request_login_code refuse la connexion ("Compte désactivé") AVANT tout
+-- envoi de code OTP. Reprise à l'identique de la version précédente
+-- (entité TVA, OTP du samedi) + ce contrôle.
+-- ============================================================
+create or replace function request_login_code(p_username text, p_password_hash text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+  v_dow int;
+  v_entity text;
+begin
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null or v_user.password_hash <> p_password_hash then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Identifiants invalides');
+  end if;
+
+  if v_user.role = 'disabled' then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Compte désactivé');
+  end if;
+
+  v_entity := case
+    when p_username = 'Halim' then 'Briqueterie'
+    when p_username = 'AVADOU' then 'AVADOU'
+    else null
+  end;
+
+  if not v_user.requires_verification then
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'entity', v_entity, 'message', 'Connecté');
+  end if;
+
+  -- Jour de la semaine en Algérie (0 = dimanche ... 5 = vendredi, 6 = samedi).
+  v_dow := extract(dow from (now() at time zone 'Africa/Algiers'));
+
+  if v_dow = 5 then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Jour de repos — accès indisponible');
+  end if;
+
+  if v_dow <> 6 then
+    -- Dimanche à jeudi : mot de passe seul suffit, pas de code.
+    return json_build_object('success', true, 'requires_verification', false, 'role', v_user.role, 'entity', v_entity, 'message', 'Connecté');
+  end if;
+
+  -- Samedi : code de vérification requis.
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at)
+  values (p_username, v_code, now() + interval '5 minutes');
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Code de connexion',
+        'message', 'Code de connexion : ' || v_code || ' — Demandé par : ' || p_username,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'requires_verification', true, 'role', v_user.role, 'entity', v_entity, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+
+update app_users set role = 'disabled' where username = 'Bilal';
+-- Ses éventuelles sessions déjà enregistrées : déconnexion au prochain heartbeat.
+delete from active_sessions where username = 'Bilal';
+
+-- ============================================================
+-- SÉCURITÉ PHASE 1 (2026-10-24) -- détails et procédure : SECURITY.md
+-- Ordre : exécuter TOUT ce bloc AVANT de déployer le front correspondant.
+-- ============================================================
+
+create extension if not exists pgcrypto with schema extensions;
+
+-- ------------------------------------------------------------
+-- S1. MOTS DE PASSE EN BCRYPT
+-- Le client envoie toujours sha256(mot de passe) en hex (src/lib/hash.js).
+-- La base ne stocke plus ce sha256 tel quel (il suffisait à se connecter
+-- en cas de fuite de la table) mais bcrypt(sha256) : crypt(p_password_hash,
+-- password_hash) = password_hash. Migration SANS connaître les mots de
+-- passe : on bcrypte les sha256 existants (idempotent : les valeurs déjà au
+-- format bcrypt $2a$/$2b$ sont ignorées). Les mots de passe des
+-- utilisateurs ne changent donc pas.
+-- Réinitialiser un mot de passe à la main (ne JAMAIS commiter la valeur) :
+--   update app_users set password_hash = extensions.crypt(
+--     encode(extensions.digest('NOUVEAU_MDP', 'sha256'), 'hex'), extensions.gen_salt('bf', 10))
+--   where username = '...';
+-- ------------------------------------------------------------
+update app_users
+set password_hash = extensions.crypt(password_hash, extensions.gen_salt('bf', 10))
+where password_hash !~ '^\$2[aby]\$';
+
+comment on column app_users.password_hash is 'bcrypt (pgcrypto, coût 10) du SHA-256 hex envoyé par le client ; vérifié par crypt(p_password_hash, password_hash)';
+
+-- Changement de mot de passe : le nouveau hash est bcrypté avant stockage.
+create or replace function confirm_password_change(p_username text, p_code text)
+returns json
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_row verification_codes%rowtype;
+begin
+  select * into v_row
+  from verification_codes
+  where username = p_username
+    and code = p_code
+    and used = false
+    and expires_at > now()
+    and new_password_hash is not null
+  order by created_at desc
+  limit 1;
+
+  if v_row.id is null then
+    return json_build_object('success', false, 'message', 'Code incorrect ou expiré');
+  end if;
+
+  update verification_codes set used = true where id = v_row.id;
+
+  update app_users
+  set password_hash = extensions.crypt(v_row.new_password_hash, extensions.gen_salt('bf', 10))
+  where username = p_username;
+
+  -- Mot de passe changé : toutes les sessions ouvertes de l'utilisateur tombent.
+  delete from active_sessions where username = p_username;
+
+  return json_build_object('success', true, 'message', 'Mot de passe mis à jour');
+end;
+$$;
+
+-- ------------------------------------------------------------
+-- S2. RATE LIMITING DE LA CONNEXION
+-- Une ligne par tentative (mot de passe ou code OTP). Plus de 5 échecs en
+-- 15 min (depuis le dernier succès) -> exception "Trop de tentatives".
+-- Purge des tentatives de plus de 24h à chaque appel.
+-- ip_hint : x-forwarded-for transmis par l'API Supabase (indicatif).
+-- ------------------------------------------------------------
+create table if not exists login_attempts (
+  id uuid primary key default gen_random_uuid(),
+  username text not null,
+  ip_hint text,
+  attempted_at timestamptz not null default now(),
+  success boolean not null default false
+);
+alter table login_attempts add column if not exists kind text not null default 'password';
+
+create index if not exists login_attempts_username_idx on login_attempts (username, attempted_at desc);
+create index if not exists login_attempts_attempted_at_idx on login_attempts (attempted_at);
+
+comment on table login_attempts is 'Tentatives de connexion (kind = password | otp) pour le rate limiting de request_login_code / verify_login_code';
+
+-- RLS sans aucune policy : invisible et non modifiable avec la clé anon
+-- (seules les fonctions security definer y accèdent).
+alter table login_attempts enable row level security;
+
+create or replace function app_request_ip()
+returns text
+language sql
+stable
+as $$
+  select nullif(split_part(coalesce(
+    nullif(current_setting('request.headers', true), '')::json->>'x-forwarded-for', ''), ',', 1), '')
+$$;
+
+create or replace function app_check_login_rate(p_username text, p_kind text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_last_success timestamptz;
+  v_failures int;
+begin
+  delete from login_attempts where attempted_at < now() - interval '24 hours';
+
+  select max(attempted_at) into v_last_success
+  from login_attempts where username = p_username and success;
+
+  select count(*) into v_failures
+  from login_attempts
+  where username = p_username
+    and kind = p_kind
+    and not success
+    and attempted_at > greatest(now() - interval '15 minutes', coalesce(v_last_success, '-infinity'::timestamptz));
+
+  if v_failures > 5 then
+    raise exception 'Trop de tentatives. Réessayez dans 15 minutes.';
+  end if;
+end;
+$$;
+
+create or replace function app_log_login_attempt(p_username text, p_kind text, p_success boolean)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into login_attempts (username, ip_hint, success, kind)
+  values (p_username, app_request_ip(), p_success, p_kind);
+$$;
+
+-- ------------------------------------------------------------
+-- S3. SESSIONS CÔTÉ SERVEUR
+-- active_sessions.id = jeton de session, généré par la base à la connexion
+-- (request_login_code / verify_login_code), jamais par le client.
+-- La table n'est plus accessible directement avec la clé anon (aucune
+-- policy) : tout passe par des fonctions security definer.
+-- Le front envoie le jeton dans l'en-tête HTTP x-session-token de chaque
+-- requête (src/lib/supabase.js) -> lisible en SQL via current_session_token().
+-- ------------------------------------------------------------
+alter table active_sessions add column if not exists expires_at timestamptz;
+
+drop policy if exists "Lecture active_sessions" on active_sessions;
+drop policy if exists "Ajout active_sessions" on active_sessions;
+drop policy if exists "Modif active_sessions" on active_sessions;
+drop policy if exists "Suppr active_sessions" on active_sessions;
+alter table active_sessions enable row level security;
+
+-- Les sessions créées avant cette migration (id généré côté client) sont
+-- invalidées : chacun se reconnecte une fois.
+delete from active_sessions where expires_at is null;
+
+create or replace function current_session_token()
+returns text
+language sql
+stable
+as $$
+  select nullif(current_setting('request.headers', true), '')::json->>'x-session-token'
+$$;
+
+-- Entité TVA fixe renvoyée à la connexion (inchangé).
+create or replace function app_user_entity(p_username text)
+returns text
+language sql
+immutable
+as $$
+  select case p_username when 'Halim' then 'Briqueterie' when 'AVADOU' then 'AVADOU' else null end
+$$;
+
+-- Fin de session : 24h pour les comptes sans restriction d'horaire, sinon
+-- prochaine échéance de 17h (Algérie) -- même règle que saveSession (auth.js).
+create or replace function app_session_expiry(p_username text)
+returns timestamptz
+language plpgsql
+stable
+as $$
+declare
+  v_end timestamptz;
+begin
+  if p_username in ('Ahcene', 'Massilva', 'Mazigh', 'Karim', 'Sofiane', 'Abderhmane') then
+    return now() + interval '24 hours';
+  end if;
+  v_end := (date_trunc('day', now() at time zone 'Africa/Algiers') + interval '17 hours') at time zone 'Africa/Algiers';
+  if v_end <= now() then
+    v_end := v_end + interval '1 day';
+  end if;
+  return v_end;
+end;
+$$;
+
+create or replace function app_create_session(p_username text, p_device_info text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_role text;
+  v_id uuid;
+  v_expires timestamptz;
+begin
+  select role into v_role from app_users where username = p_username;
+  v_expires := app_session_expiry(p_username);
+  insert into active_sessions (username, role, device_info, expires_at)
+  values (p_username, v_role, left(p_device_info, 120), v_expires)
+  returning id into v_id;
+  return json_build_object(
+    'session_id', v_id,
+    'username', p_username,
+    'role', v_role,
+    'entity', app_user_entity(p_username),
+    'expires_at', (extract(epoch from v_expires) * 1000)::bigint
+  );
+end;
+$$;
+
+-- Rôle de la session si elle est valide (existe, non expirée, rôle
+-- identique à app_users -- un changement de rôle ou une désactivation
+-- invalide la session), NULL sinon.
+create or replace function app_session_role(p_token text)
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.role
+  from active_sessions s
+  join app_users u on u.username = s.username and u.role = s.role
+  where s.id::text = p_token
+    and s.expires_at > now()
+    and s.role <> 'disabled'
+$$;
+
+-- Session admin valide ET active (heartbeat < 30 min), d'après l'en-tête
+-- x-session-token de la requête en cours.
+create or replace function app_session_is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from active_sessions s
+    where s.id::text = current_session_token()
+      and s.last_seen_at > now() - interval '30 minutes'
+      and app_session_role(s.id::text) = 'admin'
+  )
+$$;
+
+create or replace function validate_session(p_username text, p_session_token text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_valid boolean;
+begin
+  select exists (
+    select 1 from active_sessions
+    where username = p_username
+      and id::text = p_session_token
+      and is_active = true
+      and last_seen_at > now() - interval '30 minutes'
+      and app_session_role(p_session_token) is not null
+  ) into v_valid;
+  return v_valid;
+end;
+$$;
+
+-- Heartbeat (toutes les 60 s) : met à jour last_seen_at et renvoie le
+-- username / rôle FAISANT FOI côté serveur. Le front compare avec sa
+-- session localStorage et déconnecte en cas d'écart ou de session invalide.
+create or replace function session_heartbeat(p_session_id text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_session active_sessions%rowtype;
+  v_role text;
+begin
+  select * into v_session from active_sessions where id::text = p_session_id;
+  if v_session.id is null then
+    return json_build_object('valid', false);
+  end if;
+
+  v_role := app_session_role(p_session_id);
+  if v_role is null then
+    delete from active_sessions where id = v_session.id;
+    return json_build_object('valid', false);
+  end if;
+
+  update active_sessions set last_seen_at = now(), is_active = true where id = v_session.id;
+  return json_build_object('valid', true, 'username', v_session.username, 'role', v_role);
+end;
+$$;
+
+create or replace function end_session(p_session_id text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from active_sessions where id::text = p_session_id;
+$$;
+
+-- Liste des sessions (modal admin) : réservée à une session admin valide.
+-- Marque au passage is_active = false les sessions sans heartbeat > 10 min
+-- et purge les sessions expirées.
+create or replace function admin_list_sessions(p_session_id text)
+returns setof active_sessions
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if app_session_role(p_session_id) is distinct from 'admin' then
+    raise exception 'Accès réservé aux administrateurs';
+  end if;
+  delete from active_sessions where expires_at <= now();
+  update active_sessions set is_active = false
+  where is_active and last_seen_at < now() - interval '10 minutes';
+  return query select * from active_sessions order by last_seen_at desc;
+end;
+$$;
+
+create or replace function admin_revoke_session(p_session_id text, p_target_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if app_session_role(p_session_id) is distinct from 'admin' then
+    raise exception 'Accès réservé aux administrateurs';
+  end if;
+  delete from active_sessions where id = p_target_id;
+end;
+$$;
+
+-- ------------------------------------------------------------
+-- S4. CONNEXION : bcrypt + rate limiting + compte désactivé + création de
+-- la session côté serveur. Nouveau paramètre optionnel p_device_info (le
+-- front actuel, qui n'en envoie pas, continue de fonctionner).
+-- Renvoie { success, requires_verification, role, entity, session_id,
+-- expires_at, message } -- session_id/expires_at seulement si aucune
+-- vérification OTP n'est requise (sinon renvoyés par verify_login_code).
+-- ------------------------------------------------------------
+drop function if exists request_login_code(text, text);
+create or replace function request_login_code(p_username text, p_password_hash text, p_device_info text default null)
+returns json
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_user app_users%rowtype;
+  v_code text;
+  v_topic text;
+  v_dow int;
+  v_entity text;
+begin
+  perform app_check_login_rate(p_username, 'password');
+
+  select * into v_user from app_users where username = p_username;
+
+  if v_user.id is null or v_user.password_hash <> extensions.crypt(p_password_hash, v_user.password_hash) then
+    perform app_log_login_attempt(p_username, 'password', false);
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Identifiants invalides');
+  end if;
+
+  perform app_log_login_attempt(p_username, 'password', true);
+
+  if v_user.role = 'disabled' then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Compte désactivé');
+  end if;
+
+  v_entity := app_user_entity(p_username);
+
+  if not v_user.requires_verification then
+    return (app_create_session(p_username, p_device_info)::jsonb
+      || jsonb_build_object('success', true, 'requires_verification', false, 'message', 'Connecté'))::json;
+  end if;
+
+  -- Jour de la semaine en Algérie (0 = dimanche ... 5 = vendredi, 6 = samedi).
+  v_dow := extract(dow from (now() at time zone 'Africa/Algiers'));
+
+  if v_dow = 5 then
+    return json_build_object('success', false, 'requires_verification', false, 'message', 'Jour de repos — accès indisponible');
+  end if;
+
+  if v_dow <> 6 then
+    -- Dimanche à jeudi : mot de passe seul suffit, pas de code.
+    return (app_create_session(p_username, p_device_info)::jsonb
+      || jsonb_build_object('success', true, 'requires_verification', false, 'message', 'Connecté'))::json;
+  end if;
+
+  -- Samedi : code de vérification requis.
+  v_code := lpad(floor(random() * 1000000)::text, 6, '0');
+
+  insert into verification_codes (username, code, expires_at)
+  values (p_username, v_code, now() + interval '5 minutes');
+
+  select value into v_topic from app_settings where key = 'ntfy_auth_topic';
+
+  if v_topic is not null then
+    perform net.http_post(
+      url := 'https://ntfy.sh',
+      body := jsonb_build_object(
+        'topic', v_topic,
+        'title', 'Code de connexion',
+        'message', 'Code de connexion : ' || v_code || ' — Demandé par : ' || p_username,
+        'tags', jsonb_build_array('closed_lock_with_key'),
+        'priority', 5
+      )
+    );
+  end if;
+
+  return json_build_object('success', true, 'requires_verification', true, 'role', v_user.role, 'entity', v_entity, 'message', 'Code envoyé à l''administrateur');
+end;
+$$;
+
+revoke all on function request_login_code(text, text, text) from public;
+grant execute on function request_login_code(text, text, text) to anon, authenticated;
+
+-- Code OTP (samedi) : rate limiting + création de la session.
+drop function if exists verify_login_code(text, text);
+create or replace function verify_login_code(p_username text, p_code text, p_device_info text default null)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_row verification_codes%rowtype;
+begin
+  perform app_check_login_rate(p_username, 'otp');
+
+  select * into v_row
+  from verification_codes
+  where username = p_username
+    and code = p_code
+    and used = false
+    and expires_at > now()
+    and new_password_hash is null
+  order by created_at desc
+  limit 1;
+
+  if v_row.id is null then
+    perform app_log_login_attempt(p_username, 'otp', false);
+    return json_build_object('success', false, 'message', 'Code incorrect ou expiré');
+  end if;
+
+  update verification_codes set used = true where id = v_row.id;
+  perform app_log_login_attempt(p_username, 'otp', true);
+
+  return (app_create_session(p_username, p_device_info)::jsonb
+    || jsonb_build_object('success', true, 'message', 'Connecté'))::json;
+end;
+$$;
+
+revoke all on function verify_login_code(text, text, text) from public;
+grant execute on function verify_login_code(text, text, text) to anon, authenticated;
+
+-- Fonctions internes : pas d'appel direct par l'API.
+revoke all on function app_check_login_rate(text, text) from public, anon, authenticated;
+revoke all on function app_log_login_attempt(text, text, boolean) from public, anon, authenticated;
+revoke all on function app_create_session(text, text) from public, anon, authenticated;
+revoke all on function app_session_role(text) from public, anon, authenticated;
+-- Fonctions de session appelées par le front.
+grant execute on function session_heartbeat(text) to anon, authenticated;
+grant execute on function end_session(text) to anon, authenticated;
+grant execute on function admin_list_sessions(text) to anon, authenticated;
+grant execute on function admin_revoke_session(text, uuid) to anon, authenticated;
+grant execute on function validate_session(text, text) to anon, authenticated;
+
+-- ------------------------------------------------------------
+-- S5. CODE ADMIN : en plus du code (app_settings.admin_code), toutes les
+-- fonctions qui le vérifient (admin_update_* / admin_delete_* / prodnet...)
+-- exigent désormais une SESSION ADMIN valide (en-tête x-session-token).
+-- Patch dynamique des définitions en place : chaque
+--   "if v_code is null or ..."
+-- devient
+--   "if v_code is null or not app_session_is_admin() or ...".
+-- Idempotent (les fonctions déjà patchées sont ignorées).
+-- RETOUR ARRIÈRE (si l'en-tête n'arrive pas jusqu'à la base) : relancer ce
+-- bloc en inversant les deux chaînes du replace() et en remplaçant le filtre
+-- "not like '%app_session_is_admin()%'" par "like '%app_session_is_admin()%'".
+-- ------------------------------------------------------------
+do $$
+declare
+  r record;
+begin
+  for r in
+    select p.oid
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.prosrc like '%key = ''admin_code''%'
+      and p.prosrc like '%v_code is null or %'
+      and p.prosrc not like '%app_session_is_admin()%'
+  loop
+    execute replace(pg_get_functiondef(r.oid), 'v_code is null or ', 'v_code is null or not app_session_is_admin() or ');
+  end loop;
+end;
+$$;
+
+-- Le code admin figure en clair dans l'historique git (schema.sql) :
+-- le changer (valeur à NE PAS commiter) :
+--   update app_settings set value = 'NOUVEAU_CODE' where key = 'admin_code';

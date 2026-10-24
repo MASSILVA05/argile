@@ -14,6 +14,7 @@ import {
   mcSignedAmount,
   mcFormatDA,
 } from '../lib/magasinCaisse'
+import { caisseTotals, runningBalances, operationTypeLabel } from '../lib/caisse'
 import RowActions from './RowActions'
 import AdminCodeModal from './AdminCodeModal'
 import ExportFilterModal from './ExportFilterModal'
@@ -104,18 +105,15 @@ export default function MagasinCaisseRegistry() {
     })
   }, [entries, query, typeFilter, categoryFilter, dateFilter, paymentFilter])
 
-  const totals = useMemo(() => {
-    const sumBy = (type) =>
-      filtered.filter((e) => e.operation_type === type).reduce((s, e) => s + (Number(e.amount) || 0), 0)
-    const encaissements = sumBy('Encaissement')
-    const decaissements = sumBy('Décaissement')
-    const depenses = sumBy('Dépense')
-    return { encaissements, decaissements, depenses, solde: encaissements - decaissements - depenses }
-  }, [filtered])
+  const totals = useMemo(() => caisseTotals(filtered), [filtered])
+
+  // Solde cumulé de la caisse après chaque ligne (indépendant des filtres) --
+  // imprimé sur le reçu.
+  const balances = useMemo(() => runningBalances(entries), [entries])
 
   // Ligne enrichie pour le reçu de caisse imprimé (printCaisseReceipt).
   function receiptEntry(e) {
-    return { ...e, category_label: mcCategoryLabel(e) }
+    return { ...e, category_label: mcCategoryLabel(e), balance_after: balances.get(e.id) }
   }
 
   function buildPrintConfig() {
@@ -135,7 +133,7 @@ export default function MagasinCaisseRegistry() {
         { key: 'entry_date', label: 'Date' },
         { key: 'entry_time', label: 'Heure', format: fmtTime },
         { key: 'created_at', label: 'Saisie le', format: (v) => formatDateTime(v) },
-        { key: 'operation_type', label: 'Type' },
+        { key: 'operation_type', label: 'Type', format: (v) => operationTypeLabel(v) },
         { key: 'description', label: 'Motif' },
         { key: 'signed_amount', label: 'Montant (DA)', align: 'right', format: (v) => mcFormatDA(v) },
         { key: 'beneficiary', label: 'Fournisseur/Bénéficiaire' },
@@ -156,6 +154,7 @@ export default function MagasinCaisseRegistry() {
         { bon_number: 'TOTAL ENCAISSEMENTS', signed_amount: totals.encaissements },
         { bon_number: 'TOTAL DÉCAISSEMENTS', signed_amount: totals.decaissements },
         { bon_number: 'TOTAL DÉPENSES', signed_amount: totals.depenses },
+        { bon_number: 'DONT TRANSFERTS', signed_amount: totals.transferts },
         { bon_number: 'SOLDE', signed_amount: totals.solde },
       ],
     }
@@ -350,7 +349,7 @@ export default function MagasinCaisseRegistry() {
           />
           <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={filterClass}>
             <option value="">Tous les types</option>
-            {MC_OPERATION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            {MC_OPERATION_TYPES.map((t) => <option key={t} value={t}>{operationTypeLabel(t)}</option>)}
           </select>
           <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className={filterClass}>
             <option value="">Toutes catégories</option>
@@ -405,7 +404,8 @@ export default function MagasinCaisseRegistry() {
           <div className="mb-1 flex flex-wrap gap-4 rounded-lg border border-border bg-bg-soft px-4 py-3">
             <Total label="Total encaissements" value={totals.encaissements} className="text-green-500" />
             <Total label="Total décaissements" value={totals.decaissements} className="text-terracotta" />
-            <Total label="Total dépenses" value={totals.depenses} className="text-terracotta" />
+            <Total label="Total dépenses (transferts inclus)" value={totals.depenses} className="text-terracotta" />
+            <Total label="Dont transferts de fond" value={totals.transferts} className="text-terracotta" />
             <Total label="Solde" value={totals.solde} className={totals.solde >= 0 ? 'text-green-500' : 'text-terracotta'} />
           </div>
 
@@ -441,7 +441,7 @@ export default function MagasinCaisseRegistry() {
                       <Td>{entry.entry_date}</Td>
                       <Td>{fmtTime(entry.entry_time)}</Td>
                       <Td>{formatDateTime(entry.created_at)}</Td>
-                      <Td>{entry.operation_type}</Td>
+                      <Td>{operationTypeLabel(entry.operation_type)}</Td>
                       <Td className="max-w-[220px] truncate" title={entry.description}>{entry.description}</Td>
                       <Td className={`text-right font-medium ${mcIsInflow(entry.operation_type) ? 'text-green-500' : 'text-terracotta'}`}>
                         {mcFormatDA(mcSignedAmount(entry))}
@@ -548,7 +548,7 @@ function EditRow({ draft, onChange, onSave, onCancel }) {
       <Td>{formatDateTime(draft.created_at)}</Td>
       <Td>
         <select value={draft.operation_type} onChange={(e) => set('operation_type', e.target.value)} className={editInputClass}>
-          {MC_OPERATION_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          {MC_OPERATION_TYPES.map((t) => <option key={t} value={t}>{operationTypeLabel(t)}</option>)}
         </select>
       </Td>
       <Td><input type="text" value={draft.description ?? ''} onChange={(e) => set('description', e.target.value)} className={editInputClass} /></Td>

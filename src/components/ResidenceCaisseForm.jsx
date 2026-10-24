@@ -5,6 +5,7 @@ import { notifyResidenceCaisseEntry } from '../lib/ntfy'
 import { uploadResidencePhoto } from '../lib/storage'
 import { compressImage } from '../lib/imageCompress'
 import { RC_OPERATION_TYPES, RC_PAYMENT_MODES, RC_CATEGORIES } from '../lib/residence'
+import { operationTypeLabel, TRANSFER_TYPE, TRANSFER_DESCRIPTION } from '../lib/caisse'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const formatHHMM = (date) => date.toTimeString().slice(0, 5)
@@ -66,6 +67,17 @@ export default function ResidenceCaisseForm() {
 
   function update(field, value) {
     setDraft((d) => ({ ...d, [field]: value }))
+  }
+
+  // Transfert de fond : motif pré-rempli (retiré si on change de type sans
+  // l'avoir modifié).
+  function changeOperationType(nextType) {
+    setDraft((d) => {
+      let description = d.description
+      if (nextType === TRANSFER_TYPE && !description.trim()) description = TRANSFER_DESCRIPTION
+      if (nextType !== TRANSFER_TYPE && description === TRANSFER_DESCRIPTION) description = ''
+      return { ...d, operation_type: nextType, description }
+    })
   }
 
   const isCheque = draft.payment_mode === 'Chèque'
@@ -163,6 +175,7 @@ export default function ResidenceCaisseForm() {
         bon_number: bonNumber + 1,
         entry_date: draft.entry_date,
         operation_type: draft.operation_type,
+        description: draft.operation_type === TRANSFER_TYPE ? TRANSFER_DESCRIPTION : '',
       })
       setSuccess(`Bon caisse résidence n° ${bonNumber} enregistré.`)
     } catch (err) {
@@ -188,8 +201,8 @@ export default function ResidenceCaisseForm() {
       </Field>
 
       <Field label="Type d'opération" required>
-        <select value={draft.operation_type} onChange={(e) => update('operation_type', e.target.value)} className={inputClass}>
-          {RC_OPERATION_TYPES.map((o) => <option key={o} value={o}>{o}</option>)}
+        <select value={draft.operation_type} onChange={(e) => changeOperationType(e.target.value)} className={inputClass}>
+          {RC_OPERATION_TYPES.map((o) => <option key={o} value={o}>{operationTypeLabel(o)}</option>)}
         </select>
       </Field>
 

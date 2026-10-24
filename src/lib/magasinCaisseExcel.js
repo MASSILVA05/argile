@@ -14,6 +14,7 @@ import {
 } from './excelHelpers'
 import { formatDateTime } from './dateFormat'
 import { mcCategoryLabel, mcSignedAmount } from './magasinCaisse'
+import { caisseTotals, operationTypeLabel } from './caisse'
 
 const COLUMNS = [
   { header: 'N° Bon', key: 'bon_number', width: 12 },
@@ -56,7 +57,7 @@ export async function downloadMagasinCaisseExcel(entries, { onProgress, includeP
       entry_date: entry.entry_date,
       entry_time: entry.entry_time ? entry.entry_time.slice(0, 5) : '',
       created_at: formatDateTime(entry.created_at),
-      operation_type: entry.operation_type,
+      operation_type: operationTypeLabel(entry.operation_type),
       description: entry.description,
       amount: mcSignedAmount(entry),
       beneficiary: entry.beneficiary ?? '',
@@ -90,12 +91,7 @@ export async function downloadMagasinCaisseExcel(entries, { onProgress, includeP
     }
   }
 
-  const sumBy = (type) =>
-    entries.filter((e) => e.operation_type === type).reduce((s, e) => s + (Number(e.amount) || 0), 0)
-  const encaissements = sumBy('Encaissement')
-  const decaissements = sumBy('Décaissement')
-  const depenses = sumBy('Dépense')
-  const solde = encaissements - decaissements - depenses
+  const { encaissements, decaissements, depenses, transferts, solde } = caisseTotals(entries)
 
   const addTotal = (label, value, fill) => {
     const r = sheet.addRow({ bon_number: label, amount: value })
@@ -106,6 +102,7 @@ export async function downloadMagasinCaisseExcel(entries, { onProgress, includeP
   addTotal('TOTAL ENCAISSEMENTS', encaissements, null)
   addTotal('TOTAL DÉCAISSEMENTS', decaissements, null)
   addTotal('TOTAL DÉPENSES', depenses, null)
+  addTotal('DONT TRANSFERTS', transferts, null)
   addTotal('SOLDE', solde, AMOUNT_ROW_FILL)
 
   const buffer = await workbook.xlsx.writeBuffer()
