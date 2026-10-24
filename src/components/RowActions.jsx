@@ -32,7 +32,8 @@ function DeleteIcon(props) {
 // Icônes seules sur mobile (peu de place dans le registre), texte affiché à
 // partir de sm: -- l'attribut title reste le filet de secours au survol/tap
 // sur tous les écrans.
-export default function RowActions({ entry, onEdit, onDelete, onLockedAttempt }) {
+// canDelete=false masque le bouton Supprimer (viewer : Modifier uniquement).
+export default function RowActions({ entry, onEdit, onDelete, onLockedAttempt, canDelete = true }) {
   const locked = isLocked(entry)
   const lockedTitle = locked ? LOCK_MESSAGE : undefined
   const lockedClass = locked ? 'cursor-not-allowed opacity-40' : ''
@@ -48,15 +49,17 @@ export default function RowActions({ entry, onEdit, onDelete, onLockedAttempt })
         <EditIcon className="h-4 w-4 shrink-0 pointer-coarse:h-6 pointer-coarse:w-6" />
         <span className="hidden sm:inline">Modifier</span>
       </button>
-      <button
-        type="button"
-        onClick={locked ? () => onLockedAttempt('delete') : onDelete}
-        title={lockedTitle ?? 'Supprimer'}
-        className={`flex items-center gap-1 rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 ${lockedClass}`}
-      >
-        <DeleteIcon className="h-4 w-4 shrink-0 pointer-coarse:h-6 pointer-coarse:w-6" />
-        <span className="hidden sm:inline">Supprimer</span>
-      </button>
+      {canDelete && (
+        <button
+          type="button"
+          onClick={locked ? () => onLockedAttempt('delete') : onDelete}
+          title={lockedTitle ?? 'Supprimer'}
+          className={`flex items-center gap-1 rounded border border-terracotta/50 px-2 py-1 text-terracotta hover:bg-terracotta/10 ${lockedClass}`}
+        >
+          <DeleteIcon className="h-4 w-4 shrink-0 pointer-coarse:h-6 pointer-coarse:w-6" />
+          <span className="hidden sm:inline">Supprimer</span>
+        </button>
+      )}
     </div>
   )
 }

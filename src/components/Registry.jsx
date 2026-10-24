@@ -347,6 +347,7 @@ export default function Registry() {
   }
 
   async function handleDelete(entry) {
+    if (isViewer) return
     if (isLocked(entry)) {
       setError(LOCK_MESSAGE)
       return
@@ -564,6 +565,7 @@ export default function Registry() {
                             onEdit={() => startEdit(entry)}
                             onDelete={() => handleDelete(entry)}
                             onLockedAttempt={(action) => openAdminPrompt(action, entry)}
+                            canDelete={!isViewer}
                           />
                         </div>
                       </Td>
