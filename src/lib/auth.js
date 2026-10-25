@@ -1,7 +1,9 @@
 import { supabase } from './supabase'
 import { sha256 } from './hash'
 
-export const USERNAMES = ['Ahcene', 'Massilva', 'Mazigh', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane', 'Mehdi']
+// Comptes proposés sur la page de connexion (Bilal retiré : compte désactivé,
+// à supprimer depuis la page Appareils connectés).
+export const USERNAMES = ['Ahcene', 'Massilva', 'Mazigh', 'Halim', 'Bureau', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane', 'Mehdi']
 
 // Ahcene et Massilva n'ont aucune restriction d'horaire ni de jour. Mazigh garde le
 // rôle 'admin' en base mais est soumis aux horaires (8h-17h, vendredi) comme les autres.
