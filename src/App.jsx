@@ -15,6 +15,7 @@ import ResidencePage from './components/ResidencePage'
 import StationPage from './components/StationPage'
 import ChequesPage from './components/ChequesPage'
 import PPIPage from './components/PPIPage'
+import SessionsPage from './components/SessionsPage'
 import Header from './components/Header'
 import SideNav from './components/SideNav'
 import InstallPrompt from './components/InstallPrompt'
@@ -40,6 +41,7 @@ const TITLES = {
   station: 'Station',
   cheques: 'Suivi Chèques',
   ppi: 'PPI',
+  sessions: 'Appareils connectés',
 }
 
 const SESSION_CHECK_MS = 60_000
@@ -181,6 +183,7 @@ function App() {
           {tab === 'station' && <StationPage />}
           {tab === 'cheques' && <ChequesPage />}
           {tab === 'ppi' && <PPIPage />}
+          {tab === 'sessions' && <SessionsPage />}
         </main>
       </div>
 

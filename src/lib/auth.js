@@ -3,15 +3,16 @@ import { sha256 } from './hash'
 
 export const USERNAMES = ['Ahcene', 'Massilva', 'Mazigh', 'Halim', 'Bureau', 'Bilal', 'Karim', 'AVADOU', 'Tahar', 'Youcef', 'Aziz', 'Sofiane', 'Abderhmane', 'Mehdi']
 
-// Ahcene, Massilva et Mazigh (admin) n'ont aucune restriction d'horaire ni de jour.
-export const ADMIN_USERNAMES = ['Ahcene', 'Massilva', 'Mazigh']
+// Ahcene et Massilva n'ont aucune restriction d'horaire ni de jour. Mazigh garde le
+// rôle 'admin' en base mais est soumis aux horaires (8h-17h, vendredi) comme les autres.
+export const ADMIN_USERNAMES = ['Ahcene', 'Massilva']
 
 // Comptes non soumis à la plage horaire 8h-17h : les admins (déjà exemptés
 // de toute restriction) + Karim, Sofiane et Abderhmane, qui peuvent se
 // connecter à toute heure de la journée. Ils restent soumis au jour de repos
 // (vendredi) et au code OTP du samedi (requires_verification en base,
 // inchangé), et n'ont pas le code admin.
-export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Mazigh', 'Karim', 'Sofiane', 'Abderhmane']
+export const UNRESTRICTED_HOURS_USERS = ['Ahcene', 'Massilva', 'Karim', 'Sofiane', 'Abderhmane']
 
 const SESSION_KEY = 'dpr-session'
 const ALGERIA_TZ = 'Africa/Algiers'
@@ -254,7 +255,7 @@ export async function logout(sessionId = getSession()?.sessionId) {
 // par rôle dans salesEntityAccessForRole ci-dessous, utilisé par
 // InvoicesPage.jsx / ChequesPage.jsx / CaissePage.jsx).
 export const ROLE_TABS = {
-  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station', 'cheques', 'ppi'],
+  admin: ['form', 'registry', 'maintenance', 'production', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'magasin', 'residence', 'station', 'cheques', 'ppi', 'sessions'],
   editor: ['form', 'registry', 'maintenance', 'prodnet', 'fuel', 'sand', 'invoices', 'tva', 'tva-payer', 'caisse', 'cheques', 'ppi'],
   viewer: ['form', 'registry', 'maintenance'],
   maintenance_only: ['maintenance', 'production'],
