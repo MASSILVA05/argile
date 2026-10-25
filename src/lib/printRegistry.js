@@ -933,9 +933,10 @@ export function printInvoices(invoices, extra = {}) {
 // REÇU DE CAISSE : document A5 portrait compact, un reçu par page (en-tête
 // société, n° + date, détail de l'opération, montant en lettres, signatures).
 // Commun aux caisses Briqueterie / Magasin / Résidence (même schéma de
-// ligne). Pas de "Saisi par", pas d'URL. Solde avant / après l'opération
-// si le registre fournit balance_after (solde cumulé de la caisse après
-// cette ligne), date d'impression, 3 signatures (Caissier / Receveur / Gérant).
+// ligne). Pas de "Saisi par", pas d'URL. Date d'impression en haut ; bloc
+// montants hors tableau (Solde actuel / Montant du bon / Solde final) si le
+// registre fournit balance_after (solde cumulé de la caisse après cette
+// ligne), sinon le montant seul ; 3 signatures (Gérant / Caissier / Receveur).
 // ============================================================
 
 function caisseCategoryText(entry) {
@@ -956,11 +957,19 @@ function caisseReceiptHtml(entry) {
   const now = new Date()
   const printedAt = `${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
 
+  const montants = [
+    ...(hasBalance ? [{ label: 'Solde actuel', value: balanceBefore }] : []),
+    { label: 'Montant du bon', value: amount, main: true },
+    ...(hasBalance ? [{ label: 'Solde final', value: balanceAfter }] : []),
+  ]
+    .map(
+      (m) =>
+        `<div class="montant-col${m.main ? ' montant-main' : ''}"><span class="montant-label">${escapeHtml(m.label)}</span><span class="montant-value">${escapeHtml(nf2(m.value))} DA</span></div>`
+    )
+    .join('')
+
   const rows = [
     { label: 'Type', value: operationTypeLabel(entry.operation_type) },
-    ...(hasBalance ? [{ label: 'Solde avant opération', value: `${nf2(balanceBefore)} DA` }] : []),
-    { label: hasBalance ? "Montant de l'opération" : 'Montant', value: `${nf2(amount)} DA`, strong: true },
-    ...(hasBalance ? [{ label: 'Solde après opération', value: `${nf2(balanceAfter)} DA`, strong: true }] : []),
     { label: 'Motif', value: entry.description },
     { label: 'Bénéficiaire', value: entry.beneficiary || entry.client_name },
     { label: 'Mode', value: entry.payment_mode },
@@ -976,9 +985,13 @@ function caisseReceiptHtml(entry) {
     .join('')
 
   return `<section class="recu">
+  <p class="printed-at">Imprimé le : ${escapeHtml(printedAt)}</p>
+
   ${companyHeaderHtml()}
 
   <p class="recu-title">REÇU DE CAISSE N° ${escapeHtml(noRecu)}<br><span class="recu-date">Date : ${escapeHtml(dateFR(entry.entry_date))}</span></p>
+
+  <div class="montants-bloc">${montants}</div>
 
   <table class="kv">
     <colgroup><col style="width:32%"><col style="width:68%"></colgroup>
@@ -990,10 +1003,8 @@ function caisseReceiptHtml(entry) {
     <strong>${escapeHtml(numberToFrenchWords(amount))}</strong>
   </p>
 
-  <p class="printed-at">Imprimé le : ${escapeHtml(printedAt)}</p>
-
   <div class="recu-sign recu-sign-3">
-    ${['Le Caissier', 'Le Receveur', 'Le Gérant'].map(receiptSignBoxHtml).join('')}
+    ${['Le Gérant', 'Le Caissier', 'Le Receveur'].map(receiptSignBoxHtml).join('')}
   </div>
 </section>`
 }
@@ -1075,7 +1086,14 @@ function a5DocumentHtml(sections) {
   .sign-line { display: block; border-top: 1px solid #000000; margin: 0 12px; }
   .sign-label { display: block; font-size: 10pt; margin-top: 3px; font-weight: bold; }
 
-  .printed-at { margin: 12px 0 0; font-size: 8pt; text-align: right; }
+  .printed-at { margin: 0 0 4px; font-size: 8pt; text-align: right; }
+  .montants-bloc { display: flex; border: 1px solid #000000; margin: 0 0 8px; }
+  .montant-col { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 4px 6px; text-align: center; }
+  .montant-col + .montant-col { border-left: 1px solid #000000; }
+  .montant-label { font-size: 8.5pt; }
+  .montant-value { font-size: 10.5pt; font-weight: bold; white-space: nowrap; }
+  .montant-main { background: #f2f2f2; }
+  .montant-main .montant-value { font-size: 12pt; }
   .recu-sign-3 { gap: 10px; margin-top: 16px; }
   .recu-sign-3 .sign-line { margin: 0 4px 4px; }
   .recu-sign-3 .sign-field { display: block; text-align: left; font-size: 8.5pt; padding: 0 4px; line-height: 1.9; }
